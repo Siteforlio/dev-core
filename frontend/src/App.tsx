@@ -9,6 +9,7 @@ import InterviewSession from './components/interview/InterviewSession'
 export default function App() {
   const [showRegister, setShowRegister] = useState(false)
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
+  const token = useAuthStore((s) => s.accessToken)
   const sessionId = useInterviewStore((s) => s.sessionId)
 
   if (!isAuthenticated) {
@@ -16,7 +17,7 @@ export default function App() {
     return <Login onGoToRegister={() => setShowRegister(true)} />
   }
 
-  if (sessionId) return <InterviewSession />
+  if (sessionId) return <InterviewSession token={token ?? ''} />
 
   return <Dashboard />
 }

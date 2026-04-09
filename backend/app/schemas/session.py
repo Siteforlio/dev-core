@@ -23,6 +23,12 @@ class AnswerRequest(BaseModel):
     round_id: str
     question: str
     answer: str
+    total_questions: int = 5
+    emotion_state: Optional[str] = None
+
+
+class AdvanceRoundRequest(BaseModel):
+    next_round_type: str
 
 
 class GradeResponse(BaseModel):

@@ -7,6 +7,7 @@ from app.api.v1.companies import router as companies_router
 from app.api.v1.sessions import router as sessions_router
 from app.api.v1.speech import router as speech_router
 from app.api.v1.ws import router as ws_router
+from app.api.v1.emotion import router as emotion_router
 from app.graph.seed import run_seed
 
 
@@ -25,6 +26,7 @@ app.include_router(companies_router, prefix="/api/v1")
 app.include_router(sessions_router, prefix="/api/v1")
 app.include_router(speech_router, prefix="/api/v1")
 app.include_router(ws_router, prefix="/api/v1")
+app.include_router(emotion_router, prefix="/api/v1")
 
 
 @app.get("/health")

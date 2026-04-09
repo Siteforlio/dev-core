@@ -24,10 +24,11 @@ async def test_submit_answer_stores_moment_and_grade():
     mock_round = MagicMock(id="r1", type="behavioral")
     mock_session = MagicMock(company="Google", role="SWE")
 
-    # Return mock_round on first call, mock_session on second
+    # round query, session query, count query (answers for this round)
     results = [
         MagicMock(**{"scalar_one_or_none.return_value": mock_round}),
         MagicMock(**{"scalar_one_or_none.return_value": mock_session}),
+        MagicMock(**{"scalar.return_value": 1}),  # 1 answer → not last of 5
     ]
     mock_db.execute = AsyncMock(side_effect=results)
 

@@ -35,11 +35,18 @@ export function useInterviewSession() {
     roundId: string,
     question: string,
     answer: string,
+    opts?: { totalQuestions?: number; emotionState?: string },
   ) => {
     const res = await fetch(`${API}/interview-sessions/${sessionId}/answer`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ round_id: roundId, question, answer }),
+      body: JSON.stringify({
+        round_id: roundId,
+        question,
+        answer,
+        total_questions: opts?.totalQuestions ?? 5,
+        emotion_state: opts?.emotionState ?? null,
+      }),
     })
     return (await res.json()).data
   }
