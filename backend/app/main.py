@@ -5,6 +5,8 @@ from app.core.exceptions import register_exception_handlers
 from app.api.v1.auth import router as auth_router
 from app.api.v1.companies import router as companies_router
 from app.api.v1.sessions import router as sessions_router
+from app.api.v1.speech import router as speech_router
+from app.api.v1.ws import router as ws_router
 from app.graph.seed import run_seed
 
 
@@ -21,6 +23,8 @@ register_exception_handlers(app)
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(companies_router, prefix="/api/v1")
 app.include_router(sessions_router, prefix="/api/v1")
+app.include_router(speech_router, prefix="/api/v1")
+app.include_router(ws_router, prefix="/api/v1")
 
 
 @app.get("/health")

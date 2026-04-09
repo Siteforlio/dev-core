@@ -78,3 +78,13 @@ class LLMOrchestrator:
             "Return a 2-3 sentence personality description the AI avatar should embody."
         )
         return await self._call_claude(prompt)
+
+    async def react_to_code(self, code_snapshot: str, question: str, company: str) -> str:
+        prompt = (
+            f"You are a technical interviewer at {company}.\n"
+            f"The candidate is solving: {question}\n\n"
+            f"Their current code:\n{code_snapshot}\n\n"
+            "Give a brief (1-2 sentence) natural spoken reaction as an interviewer watching them code. "
+            "Don't give away the answer. Be encouraging but probe for edge cases if appropriate."
+        )
+        return await self._call_claude(prompt)
