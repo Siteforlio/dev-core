@@ -2,14 +2,21 @@ from unittest.mock import AsyncMock, MagicMock
 from app.services.interview_engine import InterviewEngine
 
 
+def _mock_persona_engine():
+    pe = AsyncMock()
+    pe.get_graph_context.return_value = {"company": "Google", "round_type": "behavioral", "sample_questions": []}
+    pe.build.return_value = "Professional, direct, values conciseness."
+    return pe
+
+
 async def test_create_session_returns_session_with_questions():
     mock_db = AsyncMock()
     mock_db.add = MagicMock()
     mock_orchestrator = AsyncMock()
     mock_orchestrator.generate_questions.return_value = ["Q1?", "Q2?", "Q3?"]
-    mock_orchestrator.build_persona.return_value = "Professional, direct, values conciseness."
 
     engine = InterviewEngine(db=mock_db, orchestrator=mock_orchestrator)
+    engine._persona_engine = _mock_persona_engine()
     result = await engine.create_session("user1", "Google", "SWE", ["behavioral", "technical"])
 
     assert result["company"] == "Google"

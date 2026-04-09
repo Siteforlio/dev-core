@@ -1,5 +1,12 @@
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from app.services.interview_engine import InterviewEngine
+
+
+def _mock_persona_engine():
+    pe = AsyncMock()
+    pe.get_graph_context.return_value = {"company": "Google", "round_type": "technical", "sample_questions": []}
+    pe.build.return_value = "Direct and technical."
+    return pe
 
 
 async def test_advance_to_next_round_creates_new_round():
@@ -14,9 +21,10 @@ async def test_advance_to_next_round_creates_new_round():
 
     mock_orchestrator = AsyncMock()
     mock_orchestrator.generate_questions.return_value = ["Q1?", "Q2?"]
-    mock_orchestrator.build_persona.return_value = "Direct and technical."
 
     engine = InterviewEngine(db=mock_db, orchestrator=mock_orchestrator)
+    engine._persona_engine = _mock_persona_engine()
+
     result = await engine.advance_to_next_round(session_id="s1", next_round_type="technical")
 
     assert result["current_round"] == "technical"
@@ -82,7 +90,6 @@ async def test_submit_answer_flags_round_failed_on_low_score():
 
 async def test_code_reaction_test():
     """react_to_code already exists — verify it returns a string."""
-    from unittest.mock import patch
     from app.services.llm_orchestrator import LLMOrchestrator
     orchestrator = LLMOrchestrator()
     with patch.object(orchestrator, '_call_claude', new=AsyncMock(

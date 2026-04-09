@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from app.models.pg.session import InterviewSession, Round, RoundMoment
 from app.services.llm_orchestrator import LLMOrchestrator
+from app.services.persona_engine import PersonaEngine
 from app.core.exceptions import SessionNotFoundError
 
 PASS_THRESHOLD = 6.0   # score >= this → passed
@@ -18,6 +19,7 @@ class InterviewEngine:
     def __init__(self, db: AsyncSession, orchestrator: LLMOrchestrator):
         self.db = db
         self.orchestrator = orchestrator
+        self._persona_engine = PersonaEngine()
 
     async def create_session(
         self,
@@ -39,11 +41,14 @@ class InterviewEngine:
         self.db.add(round_)
         await self.db.commit()
 
-        questions = await self.orchestrator.generate_questions(
-            company=company, role=role, round_type=first_round_type, graph_context=None
+        graph_context = await self._persona_engine.get_graph_context(
+            company=company, round_type=first_round_type
         )
-        persona = await self.orchestrator.build_persona(
-            company=company, role=role, manager_context=None
+        questions = await self.orchestrator.generate_questions(
+            company=company, role=role, round_type=first_round_type, graph_context=graph_context
+        )
+        persona = await self._persona_engine.build(
+            company=company, role=role, round_type=first_round_type
         )
 
         return {
@@ -134,16 +139,19 @@ class InterviewEngine:
         self.db.add(round_)
         await self.db.commit()
 
+        graph_context = await self._persona_engine.get_graph_context(
+            company=session.company, round_type=next_round_type
+        )
         questions = await self.orchestrator.generate_questions(
             company=session.company,
             role=session.role,
             round_type=next_round_type,
-            graph_context=None,
+            graph_context=graph_context,
         )
-        persona = await self.orchestrator.build_persona(
+        persona = await self._persona_engine.build(
             company=session.company,
             role=session.role,
-            manager_context=None,
+            round_type=next_round_type,
         )
 
         return {
