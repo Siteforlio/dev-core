@@ -6,6 +6,7 @@ import anthropic
 from app.core.config import settings
 from app.models.pg.session import InterviewSession, Round, RoundMoment
 from app.core.exceptions import SessionNotFoundError
+from app.services.community_pipeline import CommunityPipeline
 
 
 class DebriefService:
@@ -75,6 +76,31 @@ class DebriefService:
             '{"overall_score": 7.5, "strengths": ["..."], "improvements": ["..."], "recommendation": "..."}'
         )
         analysis = await self._call_claude(prompt)
+
+        # Stage anonymized data for community pipeline (fire-and-forget)
+        try:
+            pipeline = CommunityPipeline(db=self.db)
+            rounds_for_pipeline = []
+            for r in rounds:
+                moments_for_round = [m for m in all_moments if m.round_id == r.id]
+                rounds_for_pipeline.append({
+                    "type": r.type,
+                    "grade": r.grade,
+                    "passed": r.passed,
+                    "moments": [
+                        {"question": m.question, "answer": m.answer, "emotion": m.emotion_state}
+                        for m in moments_for_round
+                    ],
+                })
+            await pipeline.stage(
+                session_id=session_id,
+                user_id=session.user_id,
+                company=session.company,
+                role=session.role,
+                rounds=rounds_for_pipeline,
+            )
+        except Exception:
+            pass  # community staging is best-effort; never break the debrief
 
         return {
             "session_id": session_id,

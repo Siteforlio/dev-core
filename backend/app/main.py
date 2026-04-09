@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from app.core.middleware import setup_middleware
@@ -9,12 +10,19 @@ from app.api.v1.speech import router as speech_router
 from app.api.v1.ws import router as ws_router
 from app.api.v1.emotion import router as emotion_router
 from app.graph.seed import run_seed
+from app.workers.community_flush import flush_loop
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await run_seed()
+    flush_task = asyncio.create_task(flush_loop())
     yield
+    flush_task.cancel()
+    try:
+        await flush_task
+    except asyncio.CancelledError:
+        pass
 
 
 app = FastAPI(title="Developer Core API", version="1.0.0", lifespan=lifespan)
