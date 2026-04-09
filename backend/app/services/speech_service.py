@@ -53,3 +53,17 @@ class SpeechService:
             language=language_hint,
         )
         return transcript.text
+
+    async def transcribe_with_language(self, audio_bytes: bytes) -> dict:
+        """Transcribe and return both text and Whisper-detected language."""
+        audio_file = io.BytesIO(audio_bytes)
+        audio_file.name = "recording.webm"
+        transcript = await self._openai_client.audio.transcriptions.create(
+            model="whisper-1",
+            file=audio_file,
+            response_format="verbose_json",
+        )
+        return {
+            "transcript": transcript.text,
+            "detected_language": getattr(transcript, "language", "en"),
+        }

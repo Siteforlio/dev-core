@@ -29,6 +29,11 @@ class RoundNotFoundError(DevCoreException):
         super().__init__("ROUND_NOT_FOUND", "Interview round not found", 404)
 
 
+class UserNotFoundError(DevCoreException):
+    def __init__(self):
+        super().__init__("USER_NOT_FOUND", "User not found", 404)
+
+
 def register_exception_handlers(app):
     @app.exception_handler(DevCoreException)
     async def devcore_exception_handler(request: Request, exc: DevCoreException):

@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.models.pg.user import User
 from app.core.security import hash_password, verify_password, create_access_token, create_refresh_token
-from app.core.exceptions import InvalidCredentialsError, UserAlreadyExistsError
+from app.core.exceptions import InvalidCredentialsError, UserAlreadyExistsError, UserNotFoundError
 
 
 class AuthService:
@@ -34,6 +34,15 @@ class AuthService:
         await self.db.commit()
         await self.db.refresh(user)
         return user
+
+    async def delete_user(self, user_id: str) -> None:
+        """Permanently delete a user account (GDPR right-to-erasure)."""
+        result = await self.db.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+        if not user:
+            raise UserNotFoundError()
+        await self.db.delete(user)
+        await self.db.commit()
 
     async def login(self, email: str, password: str) -> dict:
         result = await self.db.execute(select(User).where(User.email == email))

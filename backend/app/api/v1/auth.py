@@ -1,10 +1,17 @@
 from fastapi import APIRouter, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.schemas.auth import RegisterRequest, LoginRequest, AuthResponse, TokenResponse
 from app.services.auth_service import AuthService
 from app.core.database import get_db
+from app.core.security import decode_token
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+bearer = HTTPBearer()
+
+
+def get_user_id(credentials: HTTPAuthorizationCredentials = Depends(bearer)) -> str:
+    return decode_token(credentials.credentials)
 
 
 @router.post("/register", response_model=AuthResponse)
@@ -32,3 +39,13 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
         name=result["user"].name,
         language_pref=result["user"].language_pref,
     )}
+
+
+@router.delete("/users/me", status_code=204)
+async def delete_account(
+    user_id: str = Depends(get_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """GDPR right-to-erasure: permanently delete the authenticated user's account."""
+    service = AuthService(db=db)
+    await service.delete_user(user_id=user_id)

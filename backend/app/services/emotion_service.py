@@ -14,15 +14,27 @@ MOUTH_BOTTOM = 14
 LEFT_BROW = [70, 63, 105, 66, 107]
 RIGHT_BROW = [300, 293, 334, 296, 336]
 
+# Iris centre landmarks (refined landmarks required)
+LEFT_IRIS_CENTER = 473
+RIGHT_IRIS_CENTER = 468
+# Outer eye corners
+LEFT_EYE_INNER = 362
+LEFT_EYE_OUTER = 263
+RIGHT_EYE_INNER = 133
+RIGHT_EYE_OUTER = 33
+
 
 def _eye_aspect_ratio(landmarks, indices: list[int]) -> float:
     pts = [(landmarks[i].x, landmarks[i].y) for i in indices]
-    # Simplified EAR: vertical distance / horizontal distance
     top = pts[1:7]
     bot = pts[9:15]
     vert = sum(abs(t[1] - b[1]) for t, b in zip(top, bot)) / 6
     horiz = abs(pts[0][0] - pts[8][0]) + 1e-6
     return vert / horiz
+
+
+def _clamp(value: float, lo: float = 0.0, hi: float = 1.0) -> float:
+    return max(lo, min(hi, value))
 
 
 class EmotionService:
@@ -36,16 +48,15 @@ class EmotionService:
             return fm.process(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
 
     def _landmarks_to_emotion(self, landmarks) -> str:
-        left_ear = _eye_aspect_ratio(landmarks, LEFT_EYE[:8])
-        right_ear = _eye_aspect_ratio(landmarks, RIGHT_EYE[:8])
+        left_ear = _eye_aspect_ratio(landmarks, LEFT_EYE)
+        right_ear = _eye_aspect_ratio(landmarks, RIGHT_EYE)
         avg_ear = (left_ear + right_ear) / 2
 
         mouth_gap = abs(landmarks[MOUTH_TOP].y - landmarks[MOUTH_BOTTOM].y)
 
-        # Brow raise — higher y means lower on screen (inverted)
         brow_y = np.mean([landmarks[i].y for i in LEFT_BROW + RIGHT_BROW])
         eye_y = np.mean([landmarks[i].y for i in LEFT_EYE[:4] + RIGHT_EYE[:4]])
-        brow_raise = eye_y - brow_y  # positive → brows raised
+        brow_raise = eye_y - brow_y
 
         if avg_ear < 0.15:
             return "nervous"
@@ -57,41 +68,110 @@ class EmotionService:
             return "confident"
         return "neutral"
 
+    def _landmarks_to_scores(self, landmarks) -> tuple[float, float]:
+        """Return (nervousness_score, confidence_score) both in [0, 1]."""
+        left_ear = _eye_aspect_ratio(landmarks, LEFT_EYE)
+        right_ear = _eye_aspect_ratio(landmarks, RIGHT_EYE)
+        avg_ear = (left_ear + right_ear) / 2
+
+        mouth_gap = abs(landmarks[MOUTH_TOP].y - landmarks[MOUTH_BOTTOM].y)
+
+        brow_y = np.mean([landmarks[i].y for i in LEFT_BROW + RIGHT_BROW])
+        eye_y = np.mean([landmarks[i].y for i in LEFT_EYE[:4] + RIGHT_EYE[:4]])
+        brow_raise = eye_y - brow_y
+
+        # Nervousness: high when EAR is low (squinting) + brows tense
+        nervousness = _clamp(1.0 - (avg_ear - 0.10) / 0.20)
+
+        # Confidence: high when EAR open + brows relaxed + mouth slightly open
+        confidence = _clamp(
+            0.4 * ((avg_ear - 0.15) / 0.15)
+            + 0.4 * (1.0 - max(brow_raise, 0) / 0.05)
+            + 0.2 * _clamp(mouth_gap / 0.04)
+        )
+
+        return round(nervousness, 3), round(confidence, 3)
+
+    def _landmarks_to_gaze(self, landmarks) -> str:
+        """Estimate gaze direction from iris position relative to eye corners."""
+        try:
+            # Left iris
+            l_iris_x = landmarks[LEFT_IRIS_CENTER].x
+            l_inner_x = landmarks[LEFT_EYE_INNER].x
+            l_outer_x = landmarks[LEFT_EYE_OUTER].x
+            l_ratio = (l_iris_x - l_inner_x) / (l_outer_x - l_inner_x + 1e-6)
+
+            # Right iris
+            r_iris_x = landmarks[RIGHT_IRIS_CENTER].x
+            r_inner_x = landmarks[RIGHT_EYE_INNER].x
+            r_outer_x = landmarks[RIGHT_EYE_OUTER].x
+            r_ratio = (r_iris_x - r_inner_x) / (r_outer_x - r_inner_x + 1e-6)
+
+            avg_ratio = (l_ratio + r_ratio) / 2
+
+            if avg_ratio < 0.35:
+                return "left"
+            if avg_ratio > 0.65:
+                return "right"
+
+            # Vertical: iris y vs eye centre y
+            iris_y = (landmarks[LEFT_IRIS_CENTER].y + landmarks[RIGHT_IRIS_CENTER].y) / 2
+            eye_centre_y = np.mean([landmarks[i].y for i in LEFT_EYE[:4] + RIGHT_EYE[:4]])
+            if iris_y < eye_centre_y - 0.01:
+                return "up"
+            if iris_y > eye_centre_y + 0.01:
+                return "down"
+            return "center"
+        except (IndexError, AttributeError):
+            return "center"
+
+    def _decode_frame(self, frame_b64: str):
+        """Decode a base64 JPEG/PNG to a BGR numpy array. Returns None on failure."""
+        try:
+            img_bytes = base64.b64decode(frame_b64)
+            arr = np.frombuffer(img_bytes, dtype=np.uint8)
+            return cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        except Exception:
+            return None
+
     async def analyze_frame(self, frame_b64: str) -> dict:
         loop = asyncio.get_event_loop()
 
         def _process():
-            try:
-                img_bytes = base64.b64decode(frame_b64)
-                arr = np.frombuffer(img_bytes, dtype=np.uint8)
-                image = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-                if image is None:
-                    return None
-                return self._run_facemesh(image)
-            except Exception:
+            image = self._decode_frame(frame_b64)
+            if image is None:
                 return None
+            return self._run_facemesh(image)
 
         result = await loop.run_in_executor(None, _process)
 
         if result is None or not result.multi_face_landmarks:
-            return {"emotion": "neutral", "eye_contact": False, "confidence": 0.5}
+            return {
+                "emotion": "neutral",
+                "eye_contact": False,
+                "confidence": 0.5,
+                "nervousness_score": 0.5,
+                "confidence_score": 0.5,
+                "gaze_direction": "center",
+            }
 
         landmarks = result.multi_face_landmarks[0].landmark
         emotion = self._landmarks_to_emotion(landmarks)
+        nervousness_score, confidence_score = self._landmarks_to_scores(landmarks)
+        gaze_direction = self._landmarks_to_gaze(landmarks)
 
-        left_ear = _eye_aspect_ratio(landmarks, LEFT_EYE[:8])
-        right_ear = _eye_aspect_ratio(landmarks, RIGHT_EYE[:8])
-        eye_contact = (left_ear + right_ear) / 2 > 0.18
+        try:
+            left_ear = _eye_aspect_ratio(landmarks, LEFT_EYE)
+            right_ear = _eye_aspect_ratio(landmarks, RIGHT_EYE)
+            eye_contact = (left_ear + right_ear) / 2 > 0.18
+        except (IndexError, TypeError):
+            eye_contact = False
 
-        confidence_map = {
-            "confident": 0.85,
-            "engaged": 0.75,
-            "neutral": 0.60,
-            "uncertain": 0.45,
-            "nervous": 0.30,
-        }
         return {
             "emotion": emotion,
             "eye_contact": eye_contact,
-            "confidence": confidence_map.get(emotion, 0.60),
+            "confidence": confidence_score,          # backward-compat alias
+            "nervousness_score": nervousness_score,
+            "confidence_score": confidence_score,
+            "gaze_direction": gaze_direction,
         }

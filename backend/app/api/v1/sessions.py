@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends
+from fastapi.responses import Response
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
@@ -78,3 +79,18 @@ async def get_debrief(
     service = DebriefService(db=db)
     result = await service.generate(session_id=session_id)
     return {"data": result, "error": None}
+
+
+@router.get("/{session_id}/report")
+async def get_report(
+    session_id: str,
+    user_id: str = Depends(get_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    service = DebriefService(db=db)
+    pdf_bytes = await service.generate_pdf(session_id=session_id)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="report-{session_id}.pdf"'},
+    )
