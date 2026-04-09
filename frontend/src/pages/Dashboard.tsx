@@ -1,39 +1,24 @@
 import { useState } from 'react'
 import { useAuthStore } from '../store/authStore'
+import { useInterviewSession } from '../hooks/useInterviewSession'
 import CompanySelector from '../components/interview/CompanySelector'
-
-interface SessionContext {
-  company: string
-  role: string
-  rounds: string[]
-}
 
 export default function Dashboard() {
   const name = useAuthStore((s) => s.name)
   const clearAuth = useAuthStore((s) => s.clearAuth)
-  const [session, setSession] = useState<SessionContext | null>(null)
+  const { startSession } = useInterviewSession()
+  const [starting, setStarting] = useState(false)
+  const [error, setError] = useState('')
 
-  if (session) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-950 text-white">
-        <div className="text-center max-w-md">
-          <h1 className="text-2xl font-bold mb-2">Session Ready</h1>
-          <p className="text-gray-400 mb-1">
-            <span className="text-white font-semibold">{session.company}</span> · {session.role}
-          </p>
-          <p className="text-sm text-gray-500 mb-6">
-            Rounds: {session.rounds.join(', ') || 'HR, behavioral, technical'}
-          </p>
-          <p className="text-gray-500 text-sm">Interview engine coming in Task 5.</p>
-          <button
-            className="mt-6 text-sm text-gray-400 underline"
-            onClick={() => setSession(null)}
-          >
-            ← Back
-          </button>
-        </div>
-      </div>
-    )
+  const handleSelect = async (company: string, role: string, rounds: string[]) => {
+    setStarting(true)
+    setError('')
+    try {
+      await startSession(company, role, rounds.length > 0 ? rounds : ['HR', 'behavioral', 'technical'])
+    } catch {
+      setError('Failed to start session. Is the backend running?')
+      setStarting(false)
+    }
   }
 
   return (
@@ -51,9 +36,17 @@ export default function Dashboard() {
         </div>
       </header>
       <main className="flex flex-1 items-center justify-center">
-        <CompanySelector
-          onSelect={(company, role, rounds) => setSession({ company, role, rounds })}
-        />
+        {starting ? (
+          <div className="text-gray-400 flex flex-col items-center gap-3">
+            <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+            <span>Generating your interview session…</span>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center gap-2">
+            {error && <p className="text-red-400 text-sm">{error}</p>}
+            <CompanySelector onSelect={handleSelect} />
+          </div>
+        )}
       </main>
     </div>
   )

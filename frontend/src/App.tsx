@@ -1,20 +1,22 @@
 import { useState } from 'react'
 import { useAuthStore } from './store/authStore'
+import { useInterviewStore } from './store/interviewStore'
 import Login from './pages/Login'
 import Onboarding from './pages/Onboarding'
 import Dashboard from './pages/Dashboard'
+import InterviewSession from './components/interview/InterviewSession'
 
 export default function App() {
   const [showRegister, setShowRegister] = useState(false)
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
+  const sessionId = useInterviewStore((s) => s.sessionId)
 
-  if (isAuthenticated) {
-    return <Dashboard />
+  if (!isAuthenticated) {
+    if (showRegister) return <Onboarding />
+    return <Login onGoToRegister={() => setShowRegister(true)} />
   }
 
-  if (showRegister) {
-    return <Onboarding />
-  }
+  if (sessionId) return <InterviewSession />
 
-  return <Login onGoToRegister={() => setShowRegister(true)} />
+  return <Dashboard />
 }
