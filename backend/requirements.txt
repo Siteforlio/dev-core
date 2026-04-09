@@ -1,0 +1,21 @@
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+sqlalchemy[asyncio]==2.0.30
+asyncpg==0.29.0
+alembic==1.13.1
+pydantic-settings==2.2.1
+pydantic[email]==2.7.1
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+neo4j==5.20.0
+redis[hiredis]==5.0.4
+structlog==24.2.0
+pytest==8.2.0
+pytest-asyncio==0.23.6
+httpx==0.27.0
+anthropic==0.28.0
+openai==1.30.0
+# mediapipe==0.10.14  # CONCERN: incompatible with Python 3.14 — needs Python <=3.12; re-enable with a compatible version when needed
+weasyprint==62.3
+slowapi==0.1.9
+pytest-benchmark==4.0.0
