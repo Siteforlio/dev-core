@@ -6,4 +6,4 @@ setup_middleware(app)
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    return {"data": {"status": "ok"}, "error": None}

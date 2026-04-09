@@ -1,5 +1,6 @@
 import uuid
 import structlog
+import structlog.contextvars
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -16,7 +17,9 @@ def setup_middleware(app: FastAPI):
 
     @app.middleware("http")
     async def correlation_id_middleware(request: Request, call_next):
+        structlog.contextvars.clear_contextvars()
         correlation_id = str(uuid.uuid4())
+        structlog.contextvars.bind_contextvars(correlation_id=correlation_id)
         request.state.correlation_id = correlation_id
         response = await call_next(request)
         response.headers["X-Correlation-ID"] = correlation_id
