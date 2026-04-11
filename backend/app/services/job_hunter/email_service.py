@@ -27,6 +27,8 @@ class EmailService:
         self._client = AsyncAnthropic(api_key=settings.anthropic_api_key)
 
     def _fernet(self) -> Fernet:
+        if not settings.job_hunter_encryption_key:
+            raise ValueError("JOB_HUNTER_ENCRYPTION_KEY is not configured")
         return Fernet(settings.job_hunter_encryption_key.encode())
 
     def encrypt_credentials(self, creds: dict) -> str:
@@ -134,7 +136,11 @@ class EmailService:
             self.db.add(event)
             await self.db.commit()
             if email_type == "rejection":
-                reply_body = await self.generate_rejection_reply(raw["sender"], raw["subject"])
+                # Extract best-effort company name from sender domain (e.g. hr@google.com → google.com)
+                sender_addr = raw["sender"]
+                company_hint = sender_addr.split("@")[-1].split(">")[0].strip() if "@" in sender_addr else sender_addr
+                role_hint = raw["subject"][:150]
+                reply_body = await self.generate_rejection_reply(company_hint, role_hint)
                 sent = await asyncio.to_thread(self.send_reply, creds, raw["sender"], raw["subject"], reply_body)
                 if sent:
                     event.ai_reply_sent = True
