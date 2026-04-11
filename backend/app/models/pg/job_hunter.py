@@ -1,7 +1,7 @@
 # backend/app/models/pg/job_hunter.py
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import String, DateTime, Boolean, Integer, Text, Index, UniqueConstraint, Float, ForeignKey
+from sqlalchemy import String, DateTime, Boolean, Integer, Text, Index, UniqueConstraint, ForeignKey
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from app.models.pg.base import Base
@@ -71,7 +71,7 @@ class JobListing(Base):
     url: Mapped[str] = mapped_column(Text, nullable=False)
     apply_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    match_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    match_score: Mapped[str | None] = mapped_column(String(10), nullable=True)
     sub_category: Mapped[str | None] = mapped_column(String(100), nullable=True)
     url_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     discovered_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

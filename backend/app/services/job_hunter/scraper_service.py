@@ -28,6 +28,7 @@ class ScraperService:
         msg = await self._client.messages.create(
             model="claude-haiku-4-5-20251001",
             max_tokens=10,
+            timeout=10.0,
             messages=[{"role": "user", "content": prompt}],
         )
         return msg.content[0].text.strip()
@@ -92,12 +93,12 @@ class ScraperService:
                 continue
             jobs.append({
                 "source": "jobspy",
-                "title": str(row.get("title", "")),
-                "company": str(row.get("company", "")),
-                "location": str(row.get("location", "")),
-                "location_country": str(row.get("country") or "")[:2].upper() or None,
+                "title": str(row.get("title") or ""),
+                "company": str(row.get("company") or ""),
+                "location": str(row.get("location") or "") or None,
+                "location_country": (str(row.get("country") or "")[:2].upper()) or None,
                 "remote": is_remote,
-                "url": str(row.get("job_url", "")),
+                "url": str(row.get("job_url") or ""),
                 "apply_url": apply_url,
                 "description": str(row.get("description") or ""),
             })

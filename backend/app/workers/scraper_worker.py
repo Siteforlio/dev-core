@@ -2,8 +2,14 @@
 import asyncio
 from app.core.celery_app import celery_app
 
-@celery_app.task(name="app.workers.scraper_worker.scrape_campaign")
-def scrape_campaign(campaign_id: str, user_id: str) -> dict:
+@celery_app.task(
+    name="app.workers.scraper_worker.scrape_campaign",
+    bind=True,
+    autoretry_for=(Exception,),
+    max_retries=3,
+    default_retry_delay=60,
+)
+def scrape_campaign(self, campaign_id: str, user_id: str) -> dict:
     from app.core.database import AsyncSessionLocal
     from app.services.job_hunter.scraper_service import ScraperService
     async def _run():
