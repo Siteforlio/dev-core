@@ -23,6 +23,14 @@ from app.models.pg.base import Base
 from app.models.pg.user import User
 from app.models.pg.session import InterviewSession, Round, RoundMoment, InterviewProfile
 from app.models.pg.community import CommunityData
+from app.models.pg.job_hunter import (
+    JobHunterProfile,
+    JobHunterCampaign,
+    JobListing,
+    Application,
+    EmailEvent,
+    CalendarEvent,
+)
 
 target_metadata = Base.metadata
 
