@@ -20,3 +20,14 @@ class ProfileUpsertRequest(BaseModel):
 
 class ResumeTextRequest(BaseModel):
     text: str
+
+
+class CampaignCreateRequest(BaseModel):
+    name: str
+    broad_category: str
+    user_country: str
+    profile_overrides: dict[str, Any] = {}
+
+
+class CampaignStatusRequest(BaseModel):
+    status: str
