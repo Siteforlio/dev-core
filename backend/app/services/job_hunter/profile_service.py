@@ -33,8 +33,6 @@ class ProfileService:
             value = data.get(field)
             if not value:
                 missing.append(field)
-            elif isinstance(value, list) and len(value) == 0:
-                missing.append(field)
             elif field == "skills" and isinstance(value, list) and len(value) < 3:
                 missing.append(field)
         score = int((1 - len(missing) / len(REQUIRED_FIELDS)) * 100)
@@ -56,9 +54,14 @@ class ProfileService:
             }],
         )
         text_content = message.content[0].text
-        start = text_content.find("{")
-        end = text_content.rfind("}") + 1
-        return json.loads(text_content[start:end])
+        try:
+            start = text_content.find("{")
+            end = text_content.rfind("}") + 1
+            if start == -1 or end == 0:
+                return {}
+            return json.loads(text_content[start:end])
+        except json.JSONDecodeError:
+            return {}
 
     async def upsert_profile(self, user_id: str, data: dict) -> JobHunterProfile:
         result = await self.db.execute(
@@ -72,6 +75,11 @@ class ProfileService:
                 user_id=user_id,
                 is_complete=completeness["is_complete"],
                 completion_score=completeness["completion_score"],
+                full_name=data.get("full_name"),
+                email=data.get("email"),
+                phone=data.get("phone"),
+                city=data.get("city"),
+                country=data.get("country"),
                 work_experience=data.get("work_experience", []),
                 education=data.get("education", []),
                 skills=data.get("skills", []),
@@ -84,7 +92,10 @@ class ProfileService:
             self.db.add(profile)
         else:
             for field in ["work_experience", "education", "skills", "projects", "languages_spoken"]:
-                if data.get(field):
+                if data.get(field) is not None:
+                    setattr(profile, field, data[field])
+            for field in ["full_name", "email", "phone", "city", "country", "linkedin_url", "github_url", "portfolio_url"]:
+                if data.get(field) is not None:
                     setattr(profile, field, data[field])
             profile.is_complete = completeness["is_complete"]
             profile.completion_score = completeness["completion_score"]
