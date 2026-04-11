@@ -1,8 +1,11 @@
 # backend/app/services/job_hunter/apply_service.py
 import asyncio
+import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.models.pg.job_hunter import Application, JobListing
+
+logger = logging.getLogger(__name__)
 
 ATS_PATTERNS = {
     "greenhouse": ["boards.greenhouse.io", "grnh.se"],
@@ -17,6 +20,8 @@ class ApplyService:
         self.db = db
 
     def detect_ats(self, url: str) -> str:
+        if not url:
+            return "generic"
         url_lower = url.lower()
         for ats, patterns in ATS_PATTERNS.items():
             if any(p in url_lower for p in patterns):
@@ -27,6 +32,7 @@ class ApplyService:
         result = await self.db.execute(select(Application).where(Application.id == application_id))
         application = result.scalar_one_or_none()
         if not application:
+            logger.warning("submit_application: application %s not found", application_id)
             return False
 
         listing_result = await self.db.execute(select(JobListing).where(JobListing.id == application.job_listing_id))
@@ -51,13 +57,18 @@ class ApplyService:
             application.status = "applied" if success else "failed"
             listing.status = "applied" if success else "failed"
         except Exception:
+            logger.exception("submit_application: Playwright error for application %s url %s", application_id, listing.apply_url)
             application.status = "failed"
             listing.status = "failed"
         await self.db.commit()
         return application.status == "applied"
 
     def _fill_form_sync(self, apply_url: str, ats: str, form_answers: dict, cover_letter: str) -> bool:
-        """Playwright form filling — runs in thread via asyncio.to_thread."""
+        """Playwright form filling — runs in thread via asyncio.to_thread.
+
+        NOTE: Returns True after clicking submit, but cannot confirm ATS acceptance
+        (error pages, CAPTCHA, duplicate detection). This is a best-effort signal.
+        """
         from playwright.sync_api import sync_playwright
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
@@ -84,11 +95,12 @@ class ApplyService:
                             el.fill(value)
                     except Exception:
                         pass
-                # Submit
+                # Submit — return False if no visible submit button found
                 submit = page.locator('button[type="submit"], input[type="submit"]').first
-                if submit.is_visible(timeout=3000):
-                    submit.click()
-                    page.wait_for_load_state("networkidle", timeout=10000)
+                if not submit.is_visible(timeout=3000):
+                    return False
+                submit.click()
+                page.wait_for_load_state("networkidle", timeout=10000)
                 return True
             except Exception:
                 return False

@@ -1,12 +1,12 @@
 # backend/app/workers/apply_worker.py
 import asyncio
-from anthropic import APITimeoutError, APIConnectionError
+from sqlalchemy.exc import OperationalError
 from app.core.celery_app import celery_app
 
 @celery_app.task(
     name="app.workers.apply_worker.submit_application",
     bind=True,
-    autoretry_for=(APITimeoutError, APIConnectionError),
+    autoretry_for=(OperationalError,),
     max_retries=3,
     default_retry_delay=60,
 )

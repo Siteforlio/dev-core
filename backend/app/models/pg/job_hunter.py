@@ -93,7 +93,7 @@ class Application(Base):
     tailored_resume_pdf_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     cover_letter: Mapped[str | None] = mapped_column(Text, nullable=True)
     form_answers: Mapped[dict] = mapped_column(JSONB, default=dict)
-    status: Mapped[str] = mapped_column(String(20), default="applied")
+    status: Mapped[str] = mapped_column(String(20), default="pending")
     applied_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     status_updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
