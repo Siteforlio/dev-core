@@ -18,7 +18,7 @@ class TailorService:
             timeout=30.0,
             messages=[{"role": "user", "content": prompt}],
         )
-        return msg.content[0].text
+        return msg.content[0].text if msg.content else ""
 
     async def extract_keywords(self, jd: str) -> list[str]:
         raw = await self._call_haiku(
@@ -64,6 +64,17 @@ class TailorService:
         )
 
     async def tailor_for_listing(self, listing_id: str, user_id: str) -> Application | None:
+        # Idempotency check — prevent duplicate applications on retry
+        existing_result = await self.db.execute(
+            select(Application).where(
+                Application.job_listing_id == listing_id,
+                Application.user_id == user_id,
+            )
+        )
+        existing = existing_result.scalar_one_or_none()
+        if existing:
+            return existing
+
         listing_result = await self.db.execute(select(JobListing).where(JobListing.id == listing_id))
         listing = listing_result.scalar_one_or_none()
         if not listing or not listing.description:
@@ -74,6 +85,11 @@ class TailorService:
         if not profile:
             return None
 
+        # Truncate external strings before interpolating into prompts
+        company = (listing.company or "")[:100]
+        title = (listing.title or "")[:150]
+        location = (listing.location or "remote")[:100]
+
         keywords = await self.extract_keywords(listing.description)
         experience = profile.work_experience or []
         all_bullets = [
@@ -82,10 +98,10 @@ class TailorService:
         ]
         rewritten = await self.rewrite_bullets(all_bullets[:10], keywords) if all_bullets else []
         seniority = "mid"
-        salary = await self.infer_salary(seniority, listing.location or "remote", listing.company)
-        summary = await self.generate_summary(profile, keywords, listing.title)
+        salary = await self.infer_salary(seniority, location, company)
+        summary = await self.generate_summary(profile, keywords, title)
         cover_letter = await self._call_haiku(
-            f"Write a concise cover letter for {listing.title} at {listing.company}. "
+            f"Write a concise cover letter for {title} at {company}. "
             f"Profile: {', '.join((profile.skills or [])[:8])}. Salary expectation: {salary}. "
             f"Keywords: {', '.join(keywords[:8])}. Return only the letter text.",
             max_tokens=400,

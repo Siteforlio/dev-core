@@ -1,11 +1,12 @@
 # backend/app/workers/tailor_worker.py
 import asyncio
+from anthropic import APITimeoutError, APIConnectionError
 from app.core.celery_app import celery_app
 
 @celery_app.task(
     name="app.workers.tailor_worker.tailor_listing",
     bind=True,
-    autoretry_for=(Exception,),
+    autoretry_for=(APITimeoutError, APIConnectionError),
     max_retries=3,
     default_retry_delay=60,
 )

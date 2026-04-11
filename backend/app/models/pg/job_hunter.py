@@ -98,6 +98,7 @@ class Application(Base):
     status_updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     __table_args__ = (
+        UniqueConstraint("job_listing_id", "user_id", name="uq_applications_listing_user"),
         Index("ix_applications_user_status", "user_id", "status"),
         Index("ix_applications_job_listing", "job_listing_id"),
         Index("ix_applications_campaign", "campaign_id"),
