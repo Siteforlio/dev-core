@@ -1,0 +1,46 @@
+<h2>Pipeline Architecture — 3 Approaches</h2>
+<p class="subtitle">How the Job Hunter runs in the background. Pick what feels right for you.</p>
+
+<div class="options">
+
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Continuous 24/7 Pipeline</h3>
+      <p>Campaign runs non-stop once activated. Scrapes new jobs, tailors, applies, monitors email — all the time. No schedule needed.</p>
+      <div class="pros-cons" style="margin-top: 12px;">
+        <div class="pros"><h4>Pros</h4><ul><li>Fastest to apply — first-mover advantage</li><li>Never misses a new posting</li><li>Email replies go out within minutes</li></ul></div>
+        <div class="cons"><h4>Cons</h4><ul><li>Higher scraping cost / proxy usage</li><li>Needs rate limiting to avoid bans</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Scheduled Runs (e.g. 3× per day)</h3>
+      <p>Campaign runs on a set schedule — e.g. 7am, 12pm, 6pm. Each run scrapes fresh jobs, applies, checks email. Quiet between runs.</p>
+      <div class="pros-cons" style="margin-top: 12px;">
+        <div class="pros"><h4>Pros</h4><ul><li>Predictable, controllable</li><li>Lower resource usage</li><li>Easy to audit what happened each run</li></ul></div>
+        <div class="cons"><h4>Cons</h4><ul><li>Slower response to new postings</li><li>Email replies may be delayed hours</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Continuous Email + Scheduled Apply <span style="font-size: 12px; background: #6366f1; color: white; padding: 2px 8px; border-radius: 4px; margin-left: 8px;">Recommended</span></h3>
+      <p>Best of both: job scraping + applying runs on a schedule (e.g. every 6 hours), but email monitoring is always on — interview replies and rejection responses go out within minutes, always.</p>
+      <div class="pros-cons" style="margin-top: 12px;">
+        <div class="pros"><h4>Pros</h4><ul><li>Fast email response (what matters most)</li><li>Controlled scraping cadence (avoids bans)</li><li>Lower proxy cost than full 24/7</li><li>Clean separation of concerns</li></ul></div>
+        <div class="cons"><h4>Cons</h4><ul><li>Not the absolute fastest to apply</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div style="margin-top: 20px; padding: 14px; background: #0f172a; border-radius: 8px; border: 1px solid #334155;">
+  <p style="color: #94a3b8; font-size: 13px; margin: 0;">💡 My recommendation is <strong style="color: #a5b4fc;">C</strong> — email is the most time-sensitive part (an interview invite needs a fast reply), while applying 6 hours late rarely costs you the spot. It also keeps scraping costs low and avoids bot detection from hammering job boards non-stop.</p>
+</div>
