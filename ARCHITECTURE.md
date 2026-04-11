@@ -33,6 +33,7 @@ Each module is designed as an independently deployable unit that shares the same
 | Avatar | HeyGen / Simli API | Per provider |
 | Emotion detection | MediaPipe | Latest |
 | LLM | Anthropic Claude API | claude-sonnet-4-6 (default) |
+| Task queue | Celery + Redis | Latest stable |
 | Containerization | Docker + Docker Compose | Latest stable |
 | CI | GitHub Actions | — |
 
