@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     simli_api_key: str = ""
     openai_api_key: str = ""
     environment: str = "development"
-    job_hunter_encryption_key: str = ""          # Fernet 32-byte URL-safe base64 key
+    job_hunter_encryption_key: str | None = None  # Fernet 32-byte URL-safe base64 key
     celery_broker_url: str = "redis://localhost:6379/1"
     celery_result_backend: str = "redis://localhost:6379/2"
     playwright_max_concurrency: int = 4
