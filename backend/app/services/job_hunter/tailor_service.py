@@ -54,10 +54,10 @@ class TailorService:
             max_tokens=50,
         )
 
-    async def generate_summary(self, profile: dict, keywords: list[str], role: str) -> str:
+    async def generate_summary(self, profile: JobHunterProfile, keywords: list[str], role: str) -> str:
         return await self._call_haiku(
             f"Write a 2-3 sentence professional summary for a {role} role. "
-            f"Profile skills: {', '.join(profile.get('skills', [])[:10])}. "
+            f"Profile skills: {', '.join((profile.skills or [])[:10])}. "
             f"Inject these keywords naturally: {', '.join(keywords[:8])}. "
             f"Return only the summary text.",
             max_tokens=200,
@@ -83,7 +83,7 @@ class TailorService:
         rewritten = await self.rewrite_bullets(all_bullets[:10], keywords) if all_bullets else []
         seniority = "mid"
         salary = await self.infer_salary(seniority, listing.location or "remote", listing.company)
-        summary = await self.generate_summary({"skills": profile.skills or []}, keywords, listing.title)
+        summary = await self.generate_summary(profile, keywords, listing.title)
         cover_letter = await self._call_haiku(
             f"Write a concise cover letter for {listing.title} at {listing.company}. "
             f"Profile: {', '.join((profile.skills or [])[:8])}. Salary expectation: {salary}. "
