@@ -74,8 +74,16 @@ class CampaignService:
         )
         return list(result.scalars().all())
 
-    async def set_status(self, campaign_id: str, status: str) -> None:
-        result = await self.db.execute(select(JobHunterCampaign).where(JobHunterCampaign.id == campaign_id))
-        campaign = result.scalar_one()
+    async def set_status(self, campaign_id: str, user_id: str, status: str) -> None:
+        result = await self.db.execute(
+            select(JobHunterCampaign).where(
+                JobHunterCampaign.id == campaign_id,
+                JobHunterCampaign.user_id == user_id,
+                JobHunterCampaign.deleted_at.is_(None),
+            )
+        )
+        campaign = result.scalar_one_or_none()
+        if campaign is None:
+            raise ValueError("Campaign not found")
         campaign.status = status
         await self.db.commit()

@@ -49,5 +49,8 @@ async def update_status(
     user_id: str = Depends(get_user_id),
 ):
     service = CampaignService(db)
-    await service.set_status(campaign_id, body.status)
+    try:
+        await service.set_status(campaign_id, user_id, body.status)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Campaign not found")
     return {"data": {"updated": True}, "error": None}

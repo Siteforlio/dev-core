@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Any
+from typing import Any, Literal
 
 
 class ProfileUpsertRequest(BaseModel):
@@ -30,4 +30,4 @@ class CampaignCreateRequest(BaseModel):
 
 
 class CampaignStatusRequest(BaseModel):
-    status: str
+    status: Literal["active", "paused", "archived"]
