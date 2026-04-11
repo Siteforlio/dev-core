@@ -20,7 +20,7 @@ async def get_dashboard(
     user_id: str = Depends(get_user_id),
 ):
     service = DashboardService(db)
-    summary = await service.get_campaign_summary(campaign_id)
-    pipeline = await service.get_pipeline(campaign_id)
-    interviews = await service.get_scheduled_interviews(campaign_id)
+    summary = await service.get_campaign_summary(campaign_id, user_id)
+    pipeline = await service.get_pipeline(campaign_id, user_id)
+    interviews = await service.get_scheduled_interviews(campaign_id, user_id)
     return {"data": {"summary": summary, "pipeline": pipeline, "interviews": interviews}, "error": None}

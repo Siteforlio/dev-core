@@ -73,6 +73,11 @@ class CalendarService:
             logger.exception("_push_caldav_event failed for %s", creds.get("url"))
             return None
 
+    @staticmethod
+    def _sanitize_ical_text(value: str) -> str:
+        """Strip CR and LF to prevent iCalendar header injection."""
+        return value.replace("\r", "").replace("\n", "")
+
     async def create_interview_event(
         self,
         application_id: str,
@@ -83,7 +88,7 @@ class CalendarService:
         duration_minutes: int,
         caldav_creds: dict,
     ) -> CalendarEvent:
-        title = f"Interview: {role[:150]} at {company[:100]}"
+        title = self._sanitize_ical_text(f"Interview: {role[:150]} at {company[:100]}")
         ext_id = await self._push_caldav_event(caldav_creds, title, scheduled_at, duration_minutes)
         event = CalendarEvent(
             id=str(uuid.uuid4()),
