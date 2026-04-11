@@ -9,12 +9,15 @@ class BridgeService:
         self.db = db
         self._persona_engine = PersonaEngine()
 
-    async def get_interview_context(self, application_id: str) -> dict:
-        result = await self.db.execute(
+    async def get_interview_context(self, application_id: str, campaign_id: str | None = None) -> dict:
+        query = (
             select(Application, JobListing)
             .join(JobListing, Application.job_listing_id == JobListing.id)
             .where(Application.id == application_id)
         )
+        if campaign_id:
+            query = query.where(Application.campaign_id == campaign_id)
+        result = await self.db.execute(query)
         row = result.first()
         if not row:
             return {}

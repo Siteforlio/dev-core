@@ -35,5 +35,5 @@ async def get_interview_context(
     user_id: str = Depends(get_user_id),
 ):
     service = BridgeService(db)
-    context = await service.get_interview_context(application_id)
+    context = await service.get_interview_context(application_id, campaign_id=campaign_id)
     return {"data": context, "error": None}
