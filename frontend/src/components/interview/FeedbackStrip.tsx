@@ -19,30 +19,40 @@ interface Props {
 }
 
 export default function FeedbackStrip({ active }: Props) {
+  const [enabled, setEnabled] = useState(false)
   const [state, setState] = useState<EmotionState>({ emotion: 'neutral', eye_contact: false, confidence: 0.5 })
+  const [cameraError, setCameraError] = useState(false)
   const videoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const mountedRef = useRef(true)
 
   useEffect(() => {
-    if (!active) return
+    mountedRef.current = true
+    return () => { mountedRef.current = false }
+  }, [])
 
-    let mounted = true
+  useEffect(() => {
+    if (!active || !enabled) return
 
     const startCamera = async () => {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 320, height: 240 } })
+        // Prefer built-in/USB camera, avoid phone cameras
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: 320, height: 240, facingMode: 'user' },
+        })
         streamRef.current = stream
         if (videoRef.current) videoRef.current.srcObject = stream
+        setCameraError(false)
       } catch {
-        // camera unavailable — strip stays in default state
+        setCameraError(true)
       }
     }
 
     startCamera()
 
     const capture = async () => {
-      if (!mounted || !videoRef.current || !streamRef.current) return
+      if (!mountedRef.current || !videoRef.current || !streamRef.current) return
       const canvas = document.createElement('canvas')
       canvas.width = 320
       canvas.height = 240
@@ -56,7 +66,7 @@ export default function FeedbackStrip({ active }: Props) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ frame_b64 }),
         })
-        if (res.ok && mounted) {
+        if (res.ok && mountedRef.current) {
           const json = await res.json()
           setState(json.data)
         }
@@ -68,41 +78,61 @@ export default function FeedbackStrip({ active }: Props) {
     intervalRef.current = setInterval(capture, 2000)
 
     return () => {
-      mounted = false
       if (intervalRef.current) clearInterval(intervalRef.current)
       streamRef.current?.getTracks().forEach((t) => t.stop())
+      streamRef.current = null
     }
-  }, [active])
+  }, [active, enabled])
 
   const confidencePct = Math.round(state.confidence * 100)
 
   return (
     <div className="flex items-center gap-4 px-4 py-2 bg-gray-900 border-t border-gray-800 text-xs shrink-0">
-      {/* Hidden video for frame capture */}
       <video ref={videoRef} autoPlay muted playsInline className="hidden" />
 
-      {/* Emotion label */}
-      <span className={`capitalize font-medium ${EMOTION_COLOR[state.emotion] ?? 'text-gray-400'}`}>
-        {state.emotion}
-      </span>
+      {!enabled ? (
+        <button
+          onClick={() => setEnabled(true)}
+          className="text-gray-500 hover:text-gray-300 transition-colors flex items-center gap-1.5"
+        >
+          <span className="w-2 h-2 rounded-full bg-gray-700 inline-block" />
+          Enable emotion tracking
+        </button>
+      ) : cameraError ? (
+        <span className="text-gray-600">Camera unavailable</span>
+      ) : (
+        <>
+          <span className={`capitalize font-medium ${EMOTION_COLOR[state.emotion] ?? 'text-gray-400'}`}>
+            {state.emotion}
+          </span>
 
-      {/* Confidence bar */}
-      <div className="flex items-center gap-2 flex-1 max-w-32">
-        <span className="text-gray-500 shrink-0">Confidence</span>
-        <div className="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden">
-          <div
-            className="h-full bg-blue-500 transition-all duration-700"
-            style={{ width: `${confidencePct}%` }}
-          />
-        </div>
-        <span className="text-gray-400 shrink-0 w-8 text-right">{confidencePct}%</span>
-      </div>
+          <div className="flex items-center gap-2 flex-1 max-w-32">
+            <span className="text-gray-500 shrink-0">Confidence</span>
+            <div className="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-blue-500 transition-all duration-700"
+                style={{ width: `${confidencePct}%` }}
+              />
+            </div>
+            <span className="text-gray-400 shrink-0 w-8 text-right">{confidencePct}%</span>
+          </div>
 
-      {/* Eye contact dot */}
-      <div className="flex items-center gap-1.5">
-        <div className={`w-2 h-2 rounded-full ${state.eye_contact ? 'bg-green-500' : 'bg-gray-600'}`} />
-        <span className="text-gray-500">Eye contact</span>
-      </div>
+          <div className="flex items-center gap-1.5">
+            <div className={`w-2 h-2 rounded-full ${state.eye_contact ? 'bg-green-500' : 'bg-gray-600'}`} />
+            <span className="text-gray-500">Eye contact</span>
+          </div>
+
+          <button
+            onClick={() => {
+              setEnabled(false)
+              streamRef.current?.getTracks().forEach((t) => t.stop())
+            }}
+            className="text-gray-600 hover:text-gray-400 ml-auto"
+          >
+            ✕
+          </button>
+        </>
+      )}
     </div>
   )
 }

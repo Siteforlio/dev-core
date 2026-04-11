@@ -1,48 +1,24 @@
 import io
-import edge_tts
 import openai
 from app.core.config import settings
 
-LANGUAGE_VOICE_MAP = {
-    "en": "en-US-JennyNeural",
-    "es": "es-ES-AlvaroNeural",
-    "fr": "fr-FR-HenriNeural",
-    "pt": "pt-BR-AntonioNeural",
-    "sw": "sw-KE-RafikiNeural",
-    "de": "de-DE-ConradNeural",
-    "zh": "zh-CN-YunxiNeural",
-    "ja": "ja-JP-KeitaNeural",
-    "ko": "ko-KR-InJoonNeural",
-    "ar": "ar-SA-HamedNeural",
-    "hi": "hi-IN-MadhurNeural",
-    "ru": "ru-RU-DmitryNeural",
-    "it": "it-IT-DiegoNeural",
-    "nl": "nl-NL-MaartenNeural",
-    "pl": "pl-PL-MarekNeural",
-    "tr": "tr-TR-AhmetNeural",
-    "vi": "vi-VN-NamMinhNeural",
-    "th": "th-TH-NiwatNeural",
-    "id": "id-ID-ArdiNeural",
-    "uk": "uk-UA-OstapNeural",
-}
-DEFAULT_VOICE = "en-US-JennyNeural"
+# OpenAI TTS voices — onyx is deep/authoritative (interviewer), nova is warmer
+TTS_VOICE = "onyx"
 
 
 class SpeechService:
     def __init__(self):
         self._openai_client = openai.AsyncOpenAI(api_key=settings.openai_api_key)
 
-    async def _edge_tts_synthesize(self, text: str, voice: str) -> bytes:
-        buf = io.BytesIO()
-        communicate = edge_tts.Communicate(text, voice)
-        async for chunk in communicate.stream():
-            if chunk["type"] == "audio":
-                buf.write(chunk["data"])
-        return buf.getvalue()
-
-    async def synthesize(self, text: str, language: str = "en") -> bytes:
-        voice = LANGUAGE_VOICE_MAP.get(language, DEFAULT_VOICE)
-        return await self._edge_tts_synthesize(text=text, voice=voice)
+    async def synthesize(self, text: str, language: str = "en") -> bytes:  # noqa: ARG002
+        """Synthesize speech using OpenAI TTS (tts-1). Language is inferred from text."""
+        response = await self._openai_client.audio.speech.create(
+            model="tts-1",
+            voice=TTS_VOICE,
+            input=text,
+            response_format="mp3",
+        )
+        return response.content
 
     async def transcribe(self, audio_bytes: bytes, language_hint: str = "en") -> str:
         audio_file = io.BytesIO(audio_bytes)

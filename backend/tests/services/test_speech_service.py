@@ -1,22 +1,31 @@
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from app.services.speech_service import SpeechService
 
 
 async def test_synthesize_returns_audio_bytes():
     service = SpeechService()
-    fake_audio = b"RIFF....fake_wav_data"
-    with patch.object(service, '_edge_tts_synthesize', new=AsyncMock(return_value=fake_audio)):
-        result = await service.synthesize(text="Tell me about yourself.", language="en")
+    fake_audio = b"ID3\x00\x00fake_mp3_data"
+    mock_client = MagicMock()
+    mock_client.audio.speech.create = AsyncMock(
+        return_value=MagicMock(content=fake_audio)
+    )
+    service._openai_client = mock_client
+    result = await service.synthesize(text="Tell me about yourself.", language="en")
     assert isinstance(result, bytes)
     assert len(result) > 0
 
 
-async def test_synthesize_selects_voice_by_language():
+async def test_synthesize_calls_tts1_model():
     service = SpeechService()
-    with patch.object(service, '_edge_tts_synthesize', new=AsyncMock(return_value=b"audio")) as mock_tts:
-        await service.synthesize(text="Hola", language="es")
-        call_args = mock_tts.call_args
-        assert "es" in call_args[1].get("voice", "") or call_args[0][1].startswith("es")
+    mock_client = MagicMock()
+    mock_client.audio.speech.create = AsyncMock(
+        return_value=MagicMock(content=b"audio")
+    )
+    service._openai_client = mock_client
+    await service.synthesize(text="Hello", language="es")
+    call_kwargs = mock_client.audio.speech.create.call_args[1]
+    assert call_kwargs["model"] == "tts-1"
+    assert call_kwargs["voice"] == "onyx"
 
 
 async def test_transcribe_returns_text():
