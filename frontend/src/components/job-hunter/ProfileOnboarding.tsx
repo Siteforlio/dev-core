@@ -129,13 +129,38 @@ export default function ProfileOnboarding({ onComplete }: Props) {
           onChange={(e) =>
             setField(
               'skills',
+              e.target.value.split(',').map((s) => s.trim()).filter(Boolean)
+            )
+          }
+          placeholder="React, TypeScript, Python, FastAPI, PostgreSQL…"
+          className="bg-gray-900 border border-gray-800 text-gray-200 text-sm rounded px-3 py-2 focus:outline-none focus:border-blue-600"
+        />
+      </div>
+
+      {/* Languages spoken */}
+      <div className="flex flex-col gap-2">
+        <h3 className="text-sm font-semibold text-gray-300">Languages Spoken</h3>
+        <p className="text-xs text-gray-500">Comma-separated (min 1)</p>
+        <input
+          type="text"
+          value={
+            Array.isArray(fields.languages_spoken)
+              ? (fields.languages_spoken as { language: string }[])
+                  .map((l) => (typeof l === 'string' ? l : l.language))
+                  .join(', ')
+              : ''
+          }
+          onChange={(e) =>
+            setField(
+              'languages_spoken',
               e.target.value
                 .split(',')
                 .map((s) => s.trim())
                 .filter(Boolean)
+                .map((lang) => ({ language: lang, proficiency: 'conversational' }))
             )
           }
-          placeholder="React, TypeScript, Python, FastAPI, PostgreSQL…"
+          placeholder="English, Spanish, French…"
           className="bg-gray-900 border border-gray-800 text-gray-200 text-sm rounded px-3 py-2 focus:outline-none focus:border-blue-600"
         />
       </div>
