@@ -46,9 +46,17 @@ export function useJobHunter() {
     // Pydantic v2 rejects explicit null for list[...] fields — null must become []
     // Skills from Haiku may arrive as a comma-separated string instead of an array
     const sanitized: Record<string, unknown> = { ...fields }
-    const listFields = ['work_experience', 'education', 'projects', 'languages_spoken'] as const
+    const listFields = ['work_experience', 'education', 'projects'] as const
     for (const key of listFields) {
       if (!Array.isArray(sanitized[key])) sanitized[key] = []
+    }
+    // languages_spoken must be list[dict] — Haiku sometimes returns list[str]
+    if (!Array.isArray(sanitized.languages_spoken)) {
+      sanitized.languages_spoken = []
+    } else {
+      sanitized.languages_spoken = (sanitized.languages_spoken as unknown[]).map((item) =>
+        typeof item === 'string' ? { language: item, proficiency: 'conversational' } : item
+      )
     }
     if (!Array.isArray(sanitized.skills)) {
       sanitized.skills =
