@@ -43,11 +43,30 @@ export function useJobHunter() {
   async function upsertProfile(
     fields: Record<string, unknown>
   ): Promise<{ isComplete: boolean; completionScore: number; missingFields: string[] }> {
+    // Pydantic v2 rejects explicit null for list[...] fields — null must become []
+    // Skills from Haiku may arrive as a comma-separated string instead of an array
+    const sanitized: Record<string, unknown> = { ...fields }
+    const listFields = ['work_experience', 'education', 'projects', 'languages_spoken'] as const
+    for (const key of listFields) {
+      if (!Array.isArray(sanitized[key])) sanitized[key] = []
+    }
+    if (!Array.isArray(sanitized.skills)) {
+      sanitized.skills =
+        typeof sanitized.skills === 'string'
+          ? (sanitized.skills as string).split(',').map((s) => s.trim()).filter(Boolean)
+          : []
+    }
+
     const res = await fetch(`${BASE}/job-hunter/profiles/me`, {
       method: 'PUT',
       headers,
-      body: JSON.stringify(fields),
+      body: JSON.stringify(sanitized),
     })
+    if (!res.ok) {
+      const body = await res.json().catch(() => null)
+      const detail = body?.detail ?? body?.error?.message ?? `HTTP ${res.status}`
+      throw new Error(detail)
+    }
     const { data } = await res.json()
     return {
       isComplete: data.is_complete,

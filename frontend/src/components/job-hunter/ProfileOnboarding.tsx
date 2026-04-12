@@ -31,6 +31,7 @@ export default function ProfileOnboarding({ onComplete }: Props) {
 
   const handleSave = async () => {
     setSaving(true)
+    setParseError('')
     try {
       const result = await upsertProfile(fields)
       setCompletionScore(result.completionScore)
@@ -38,6 +39,8 @@ export default function ProfileOnboarding({ onComplete }: Props) {
       if (result.isComplete) {
         onComplete()
       }
+    } catch (err) {
+      setParseError(err instanceof Error ? err.message : 'Failed to save profile. Is the backend running?')
     } finally {
       setSaving(false)
     }
