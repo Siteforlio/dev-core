@@ -64,8 +64,11 @@ export function useJobHunter() {
     })
     if (!res.ok) {
       const body = await res.json().catch(() => null)
-      const detail = body?.detail ?? body?.error?.message ?? `HTTP ${res.status}`
-      throw new Error(detail)
+      // Pydantic v2 returns detail as an array of {loc, msg, type} objects
+      const detail = Array.isArray(body?.detail)
+        ? body.detail.map((e: { loc?: string[]; msg?: string }) => `${(e.loc ?? []).slice(1).join('.')}: ${e.msg}`).join('; ')
+        : (body?.detail ?? body?.error?.message ?? `HTTP ${res.status}`)
+      throw new Error(String(detail))
     }
     const { data } = await res.json()
     return {
