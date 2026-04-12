@@ -13,7 +13,7 @@ export function useCampaignActivity(campaignId: string | null, token: string | n
   useEffect(() => {
     if (!campaignId || !token) return
 
-    const ws = new WebSocket(`/ws/campaign/${campaignId}/activity?token=${token}`)
+    const ws = new WebSocket(`/api/v1/ws/campaign/${campaignId}/activity?token=${token}`)
     wsRef.current = ws
 
     ws.onmessage = (e: MessageEvent) => {
