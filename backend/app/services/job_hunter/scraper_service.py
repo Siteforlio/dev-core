@@ -1,11 +1,55 @@
 # backend/app/services/job_hunter/scraper_service.py
-import hashlib, sys, uuid
+import hashlib, sys, uuid, re as _re
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from app.models.pg.job_hunter import JobListing, JobHunterCampaign
 from app.core.config import settings
 from app.services.job_hunter.llm import call_llm
+
+_SCORE_ORDER = {"MATCH": 0, "PARTIAL": 1, "SKIP": 2}
+
+_TECH_REJECT_SIGNALS = {
+    "sales", "marketing", "accountant", "recruiter", "hr ", "human resources",
+    "legal", "logistics", "driver", "cook", "nurse", "doctor", "cleaner",
+}
+
+_TECH_ACCEPT_SIGNALS = {
+    "engineer", "developer", "architect", "devops", "sre", "backend", "frontend",
+    "fullstack", "full-stack", "full stack", "mobile", "ios", "android", "embedded",
+    "firmware", "cloud", "platform",
+    "data scientist", "data analyst", "data engineer", "machine learning",
+    "ml engineer", "ai engineer",
+    "product manager", "ux", "ui designer", "product designer",
+    "security", "cybersecurity", "penetration", "sysadmin", "network engineer",
+    "it support", "database admin", "dba",
+    "technical lead", "tech lead", "engineering manager", "cto", "vp engineering",
+    "staff engineer", "solutions engineer", "developer advocate", "technical writer",
+    "qa engineer", "test engineer",
+}
+
+_LARGE_CORP_SIGNALS = {
+    "google", "microsoft", "amazon", "meta", "apple", "ibm", "oracle", "sap",
+    "accenture", "deloitte", "pwc", "kpmg", "ernst", "capgemini", "infosys",
+    "wipro", "tcs", "cognizant",
+}
+
+_STARTUP_NATIVE_SOURCES = {
+    "hn_hiring", "remotive", "remoteok", "weworkremotely", "zindi",
+    "startupdeals_africa", "fuzu", "brightermonday", "myjobmag",
+    "kuhustle", "andela", "arc",
+}
+
+
+def _smb_score(job: dict) -> int:
+    """Score a job for SMB/startup preference. Higher = more startup-like. Max 3."""
+    score = 0
+    if job.get("source", "") in _STARTUP_NATIVE_SOURCES:
+        score += 2
+    company = (job.get("company") or "").strip().lower()
+    if company and not any(sig in company for sig in _LARGE_CORP_SIGNALS):
+        score += 1
+    return score
 
 
 async def _run_linkedin_subprocess(li_scraper, broad_category, user_country, work_type, publish_fn):
@@ -208,6 +252,20 @@ class ScraperService:
             if skill.lower() in haystack:
                 return True
         return False
+
+    def _tech_role_prefilter(self, title: str, description: str) -> bool:
+        """Return False to drop obvious non-tech jobs before AI scoring.
+        Default is True — ambiguous jobs pass through to Haiku."""
+        t = title.lower()
+        if any(sig in t for sig in _TECH_REJECT_SIGNALS):
+            return False
+        if any(sig in t for sig in _TECH_ACCEPT_SIGNALS):
+            return True
+        # Title is ambiguous — check first 300 chars of post-strip description
+        stripped = _re.sub(r'<[^>]+>', ' ', description).lower()[:300]
+        if any(sig in stripped for sig in _TECH_ACCEPT_SIGNALS):
+            return True
+        return True  # default: pass through
 
     async def score_job_match(
         self,
