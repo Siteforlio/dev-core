@@ -36,6 +36,23 @@ class JobHunterProfile(Base):
         UniqueConstraint("user_id", name="uq_job_hunter_profiles_user_id"),
     )
 
+class UserIntegration(Base):
+    """Global per-user integration credentials — configured once, toggled per campaign."""
+    __tablename__ = "user_integrations"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
+    email_account_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    caldav_account_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    linkedin_account_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    email_monitor_since: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    __table_args__ = (
+        UniqueConstraint("user_id", name="uq_user_integrations_user_id"),
+        Index("ix_user_integrations_user_id", "user_id"),
+    )
+
+
 class JobHunterCampaign(Base):
     __tablename__ = "job_hunter_campaigns"
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -45,17 +62,63 @@ class JobHunterCampaign(Base):
     broad_category: Mapped[str] = mapped_column(String(255), nullable=False)
     sub_categories: Mapped[list] = mapped_column(JSONB, default=list)
     profile_overrides: Mapped[dict] = mapped_column(JSONB, default=dict)
+    # Per-campaign integration toggles (credentials live in UserIntegration)
+    email_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    caldav_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    linkedin_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Legacy per-campaign credential columns — kept for backward compat, superseded by UserIntegration
     email_account_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     caldav_account_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    linkedin_account_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     email_monitor_since: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     schedule_interval_hours: Mapped[int] = mapped_column(Integer, default=6)
     user_country: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    anywhere: Mapped[bool] = mapped_column(Boolean, default=False)
+    work_type: Mapped[str] = mapped_column(String(20), default="remote")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     __table_args__ = (
         Index("ix_jh_campaigns_user_id", "user_id"),
         Index("ix_jh_campaigns_user_status", "user_id", "status"),
+    )
+
+
+class CampaignProfile(Base):
+    """Per-campaign profile — replaces the global JobHunterProfile for campaigns."""
+    __tablename__ = "campaign_profiles"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    campaign_id: Mapped[str] = mapped_column(String, ForeignKey("job_hunter_campaigns.id"), nullable=False)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
+    # Contact
+    full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    city: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    country: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    linkedin_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    github_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    portfolio_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Resume sections (JSONB)
+    work_experience: Mapped[list] = mapped_column(JSONB, default=list)
+    education: Mapped[list] = mapped_column(JSONB, default=list)
+    skills: Mapped[list] = mapped_column(JSONB, default=list)
+    projects: Mapped[list] = mapped_column(JSONB, default=list)
+    languages_spoken: Mapped[list] = mapped_column(JSONB, default=list)
+    achievements: Mapped[list] = mapped_column(JSONB, default=list)  # quantified impact statements
+    # User-provided experience length — never calculated or fabricated
+    years_of_experience: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Free-form context the user provides for AI to work with
+    raw_context: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # AI completeness tracking
+    is_complete: Mapped[bool] = mapped_column(Boolean, default=False)
+    completion_gaps: Mapped[list] = mapped_column(JSONB, default=list)  # list of gap strings AI identified
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    __table_args__ = (
+        UniqueConstraint("campaign_id", name="uq_campaign_profiles_campaign_id"),
+        Index("ix_campaign_profiles_campaign", "campaign_id"),
+        Index("ix_campaign_profiles_user", "user_id"),
     )
 
 class JobListing(Base):
@@ -134,3 +197,12 @@ class CalendarEvent(Base):
     external_event_id: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     __table_args__ = (Index("ix_calendar_events_application", "application_id"),)
+
+
+class CampaignActivityLog(Base):
+    __tablename__ = "campaign_activity_log"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    campaign_id: Mapped[str] = mapped_column(String, ForeignKey("job_hunter_campaigns.id"), nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    __table_args__ = (Index("ix_campaign_activity_log_campaign", "campaign_id", "created_at"),)

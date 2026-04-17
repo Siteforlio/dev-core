@@ -5,7 +5,6 @@ describe('jobHunterStore', () => {
   beforeEach(() => {
     useJobHunterStore.setState({
       selectedCampaignId: null,
-      profileComplete: false,
       activeView: 'campaigns',
     })
   })
@@ -18,11 +17,6 @@ describe('jobHunterStore', () => {
     useJobHunterStore.getState().selectCampaign('camp-1')
     expect(useJobHunterStore.getState().selectedCampaignId).toBe('camp-1')
     expect(useJobHunterStore.getState().activeView).toBe('dashboard')
-  })
-
-  it('setProfileComplete updates profileComplete', () => {
-    useJobHunterStore.getState().setProfileComplete(true)
-    expect(useJobHunterStore.getState().profileComplete).toBe(true)
   })
 
   it('setActiveView transitions between views', () => {

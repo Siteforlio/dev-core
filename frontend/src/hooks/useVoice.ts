@@ -1,10 +1,10 @@
 import { useRef, useState, useCallback } from 'react'
 import { useAuthStore } from '../store/authStore'
+import { apiFetch } from '../lib/apiFetch'
 
 const API = 'http://localhost:8000/api/v1'
 
 export function useVoice() {
-  const token = useAuthStore((s) => s.accessToken)
   const languagePref = useAuthStore((s) => s.languagePref)
   const [isSpeaking, setIsSpeaking] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
@@ -21,9 +21,8 @@ export function useVoice() {
       form.append('text', text)
       form.append('language', languagePref)
 
-      const res = await fetch(`${API}/speech/synthesize`, {
+      const res = await apiFetch(`${API}/speech/synthesize`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
         body: form,
       })
       if (!res.ok) return
@@ -42,7 +41,7 @@ export function useVoice() {
     } catch {
       setIsSpeaking(false)
     }
-  }, [token, languagePref])
+  }, [languagePref])
 
   const startRecording = useCallback(async () => {
     try {
@@ -74,9 +73,8 @@ export function useVoice() {
           const form = new FormData()
           form.append('audio', blob, 'recording.webm')
           form.append('language', languagePref)
-          const res = await fetch(`${API}/speech/transcribe`, {
+          const res = await apiFetch(`${API}/speech/transcribe`, {
             method: 'POST',
-            headers: { Authorization: `Bearer ${token}` },
             body: form,
           })
           const body = await res.json()
@@ -87,7 +85,7 @@ export function useVoice() {
       }
       recorder.stop()
     })
-  }, [token, languagePref])
+  }, [languagePref])
 
   const stopSpeaking = useCallback(() => {
     currentAudioRef.current?.pause()

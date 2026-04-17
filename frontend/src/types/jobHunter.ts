@@ -1,21 +1,3 @@
-export interface JobHunterProfile {
-  id: string
-  isComplete: boolean
-  completionScore: number
-  missingFields: string[]
-  fullName: string | null
-  email: string | null
-  phone: string | null
-  city: string | null
-  country: string | null
-  linkedinUrl: string | null
-  githubUrl: string | null
-  skills: string[]
-  workExperience: WorkExperience[]
-  education: Education[]
-  projects: Project[]
-}
-
 export interface WorkExperience {
   company: string
   title: string

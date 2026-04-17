@@ -1,4 +1,4 @@
-type Module = 'interview' | 'job-hunter'
+type Module = 'interview' | 'job-hunter' | 'settings'
 
 interface NavItem {
   module: Module
@@ -33,6 +33,21 @@ export default function Sidebar({ activeModule, onSelect }: Props) {
           {icon}
         </button>
       ))}
+
+      {/* Spacer pushes settings to bottom */}
+      <div className="flex-1" />
+
+      <button
+        title="Settings"
+        onClick={() => onSelect('settings')}
+        className={`w-10 h-10 flex items-center justify-center rounded-lg text-lg transition-colors ${
+          activeModule === 'settings'
+            ? 'bg-gray-800 text-white'
+            : 'text-gray-500 hover:text-gray-300 hover:bg-gray-900'
+        }`}
+      >
+        ⚙️
+      </button>
     </nav>
   )
 }

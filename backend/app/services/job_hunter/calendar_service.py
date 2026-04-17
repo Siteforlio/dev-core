@@ -3,9 +3,9 @@ import json
 import logging
 from datetime import datetime, timezone, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
-from anthropic import AsyncAnthropic
 from app.models.pg.job_hunter import CalendarEvent
 from app.core.config import settings
+from app.services.job_hunter.llm import call_llm
 
 logger = logging.getLogger(__name__)
 
@@ -17,16 +17,9 @@ def _utcnow():
 class CalendarService:
     def __init__(self, db: AsyncSession):
         self.db = db
-        self._client = AsyncAnthropic(api_key=settings.anthropic_api_key)
 
     async def _call_haiku(self, prompt: str) -> str:
-        msg = await self._client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=100,
-            timeout=10.0,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return msg.content[0].text if msg.content else ""
+        return await call_llm(prompt, max_tokens=100)
 
     async def extract_interview_datetime(self, email_body: str) -> dict:
         raw = await self._call_haiku(

@@ -5,13 +5,14 @@ import { useJobHunterStore } from '../store/jobHunterStore'
 import { useJobHunter } from '../hooks/useJobHunter'
 import Sidebar from '../components/job-hunter/Sidebar'
 import CompanySelector from '../components/interview/CompanySelector'
-import ProfileOnboarding from '../components/job-hunter/ProfileOnboarding'
 import CampaignList from '../components/job-hunter/CampaignList'
 import CampaignForm from '../components/job-hunter/CampaignForm'
+import CampaignProfileBuilder from '../components/job-hunter/CampaignProfileBuilder'
 import CampaignDashboard from '../components/job-hunter/CampaignDashboard'
+import GlobalIntegrationsPanel from '../components/job-hunter/GlobalIntegrationsPanel'
 import type { Campaign } from '../types/jobHunter'
 
-type Module = 'interview' | 'job-hunter'
+type Module = 'interview' | 'job-hunter' | 'settings'
 
 export default function Dashboard() {
   const name = useAuthStore((s) => s.name)
@@ -25,15 +26,14 @@ export default function Dashboard() {
   const {
     activeView,
     selectedCampaignId,
-    profileComplete,
     selectCampaign,
-    setProfileComplete,
     setActiveView,
   } = useJobHunterStore()
 
-  const { listCampaigns } = useJobHunter()
+  const { listCampaigns, getCampaignProfile } = useJobHunter()
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [loadingCampaigns, setLoadingCampaigns] = useState(false)
+  const [newCampaign, setNewCampaign] = useState<Campaign | null>(null)
 
   useEffect(() => {
     if (activeModule !== 'job-hunter' || activeView !== 'campaigns') return
@@ -57,7 +57,39 @@ export default function Dashboard() {
 
   const handleCampaignCreated = (campaign: Campaign) => {
     setCampaigns((prev) => [campaign, ...prev])
-    selectCampaign(campaign.id)
+    // Show profile builder before going to dashboard
+    setNewCampaign(campaign)
+    setActiveView('build-profile')
+  }
+
+  const handleCampaignDeleted = (campaignId: string) => {
+    setCampaigns((prev) => prev.filter((c) => c.id !== campaignId))
+  }
+
+  const handleProfileReady = () => {
+    if (newCampaign) {
+      const id = newCampaign.id
+      setNewCampaign(null)
+      selectCampaign(id)
+    }
+  }
+
+  const handleSelectCampaign = async (campaignId: string) => {
+    try {
+      const profile = await getCampaignProfile(campaignId)
+      const hasMinimum = profile.full_name && profile.email &&
+        (profile.skills as unknown[])?.length > 0 &&
+        (profile.work_experience as unknown[])?.length > 0
+      if (!hasMinimum) {
+        const campaign = campaigns.find(c => c.id === campaignId) ?? { id: campaignId, name: '' }
+        setNewCampaign(campaign as Campaign)
+        setActiveView('build-profile')
+        return
+      }
+    } catch {
+      // If check fails, let them through — backend scrape guard is the real gate
+    }
+    selectCampaign(campaignId)
   }
 
   const handleStartInterviewPrep = (_personaString: string, company: string, _role: string) => {
@@ -84,7 +116,13 @@ export default function Dashboard() {
 
       {/* Body: sidebar + content */}
       <div className="flex flex-1 overflow-hidden">
-        <Sidebar activeModule={activeModule} onSelect={setActiveModule} />
+        <Sidebar
+          activeModule={activeModule}
+          onSelect={(mod) => {
+            if (mod === 'job-hunter') setActiveView('campaigns')
+            setActiveModule(mod)
+          }}
+        />
 
         <main className="flex-1 overflow-y-auto">
           {activeModule === 'interview' ? (
@@ -102,22 +140,28 @@ export default function Dashboard() {
                 </div>
               )}
             </div>
+          ) : activeModule === 'settings' ? (
+            /* ── Settings ── */
+            <div className="p-6 h-full overflow-y-auto">
+              <GlobalIntegrationsPanel />
+            </div>
           ) : (
             /* ── Job Hunter ── */
             <div className="p-6 h-full flex flex-col gap-6">
-              {!profileComplete ? (
-                <ProfileOnboarding
-                  onComplete={() => {
-                    setProfileComplete(true)
-                    setActiveView('campaigns')
-                  }}
-                />
-              ) : activeView === 'create-campaign' ? (
+              {activeView === 'create-campaign' ? (
                 <CampaignForm onCreated={handleCampaignCreated} />
+              ) : activeView === 'build-profile' && newCampaign ? (
+                <CampaignProfileBuilder
+                  campaignId={newCampaign.id}
+                  campaignName={newCampaign.name}
+                  onReady={handleProfileReady}
+                />
               ) : activeView === 'dashboard' && selectedCampaignId ? (
                 <CampaignDashboard
                   campaignId={selectedCampaignId}
+                  onBack={() => setActiveView('campaigns')}
                   onStartInterviewPrep={handleStartInterviewPrep}
+                  onGoToSettings={() => setActiveModule('settings')}
                 />
               ) : loadingCampaigns ? (
                 <div className="flex flex-1 items-center justify-center py-20">
@@ -126,8 +170,9 @@ export default function Dashboard() {
               ) : (
                 <CampaignList
                   campaigns={campaigns}
-                  onSelect={selectCampaign}
+                  onSelect={handleSelectCampaign}
                   onCreateNew={() => setActiveView('create-campaign')}
+                  onDeleted={handleCampaignDeleted}
                 />
               )}
             </div>

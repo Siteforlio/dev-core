@@ -24,7 +24,8 @@ async def get_dashboard(
     summary = await service.get_campaign_summary(campaign_id, user_id)
     pipeline = await service.get_pipeline(campaign_id, user_id)
     interviews = await service.get_scheduled_interviews(campaign_id, user_id)
-    return {"data": {"summary": summary, "pipeline": pipeline, "interviews": interviews}, "error": None}
+    activity_log = await service.get_activity_log(campaign_id, user_id)
+    return {"data": {"summary": summary, "pipeline": pipeline, "interviews": interviews, "activity_log": activity_log}, "error": None}
 
 
 @router.get("/{campaign_id}/applications/{application_id}/interview-context", response_model=dict)

@@ -2,9 +2,9 @@ import uuid
 import json
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from anthropic import AsyncAnthropic
 from app.models.pg.job_hunter import JobHunterProfile
 from app.core.config import settings
+from app.services.job_hunter.llm import call_llm
 
 REQUIRED_FIELDS = {
     "full_name": "Contact: full name",
@@ -25,7 +25,6 @@ REQUIRED_FIELDS = {
 class ProfileService:
     def __init__(self, db: AsyncSession):
         self.db = db
-        self._client = AsyncAnthropic(api_key=settings.anthropic_api_key)
 
     def check_completeness(self, data: dict) -> dict:
         missing = []
@@ -38,22 +37,21 @@ class ProfileService:
         score = int((1 - len(missing) / len(REQUIRED_FIELDS)) * 100)
         return {"is_complete": len(missing) == 0, "missing": missing, "completion_score": score}
 
-    async def parse_resume_text(self, text: str) -> dict:
-        """Extract structured profile fields from raw resume text using Haiku."""
-        message = await self._client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=2000,
-            messages=[{
-                "role": "user",
-                "content": (
-                    "Extract structured resume data as JSON with keys: full_name, email, phone, "
-                    "city, country, linkedin_url, github_url, work_experience (list), education (list), "
-                    "skills (list of strings), projects (list), languages_spoken (list). Resume text:\n\n"
-                    + text
-                ),
-            }],
+    async def get_profile(self, user_id: str):
+        result = await self.db.execute(
+            select(JobHunterProfile).where(JobHunterProfile.user_id == user_id)
         )
-        text_content = message.content[0].text
+        return result.scalar_one_or_none()
+
+    async def parse_resume_text(self, text: str) -> dict:
+        """Extract structured profile fields from raw resume text."""
+        text_content = await call_llm(
+            "Extract structured resume data as JSON with keys: full_name, email, phone, "
+            "city, country, linkedin_url, github_url, work_experience (list), education (list), "
+            "skills (list of strings), projects (list), languages_spoken (list). Resume text:\n\n"
+            + text,
+            max_tokens=2000,
+        )
         try:
             start = text_content.find("{")
             end = text_content.rfind("}") + 1

@@ -10,9 +10,9 @@ from datetime import datetime, timezone
 from cryptography.fernet import Fernet
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from anthropic import AsyncAnthropic
-from app.models.pg.job_hunter import EmailEvent, JobHunterCampaign
+from app.models.pg.job_hunter import EmailEvent, JobHunterCampaign, Application, JobListing
 from app.core.config import settings
+from app.services.job_hunter.llm import call_llm
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,6 @@ def _utcnow():
 class EmailService:
     def __init__(self, db: AsyncSession):
         self.db = db
-        self._client = AsyncAnthropic(api_key=settings.anthropic_api_key)
 
     def _fernet(self) -> Fernet:
         if not settings.job_hunter_encryption_key:
@@ -38,13 +37,7 @@ class EmailService:
         return json.loads(self._fernet().decrypt(encrypted.encode()).decode())
 
     async def _call_haiku(self, prompt: str, max_tokens: int = 100) -> str:
-        msg = await self._client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=max_tokens,
-            timeout=10.0,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return msg.content[0].text.strip() if msg.content else ""
+        return (await call_llm(prompt, max_tokens)).strip()
 
     async def classify_email(self, subject: str, snippet: str) -> str:
         result = await self._call_haiku(
@@ -110,6 +103,27 @@ class EmailService:
             logger.exception("send_reply failed to %s", to)
             return False
 
+    def _extract_domain(self, sender: str) -> str:
+        """Extract domain from email address like 'HR <hr@google.com>' → 'google'."""
+        addr = sender.split("@")[-1].split(">")[0].strip() if "@" in sender else sender
+        return addr.split(".")[0].lower()
+
+    async def _resolve_application(self, campaign_id: str, sender_domain: str) -> tuple[Application | None, JobListing | None]:
+        """Fuzzy-match sender domain against active applications in the campaign."""
+        apps_result = await self.db.execute(
+            select(Application).where(
+                Application.campaign_id == campaign_id,
+                Application.status == "applied",
+            )
+        )
+        applications = apps_result.scalars().all()
+        for app in applications:
+            listing_result = await self.db.execute(select(JobListing).where(JobListing.id == app.job_listing_id))
+            listing = listing_result.scalar_one_or_none()
+            if listing and sender_domain in (listing.company or "").lower():
+                return app, listing
+        return None, None
+
     async def process_campaign_emails(self, campaign_id: str) -> None:
         result = await self.db.execute(select(JobHunterCampaign).where(JobHunterCampaign.id == campaign_id))
         campaign = result.scalar_one_or_none()
@@ -124,9 +138,14 @@ class EmailService:
             email_type = await self.classify_email(raw["subject"], raw["snippet"])
             if email_type == "other":
                 continue
+
+            sender_domain = self._extract_domain(raw["sender"])
+            matched_app, matched_listing = await self._resolve_application(campaign_id, sender_domain)
+
             event = EmailEvent(
                 id=str(uuid.uuid4()),
                 campaign_id=campaign_id,
+                application_id=matched_app.id if matched_app else None,
                 type=email_type,
                 subject=raw["subject"],
                 sender=raw["sender"],
@@ -135,25 +154,56 @@ class EmailService:
             )
             self.db.add(event)
             await self.db.commit()
+
             if email_type == "rejection":
-                # Extract best-effort company name from sender domain (e.g. hr@google.com → google.com)
-                sender_addr = raw["sender"]
-                company_hint = sender_addr.split("@")[-1].split(">")[0].strip() if "@" in sender_addr else sender_addr
-                role_hint = raw["subject"][:150]
+                company_hint = sender_domain
+                role_hint = (matched_listing.title if matched_listing else raw["subject"])[:150]
                 reply_body = await self.generate_rejection_reply(company_hint, role_hint)
                 sent = await asyncio.to_thread(self.send_reply, creds, raw["sender"], raw["subject"], reply_body)
                 if sent:
                     event.ai_reply_sent = True
                     event.ai_reply_body = reply_body
                     event.ai_reply_sent_at = _utcnow()
+                if matched_app:
+                    matched_app.status = "rejected"
+                await self.db.commit()
+
+            elif email_type == "interview":
+                if matched_app:
+                    matched_app.status = "interview"
                     await self.db.commit()
+                # Extract date/time and book calendar if credentials available
+                if campaign.caldav_account_encrypted and matched_app and matched_listing:
+                    try:
+                        from app.services.job_hunter.calendar_service import CalendarService
+                        cal_service = CalendarService(self.db)
+                        caldav_creds = self.decrypt_credentials(campaign.caldav_account_encrypted)
+                        dt_info = await cal_service.extract_interview_datetime(raw["snippet"])
+                        if dt_info.get("date") and dt_info.get("time"):
+                            from datetime import datetime as dt
+                            scheduled_at = dt.strptime(
+                                f"{dt_info['date']} {dt_info['time']}", "%Y-%m-%d %H:%M"
+                            ).replace(tzinfo=timezone.utc)
+                            await cal_service.create_interview_event(
+                                application_id=matched_app.id,
+                                email_event_id=event.id,
+                                company=matched_listing.company or "",
+                                role=matched_listing.title or "",
+                                scheduled_at=scheduled_at,
+                                duration_minutes=dt_info.get("duration_minutes", 60),
+                                caldav_creds=caldav_creds,
+                            )
+                    except Exception:
+                        logger.exception("Calendar booking failed for campaign %s", campaign_id)
+
             # Publish activity to Redis pub/sub
             try:
                 from app.core.cache import get_redis
                 r = await get_redis()
+                company_label = matched_listing.company if matched_listing else sender_domain
                 await r.publish(
                     f"campaign:{campaign_id}:activity",
-                    f"Email detected: {email_type} from {raw['sender'][:100]}"
+                    f"{'📅' if email_type == 'interview' else '❌'} {email_type.capitalize()} email from {company_label} — {raw['subject'][:80]}"
                 )
             except Exception:
                 logger.warning("Redis publish failed for campaign %s", campaign_id)

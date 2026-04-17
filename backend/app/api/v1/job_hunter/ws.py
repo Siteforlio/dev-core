@@ -30,10 +30,17 @@ async def campaign_activity_feed(
                 data = message["data"]
                 if isinstance(data, bytes):
                     data = data.decode()
-                await websocket.send_text(data)
+                try:
+                    await websocket.send_text(data)
+                except Exception:
+                    break  # client disconnected — exit cleanly
     except WebSocketDisconnect:
         pass
     except Exception:
-        logger.exception("WebSocket error for campaign %s", campaign_id)
+        pass  # shutdown or network error — exit silently
     finally:
-        await pubsub.unsubscribe(f"campaign:{campaign_id}:activity")
+        try:
+            await pubsub.unsubscribe(f"campaign:{campaign_id}:activity")
+            await pubsub.aclose()
+        except Exception:
+            pass

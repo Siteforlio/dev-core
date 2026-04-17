@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useJobHunter } from '../../hooks/useJobHunter'
 
 interface Props {
@@ -6,7 +6,7 @@ interface Props {
 }
 
 export default function ProfileOnboarding({ onComplete }: Props) {
-  const { upsertProfile, parseResume } = useJobHunter()
+  const { upsertProfile, parseResume, parseResumeFile } = useJobHunter()
   const [resumeText, setResumeText] = useState('')
   const [parsing, setParsing] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -14,6 +14,8 @@ export default function ProfileOnboarding({ onComplete }: Props) {
   const [missingFields, setMissingFields] = useState<string[]>([])
   const [completionScore, setCompletionScore] = useState(0)
   const [parseError, setParseError] = useState('')
+  const [uploadedFileName, setUploadedFileName] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const handleParse = async () => {
     if (!resumeText.trim()) return
@@ -26,6 +28,24 @@ export default function ProfileOnboarding({ onComplete }: Props) {
       setParseError('Failed to parse resume. Please check the backend is running.')
     } finally {
       setParsing(false)
+    }
+  }
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setParsing(true)
+    setParseError('')
+    setUploadedFileName(file.name)
+    try {
+      const extracted = await parseResumeFile(file)
+      setFields((prev) => ({ ...prev, ...extracted }))
+    } catch (err) {
+      setParseError(err instanceof Error ? err.message : 'Failed to parse file.')
+      setUploadedFileName(null)
+    } finally {
+      setParsing(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
     }
   }
 
@@ -78,12 +98,51 @@ export default function ProfileOnboarding({ onComplete }: Props) {
         </div>
       )}
 
-      {/* Resume paste */}
-      <div className="flex flex-col gap-2">
-        <label className="text-xs text-gray-400 uppercase tracking-wide">Paste Resume Text</label>
+      {/* Resume input — file upload or paste */}
+      <div className="flex flex-col gap-3">
+        <span className="text-xs text-gray-400 uppercase tracking-wide">Import Resume</span>
+
+        {/* File upload */}
+        <div
+          onClick={() => fileInputRef.current?.click()}
+          className="flex items-center gap-3 border border-dashed border-gray-700 hover:border-blue-600 rounded-lg px-4 py-4 cursor-pointer transition-colors group"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-gray-500 group-hover:text-blue-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+          </svg>
+          <div className="min-w-0">
+            {uploadedFileName ? (
+              <p className="text-sm text-blue-400 truncate">{uploadedFileName}</p>
+            ) : (
+              <>
+                <p className="text-sm text-gray-300">Upload resume file</p>
+                <p className="text-xs text-gray-600">PDF, DOCX, or TXT — max 5 MB</p>
+              </>
+            )}
+          </div>
+          {parsing && (
+            <div className="ml-auto w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+          )}
+        </div>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".pdf,.docx,.doc,.txt"
+          className="hidden"
+          onChange={handleFileChange}
+        />
+
+        {/* Divider */}
+        <div className="flex items-center gap-2">
+          <div className="flex-1 h-px bg-gray-800" />
+          <span className="text-xs text-gray-600">or paste text</span>
+          <div className="flex-1 h-px bg-gray-800" />
+        </div>
+
+        {/* Text paste */}
         <textarea
-          className="bg-gray-900 border border-gray-800 text-gray-200 text-sm rounded-lg p-3 h-40 resize-none focus:outline-none focus:border-blue-600 placeholder-gray-600"
-          placeholder="Paste your resume here and we'll extract your information automatically…"
+          className="bg-gray-900 border border-gray-800 text-gray-200 text-sm rounded-lg p-3 h-36 resize-none focus:outline-none focus:border-blue-600 placeholder-gray-600"
+          placeholder="Paste your resume text here…"
           value={resumeText}
           onChange={(e) => setResumeText(e.target.value)}
         />
@@ -93,7 +152,7 @@ export default function ProfileOnboarding({ onComplete }: Props) {
           disabled={!resumeText.trim() || parsing}
           className="self-start text-sm bg-gray-800 hover:bg-gray-700 disabled:opacity-40 text-white px-4 py-2 rounded-lg font-medium transition-colors"
         >
-          {parsing ? 'Parsing…' : 'Parse Resume'}
+          {parsing ? 'Parsing…' : 'Parse Text'}
         </button>
       </div>
 

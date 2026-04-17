@@ -3,9 +3,9 @@ import uuid, json
 from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from anthropic import AsyncAnthropic
 from app.models.pg.job_hunter import JobHunterCampaign, JobHunterProfile
 from app.core.config import settings
+from app.services.job_hunter.llm import call_llm
 
 def utcnow():
     return datetime.now(timezone.utc).replace(tzinfo=None)
@@ -13,15 +13,9 @@ def utcnow():
 class CampaignService:
     def __init__(self, db: AsyncSession):
         self.db = db
-        self._client = AsyncAnthropic(api_key=settings.anthropic_api_key)
 
     async def _call_haiku(self, prompt: str) -> str:
-        msg = await self._client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=500,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return msg.content[0].text
+        return await call_llm(prompt, max_tokens=500)
 
     async def infer_sub_categories(self, skills: list[str], broad_category: str) -> list[str]:
         prompt = (
@@ -38,32 +32,50 @@ class CampaignService:
         except json.JSONDecodeError:
             return []
 
-    async def create_campaign(self, user_id: str, name: str, broad_category: str,
-                               user_country: str, profile_overrides: dict | None = None) -> JobHunterCampaign:
-        result = await self.db.execute(
-            select(JobHunterProfile).where(JobHunterProfile.user_id == user_id)
-        )
-        profile = result.scalar_one_or_none()
-        if not profile or not profile.is_complete:
-            raise ValueError("Profile incomplete — complete all required fields before creating a campaign")
-
-        sub_cats = await self.infer_sub_categories(
-            skills=profile.skills or [], broad_category=broad_category
-        )
+    async def create_campaign(
+        self,
+        user_id: str,
+        name: str,
+        broad_category: str,
+        user_country: str | None = None,
+        anywhere: bool = False,
+        work_type: str = "remote",
+        profile_overrides: dict | None = None,
+    ) -> JobHunterCampaign:
         campaign = JobHunterCampaign(
             id=str(uuid.uuid4()),
             user_id=user_id,
             name=name,
             status="active",
             broad_category=broad_category,
-            sub_categories=sub_cats,
+            sub_categories=[],          # inferred later once profile has skills
             profile_overrides=profile_overrides or {},
-            user_country=user_country.upper()[:2],
+            user_country=(user_country or "").upper() if user_country else None,
+            anywhere=anywhere,
+            work_type=work_type,
             email_monitor_since=utcnow(),
         )
         self.db.add(campaign)
         await self.db.commit()
         return campaign
+
+    async def infer_sub_categories_from_profile(self, campaign_id: str) -> list[str]:
+        """Call after campaign profile has skills — infers sub-categories."""
+        from app.models.pg.job_hunter import CampaignProfile
+        profile_result = await self.db.execute(
+            select(CampaignProfile).where(CampaignProfile.campaign_id == campaign_id)
+        )
+        profile = profile_result.scalar_one_or_none()
+        campaign_result = await self.db.execute(
+            select(JobHunterCampaign).where(JobHunterCampaign.id == campaign_id)
+        )
+        campaign = campaign_result.scalar_one_or_none()
+        if not profile or not campaign:
+            return []
+        sub_cats = await self.infer_sub_categories(profile.skills or [], campaign.broad_category)
+        campaign.sub_categories = sub_cats
+        await self.db.commit()
+        return sub_cats
 
     async def list_campaigns(self, user_id: str) -> list[JobHunterCampaign]:
         result = await self.db.execute(
@@ -73,6 +85,21 @@ class CampaignService:
             )
         )
         return list(result.scalars().all())
+
+    async def delete_campaign(self, campaign_id: str, user_id: str) -> None:
+        from datetime import datetime, timezone
+        result = await self.db.execute(
+            select(JobHunterCampaign).where(
+                JobHunterCampaign.id == campaign_id,
+                JobHunterCampaign.user_id == user_id,
+                JobHunterCampaign.deleted_at.is_(None),
+            )
+        )
+        campaign = result.scalar_one_or_none()
+        if campaign is None:
+            raise ValueError("Campaign not found")
+        campaign.deleted_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        await self.db.commit()
 
     async def set_status(self, campaign_id: str, user_id: str, status: str) -> None:
         result = await self.db.execute(

@@ -10,9 +10,10 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379"
     jwt_secret: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"
-    jwt_access_expire_minutes: int = 30
+    jwt_access_expire_minutes: int = 10080  # 7 days — practical for dev
     jwt_refresh_expire_days: int = 7
     anthropic_api_key: str = ""
+    gemini_api_key: str = ""
     heygen_api_key: str = ""
     simli_api_key: str = ""
     openai_api_key: str = ""

@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
-from app.models.pg.job_hunter import Application, CalendarEvent, JobHunterCampaign, JobListing
+from app.models.pg.job_hunter import Application, CalendarEvent, CampaignActivityLog, JobHunterCampaign, JobListing
 
 
 class DashboardService:
@@ -49,26 +49,46 @@ class DashboardService:
         }
 
     async def get_pipeline(self, campaign_id: str, user_id: str) -> list[dict]:
+        """Return all job listings for this campaign, with application status if one exists."""
         owned = self._owned_campaign_subquery(campaign_id, user_id)
         result = await self.db.execute(
-            select(Application, JobListing)
-            .join(JobListing, Application.job_listing_id == JobListing.id)
-            .where(Application.campaign_id == owned)
-            .order_by(Application.applied_at.desc())
-            .limit(100)
+            select(JobListing, Application)
+            .outerjoin(Application, Application.job_listing_id == JobListing.id)
+            .where(
+                JobListing.campaign_id == owned,
+                JobListing.deleted_at.is_(None),
+            )
+            .order_by(JobListing.discovered_at.desc())
+            .limit(200)
         )
         return [
             {
-                "application_id": app.id,
-                "status": app.status,
-                "applied_at": app.applied_at.isoformat(),
+                "id": listing.id,
+                "status": app.status if app else listing.status,
+                "discovered_at": listing.discovered_at.isoformat(),
+                "applied_at": app.applied_at.isoformat() if app else None,
                 "company": listing.company,
                 "title": listing.title,
                 "location": listing.location,
+                "remote": listing.remote,
                 "match_score": listing.match_score,
-                "cover_letter": app.cover_letter,
+                "source": listing.source,
+                "url": listing.url,
             }
-            for app, listing in result.all()
+            for listing, app in result.all()
+        ]
+
+    async def get_activity_log(self, campaign_id: str, user_id: str, limit: int = 200) -> list[dict]:
+        owned = self._owned_campaign_subquery(campaign_id, user_id)
+        result = await self.db.execute(
+            select(CampaignActivityLog)
+            .where(CampaignActivityLog.campaign_id == owned)
+            .order_by(CampaignActivityLog.created_at.asc())
+            .limit(limit)
+        )
+        return [
+            {"message": log.message, "created_at": log.created_at.isoformat()}
+            for log in result.scalars().all()
         ]
 
     async def get_scheduled_interviews(self, campaign_id: str, user_id: str) -> list[dict]:

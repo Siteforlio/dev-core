@@ -1,21 +1,33 @@
 import { useEffect, useState } from 'react'
 import { useJobHunter } from '../../hooks/useJobHunter'
-import { useCampaignActivity } from '../../hooks/useCampaignActivity'
+import { useCampaignActivity, type ActivityMessage } from '../../hooks/useCampaignActivity'
 import { useAuthStore } from '../../store/authStore'
 import SummaryStrip from './SummaryStrip'
 import ApplicationCard from './ApplicationCard'
 import ActivityFeed from './ActivityFeed'
+import CampaignSettings from './CampaignSettings'
 import type { CampaignSummary, Application, ScheduledInterview } from '../../types/jobHunter'
 
 interface Props {
   campaignId: string
+  onBack: () => void
   onStartInterviewPrep: (personaString: string, company: string, role: string) => void
+  onGoToSettings?: () => void
 }
 
-export default function CampaignDashboard({ campaignId, onStartInterviewPrep }: Props) {
-  const { getDashboard, getInterviewContext } = useJobHunter()
+export default function CampaignDashboard({ campaignId, onBack, onStartInterviewPrep, onGoToSettings }: Props) {
+  const { getDashboard, getInterviewContext, triggerScrape } = useJobHunter()
   const token = useAuthStore((s) => s.accessToken)
-  const { feed } = useCampaignActivity(campaignId, token)
+  const [persistedFeed, setPersistedFeed] = useState<ActivityMessage[]>([])
+  const { feed: liveFeed } = useCampaignActivity(campaignId, token)
+
+  // Merge persisted + live, deduplicated by message+timestamp
+  const feed = [
+    ...persistedFeed,
+    ...liveFeed.filter(
+      (live) => !persistedFeed.some((p) => p.text === live.text)
+    ),
+  ]
 
   const [summary, setSummary] = useState<CampaignSummary | null>(null)
   const [pipeline, setPipeline] = useState<Application[]>([])
@@ -23,29 +35,68 @@ export default function CampaignDashboard({ campaignId, onStartInterviewPrep }: 
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
   const [bridgeLoading, setBridgeLoading] = useState<string | null>(null)
+  const [scraping, setScraping] = useState(false)
+  const [scrapeError, setScrapeError] = useState('')
+  const [rightPanel, setRightPanel] = useState<'activity' | 'settings'>('activity')
+  const [pipelineTab, setPipelineTab] = useState<'all' | 'match' | 'partial' | 'applied' | 'interview'>('all')
+  const [page, setPage] = useState(1)
+  const PAGE_SIZE = 10
+
+  const filteredPipeline = pipeline.filter((app) => {
+    if (pipelineTab === 'all') return true
+    if (pipelineTab === 'match') return app.matchScore === 'MATCH'
+    if (pipelineTab === 'partial') return app.matchScore === 'PARTIAL'
+    if (pipelineTab === 'applied') return app.status === 'applied'
+    if (pipelineTab === 'interview') return app.status === 'interview'
+    return true
+  })
+
+  const totalPages = Math.max(1, Math.ceil(filteredPipeline.length / PAGE_SIZE))
+  const pagedPipeline = filteredPipeline.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+
+  const tabCounts = {
+    all: pipeline.length,
+    match: pipeline.filter(a => a.matchScore === 'MATCH').length,
+    partial: pipeline.filter(a => a.matchScore === 'PARTIAL').length,
+    applied: pipeline.filter(a => a.status === 'applied').length,
+    interview: pipeline.filter(a => a.status === 'interview').length,
+  }
+
+  const loadDashboard = async () => {
+    const { summary: s, pipeline: p, interviews: i, activityLog } = await getDashboard(campaignId)
+    setSummary(s)
+    setPipeline(p)
+    setInterviews(i)
+    setPersistedFeed(
+      activityLog.map((l, idx) => ({
+        id: `persisted-${idx}-${l.createdAt}`,
+        text: l.message,
+        timestamp: new Date(l.createdAt),
+      }))
+    )
+  }
+
+  const handleTriggerScrape = async () => {
+    setScraping(true)
+    setScrapeError('')
+    try {
+      await triggerScrape(campaignId)
+      await loadDashboard()
+    } catch (e: unknown) {
+      setScrapeError(e instanceof Error ? e.message : 'Scrape failed')
+    } finally {
+      setScraping(false)
+    }
+  }
 
   useEffect(() => {
     let cancelled = false
     setLoading(true)
     setLoadError('')
-    getDashboard(campaignId)
-      .then(({ summary: s, pipeline: p, interviews: i }) => {
-        if (!cancelled) {
-          setSummary(s)
-          setPipeline(p)
-          setInterviews(i)
-          setLoading(false)
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setLoadError('Failed to load dashboard. Is the backend running?')
-          setLoading(false)
-        }
-      })
-    return () => {
-      cancelled = true
-    }
+    loadDashboard()
+      .then(() => { if (!cancelled) setLoading(false) })
+      .catch(() => { if (!cancelled) { setLoadError('Failed to load dashboard. Is the backend running?'); setLoading(false) } })
+    return () => { cancelled = true }
   }, [campaignId])
 
   const handleStartInterviewPrep = async (applicationId: string) => {
@@ -78,9 +129,20 @@ export default function CampaignDashboard({ campaignId, onStartInterviewPrep }: 
   }
 
   return (
-    <div className="flex gap-4 h-full">
+    <div className="flex flex-col gap-4 h-full">
+      <button
+        onClick={onBack}
+        className="self-start flex items-center gap-1.5 text-sm text-gray-400 hover:text-white transition-colors"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+        </svg>
+        All Campaigns
+      </button>
+
+    <div className="flex gap-4 flex-1 min-h-0 overflow-hidden">
       {/* Main panel */}
-      <div className="flex-1 flex flex-col gap-4 min-w-0 overflow-y-auto">
+      <div className="flex-1 flex flex-col gap-4 min-w-0 overflow-hidden">
         {summary && <SummaryStrip summary={summary} />}
 
         {interviews.length > 0 && (
@@ -105,31 +167,109 @@ export default function CampaignDashboard({ campaignId, onStartInterviewPrep }: 
           </div>
         )}
 
+        {/* Pipeline tabs */}
         <div className="flex flex-col gap-2">
-          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
-            Applications Pipeline
-          </h3>
-          {pipeline.length === 0 ? (
-            <p className="text-gray-600 text-sm py-8 text-center">
-              No applications yet — the scraper is warming up.
-            </p>
-          ) : (
-            pipeline.map((app) => (
-              <div
-                key={app.id}
-                className={bridgeLoading === app.id ? 'opacity-60 pointer-events-none' : ''}
+          <div className="flex items-center gap-1 border-b border-gray-800 flex-shrink-0">
+            {([
+              { key: 'all', label: 'All' },
+              { key: 'match', label: 'Match' },
+              { key: 'partial', label: 'Partial' },
+              { key: 'applied', label: 'Applied' },
+              { key: 'interview', label: 'Interview' },
+            ] as const).map(({ key, label }) => (
+              <button
+                key={key}
+                onClick={() => { setPipelineTab(key); setPage(1) }}
+                className={`px-3 py-2 text-xs font-medium transition-colors border-b-2 -mb-px flex items-center gap-1.5 ${
+                  pipelineTab === key
+                    ? 'border-blue-500 text-white'
+                    : 'border-transparent text-gray-500 hover:text-gray-300'
+                }`}
               >
-                <ApplicationCard application={app} onStartInterviewPrep={handleStartInterviewPrep} />
-              </div>
-            ))
+                {label}
+                <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                  pipelineTab === key ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400'
+                }`}>
+                  {tabCounts[key]}
+                </span>
+              </button>
+            ))}
+          </div>
+
+          <div className="flex flex-col gap-1.5 flex-shrink-0">
+            {filteredPipeline.length === 0 ? (
+              <p className="text-gray-600 text-sm py-8 text-center">
+                {pipeline.length === 0 ? 'No jobs yet — hit Run Scrape to start.' : 'No jobs in this category.'}
+              </p>
+            ) : (
+              pagedPipeline.map((app) => (
+                <div
+                  key={app.id}
+                  className={bridgeLoading === app.id ? 'opacity-60 pointer-events-none' : ''}
+                >
+                  <ApplicationCard application={app} onStartInterviewPrep={handleStartInterviewPrep} />
+                </div>
+              ))
+            )}
+          </div>
+
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between flex-shrink-0 pt-2 border-t border-gray-800">
+              <button
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page === 1}
+                className="text-xs text-gray-400 hover:text-white disabled:opacity-30 px-2 py-1 rounded hover:bg-gray-800 transition-colors"
+              >
+                ← Prev
+              </button>
+              <span className="text-xs text-gray-500">
+                Page {page} of {totalPages}
+                <span className="ml-1 text-gray-600">({filteredPipeline.length} total)</span>
+              </span>
+              <button
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={page === totalPages}
+                className="text-xs text-gray-400 hover:text-white disabled:opacity-30 px-2 py-1 rounded hover:bg-gray-800 transition-colors"
+              >
+                Next →
+              </button>
+            </div>
           )}
         </div>
       </div>
 
-      {/* Activity feed panel */}
-      <div className="w-72 flex-shrink-0 bg-gray-950/50 border border-gray-800 rounded-lg p-4 h-full">
-        <ActivityFeed feed={feed} />
+      {/* Right panel — Activity / Settings */}
+      <div className="w-72 flex-shrink-0 bg-gray-950/50 border border-gray-800 rounded-lg flex flex-col overflow-hidden" style={{ maxHeight: 'calc(100vh - 160px)' }}>
+        {/* Panel tabs */}
+        <div className="flex border-b border-gray-800 flex-shrink-0">
+          {(['activity', 'settings'] as const).map(tab => (
+            <button
+              key={tab}
+              onClick={() => setRightPanel(tab)}
+              className={`flex-1 py-2 text-xs font-medium transition-colors ${
+                rightPanel === tab ? 'text-white border-b-2 border-blue-500' : 'text-gray-500 hover:text-gray-300'
+              }`}
+            >
+              {tab === 'activity' ? 'Activity' : 'Settings'}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex-1 min-h-0 p-4 overflow-y-auto flex flex-col [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+          {rightPanel === 'activity' ? (
+            <ActivityFeed
+              feed={feed}
+              onTriggerScrape={handleTriggerScrape}
+              onClear={() => setPersistedFeed([])}
+              scraping={scraping}
+              scrapeError={scrapeError}
+            />
+          ) : (
+            <CampaignSettings campaignId={campaignId} onGoToGlobalSettings={onGoToSettings} />
+          )}
+        </div>
       </div>
+    </div>
     </div>
   )
 }

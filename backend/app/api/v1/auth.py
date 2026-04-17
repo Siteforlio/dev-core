@@ -1,10 +1,11 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.schemas.auth import RegisterRequest, LoginRequest, AuthResponse, TokenResponse
 from app.services.auth_service import AuthService
 from app.core.database import get_db
-from app.core.security import decode_token
+from app.core.security import decode_token, create_access_token
+from app.core.exceptions import InvalidCredentialsError
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 bearer = HTTPBearer()
@@ -39,6 +40,15 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
         name=result["user"].name,
         language_pref=result["user"].language_pref,
     )}
+
+
+@router.post("/refresh", response_model=dict)
+async def refresh_token(credentials: HTTPAuthorizationCredentials = Depends(bearer)):
+    try:
+        user_id = decode_token(credentials.credentials)
+    except InvalidCredentialsError:
+        raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+    return {"data": {"access_token": create_access_token(user_id)}, "error": None}
 
 
 @router.delete("/users/me", status_code=204)

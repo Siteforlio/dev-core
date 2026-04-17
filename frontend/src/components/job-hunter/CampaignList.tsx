@@ -1,13 +1,33 @@
+import { useState } from 'react'
 import type { Campaign } from '../../types/jobHunter'
 import StatusBadge from './StatusBadge'
+import { useJobHunter } from '../../hooks/useJobHunter'
 
 interface Props {
   campaigns: Campaign[]
   onSelect: (campaignId: string) => void
   onCreateNew: () => void
+  onDeleted: (campaignId: string) => void
 }
 
-export default function CampaignList({ campaigns, onSelect, onCreateNew }: Props) {
+export default function CampaignList({ campaigns, onSelect, onCreateNew, onDeleted }: Props) {
+  const { deleteCampaign } = useJobHunter()
+  const [confirmId, setConfirmId] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState<string | null>(null)
+
+  const handleDelete = async (id: string) => {
+    setDeleting(id)
+    try {
+      await deleteCampaign(id)
+      onDeleted(id)
+    } catch {
+      // silent — user can retry
+    } finally {
+      setDeleting(null)
+      setConfirmId(null)
+    }
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
@@ -44,12 +64,43 @@ export default function CampaignList({ campaigns, onSelect, onCreateNew }: Props
                 </div>
                 <StatusBadge variant="status" value={c.status} />
               </div>
-              <button
-                onClick={() => onSelect(c.id)}
-                className="text-xs text-gray-400 hover:text-white border border-gray-700 hover:border-gray-500 px-3 py-1.5 rounded transition-colors flex-shrink-0 ml-4"
-              >
-                View
-              </button>
+
+              <div className="flex items-center gap-2 flex-shrink-0 ml-4">
+                {confirmId === c.id ? (
+                  <>
+                    <span className="text-xs text-gray-400">Delete?</span>
+                    <button
+                      onClick={() => handleDelete(c.id)}
+                      disabled={deleting === c.id}
+                      className="text-xs bg-red-700 hover:bg-red-600 disabled:opacity-40 text-white px-2 py-1 rounded transition-colors"
+                    >
+                      {deleting === c.id ? '…' : 'Yes'}
+                    </button>
+                    <button
+                      onClick={() => setConfirmId(null)}
+                      className="text-xs text-gray-400 hover:text-white px-2 py-1 rounded border border-gray-700 transition-colors"
+                    >
+                      No
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => onSelect(c.id)}
+                      className="text-xs text-gray-400 hover:text-white border border-gray-700 hover:border-gray-500 px-3 py-1.5 rounded transition-colors"
+                    >
+                      View
+                    </button>
+                    <button
+                      onClick={() => setConfirmId(c.id)}
+                      className="text-xs text-gray-600 hover:text-red-400 transition-colors px-1 py-1.5"
+                      title="Delete campaign"
+                    >
+                      ✕
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
           ))}
         </div>

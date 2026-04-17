@@ -1,16 +1,15 @@
-import { useAuthStore } from '../store/authStore'
 import { useInterviewStore } from '../store/interviewStore'
+import { apiFetch } from '../lib/apiFetch'
 
 const API = 'http://localhost:8000/api/v1'
 
 export function useInterviewSession() {
-  const token = useAuthStore((s) => s.accessToken)
   const setSession = useInterviewStore((s) => s.setSession)
 
   const startSession = async (company: string, role: string, rounds: string[]) => {
-    const res = await fetch(`${API}/interview-sessions`, {
+    const res = await apiFetch(`${API}/interview-sessions`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ company, role, round_types: rounds }),
     })
     const { data } = await res.json()
@@ -37,9 +36,9 @@ export function useInterviewSession() {
     answer: string,
     opts?: { totalQuestions?: number; emotionState?: string },
   ) => {
-    const res = await fetch(`${API}/interview-sessions/${sessionId}/answer`, {
+    const res = await apiFetch(`${API}/interview-sessions/${sessionId}/answer`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         round_id: roundId,
         question,

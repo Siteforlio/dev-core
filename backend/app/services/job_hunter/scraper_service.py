@@ -1,44 +1,242 @@
 # backend/app/services/job_hunter/scraper_service.py
-import hashlib, uuid
+import hashlib, sys, uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from anthropic import AsyncAnthropic
 from app.models.pg.job_hunter import JobListing, JobHunterCampaign
 from app.core.config import settings
+from app.services.job_hunter.llm import call_llm
+
+
+async def _run_linkedin_subprocess(li_scraper, broad_category, user_country, work_type, publish_fn):
+    """
+    On Windows, uvicorn runs on SelectorEventLoop (no create_subprocess_exec) and
+    nodriver requires ProactorEventLoop (for create_subprocess_exec to launch Chrome)
+    but ProactorEventLoop breaks nodriver's I/O watchers.
+
+    Solution: use a synchronous subprocess.Popen in asyncio.to_thread so the LinkedIn
+    runner gets its own fresh process with a default ProactorEventLoop — completely
+    isolated from uvicorn's loop. Messages are collected and published after the run.
+    """
+    import asyncio
+    import base64
+    import json
+    import subprocess
+    from pathlib import Path
+
+    runner = Path(__file__).parent / "linkedin_runner.py"
+    backend_root = str(runner.parent.parent.parent.parent)
+
+    payload = {
+        "email": li_scraper.email,
+        "password": li_scraper.password,
+        "session_cookie": li_scraper.session_cookie,
+        "search_term": broad_category,
+        "location": user_country or "",
+        "remote_only": work_type == "remote",
+        "max_jobs": 150,
+    }
+    arg = base64.b64encode(json.dumps(payload).encode()).decode()
+
+    collected_logs: list[str] = []
+    collected_jobs: list[dict] = []
+
+    def _run_sync():
+        try:
+            proc = subprocess.Popen(
+                [sys.executable, str(runner), arg],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=backend_root,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+        except Exception as e:
+            collected_logs.append(f"❌ LinkedIn: failed to start subprocess — {type(e).__name__}: {e}")
+            return
+
+        try:
+            for line in proc.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    evt = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if evt.get("type") == "log":
+                    collected_logs.append(evt["msg"])
+                elif evt.get("type") == "jobs":
+                    collected_jobs.extend(evt.get("jobs", []))
+                elif evt.get("type") == "error":
+                    collected_logs.append(f"❌ LinkedIn error: {evt['msg']}")
+        except Exception as e:
+            collected_logs.append(f"❌ LinkedIn: stdout read error — {type(e).__name__}: {e}")
+
+        try:
+            proc.wait(timeout=300)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            collected_logs.append("❌ LinkedIn: subprocess timed out after 5 minutes")
+            return
+
+        if proc.returncode != 0:
+            try:
+                stderr = proc.stderr.read().strip()
+            except Exception:
+                stderr = ""
+            last = stderr.splitlines()[-1] if stderr else f"exit code {proc.returncode}"
+            collected_logs.append(f"❌ LinkedIn process failed: {last}")
+
+    try:
+        await asyncio.to_thread(_run_sync)
+    except Exception as e:
+        collected_logs.append(f"❌ LinkedIn: to_thread error — {type(e).__name__}: {repr(e)}")
+
+    for msg in collected_logs:
+        await publish_fn(msg)
+
+    return collected_jobs
+
 
 class ScraperService:
     def __init__(self, db: AsyncSession):
         self.db = db
-        self._client = AsyncAnthropic(api_key=settings.anthropic_api_key)
+        self._campaign_id: str | None = None
+
+    async def _publish(self, message: str) -> None:
+        if not self._campaign_id:
+            return
+        # Use a dedicated session so we never interfere with the main scraper session
+        # (calling db.add during an active flush causes SAWarning + session corruption)
+        try:
+            from app.core.database import AsyncSessionLocal
+            from app.models.pg.job_hunter import CampaignActivityLog
+            async with AsyncSessionLocal() as log_db:
+                log_db.add(CampaignActivityLog(campaign_id=self._campaign_id, message=message))
+                await log_db.commit()
+        except Exception:
+            pass
+        # Broadcast to live WebSocket subscribers
+        try:
+            from app.core.cache import get_redis
+            r = await get_redis()
+            await r.publish(f"campaign:{self._campaign_id}:activity", message)
+        except Exception:
+            pass
 
     def build_url_hash(self, user_id: str, company: str, title: str, apply_url: str) -> str:
         raw = f"{user_id}|{company.lower().strip()}|{title.lower().strip()}|{apply_url.strip()}"
         return hashlib.sha256(raw.encode()).hexdigest()
 
-    def passes_remote_filter(self, job: dict, user_country: str) -> bool:
+    _ONSITE_SIGNALS = {"onsite", "on-site", "on site", "in-office", "in office"}
+    _HYBRID_SIGNALS = {"hybrid"}
+    _REMOTE_SIGNALS = {"remote", "work from home", "wfh", "distributed", "fully remote"}
+
+    def _job_work_type(self, job: dict) -> str:
+        """Detect job's work type from flags and text signals."""
         if job.get("remote"):
-            return True
+            return "remote"
+        haystack = " ".join([
+            (job.get("title") or ""),
+            (job.get("location") or ""),
+            (job.get("description") or "")[:200],
+        ]).lower()
+        if any(s in haystack for s in self._REMOTE_SIGNALS):
+            return "remote"
+        if any(s in haystack for s in self._HYBRID_SIGNALS):
+            return "hybrid"
+        if any(s in haystack for s in self._ONSITE_SIGNALS):
+            return "onsite"
+        return "unknown"
+
+    def passes_work_type_filter(self, job: dict, work_type: str, user_country: str, anywhere: bool) -> bool:
+        """Filter jobs by campaign work_type preference and location."""
+        if anywhere:
+            # No location restriction — only filter by work type
+            if work_type == "remote":
+                jt = self._job_work_type(job)
+                return jt == "remote" or jt == "unknown"  # unknown ambiguous = let through
+            return True  # hybrid/onsite/any + anywhere = accept all
+
+        user_c = (user_country or "").upper()
+        jt = self._job_work_type(job)
         loc_country = (job.get("location_country") or "").upper()
-        if not loc_country:
-            return False  # ambiguous → skip
-        return loc_country == user_country.upper()
+        is_ats = job.get("source") in ("greenhouse", "lever", "ashby")
 
-    async def _call_haiku(self, prompt: str) -> str:
-        msg = await self._client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=10,
-            timeout=10.0,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return msg.content[0].text.strip()
+        if work_type == "remote":
+            if jt == "remote":
+                return True
+            if jt in ("onsite", "hybrid"):
+                return False  # explicitly not remote
+            # unknown — ATS jobs pass (they rarely flag remote), jobspy ambiguous skip
+            return is_ats
 
-    async def score_job_match(self, title: str, description: str, sub_categories: list[str]) -> str:
+        elif work_type == "onsite":
+            if jt == "remote":
+                return False
+            # Must be in user's country
+            if is_ats:
+                return True  # ATS: no country data, let through
+            return bool(loc_country) and loc_country == user_c
+
+        elif work_type == "hybrid":
+            if jt == "remote":
+                return False
+            if is_ats:
+                return True
+            return bool(loc_country) and loc_country == user_c
+
+        else:  # "any"
+            if is_ats:
+                return True
+            if jt == "remote":
+                return True
+            return bool(loc_country) and loc_country == user_c
+
+    async def _call_haiku(self, prompt: str, max_tokens: int = 10) -> str:
+        return (await call_llm(prompt, max_tokens)).strip()
+
+    def _keyword_prefilter(self, title: str, description: str, skills: list[str]) -> bool:
+        """Fast O(n) check before burning an AI call.
+        Returns True if at least 1 skill keyword appears in title+description."""
+        if not skills:
+            return True  # no skills = no filter, let AI decide
+        haystack = (title + " " + description[:2000]).lower()
+        for skill in skills:
+            if skill.lower() in haystack:
+                return True
+        return False
+
+    async def score_job_match(
+        self,
+        title: str,
+        description: str,
+        sub_categories: list[str],
+        profile_skills: list[str] | None = None,
+    ) -> str:
+        skills = profile_skills or []
+
+        # Fast pre-filter: if none of the candidate's skills appear at all, skip immediately
+        if skills and not self._keyword_prefilter(title, description, skills):
+            return "SKIP"
+
+        # Build skill overlap context for AI
+        skill_sample = ", ".join(skills[:30]) if skills else "not specified"
+        jd_preview = description[:1500]
+
         prompt = (
-            f"Job title: {title}\nDescription (first 500 chars): {description[:500]}\n"
-            f"Candidate sub-categories: {', '.join(sub_categories)}\n"
-            f"Does this job's CORE requirement match the candidate's specialties? "
-            f"Reply with exactly one word: MATCH, PARTIAL, or SKIP."
+            f"You are screening a job for a candidate. Reply with exactly one word: MATCH, PARTIAL, or SKIP.\n\n"
+            f"Job title: {title}\n"
+            f"Job description:\n{jd_preview}\n\n"
+            f"Candidate's target roles: {', '.join(sub_categories)}\n"
+            f"Candidate's skills: {skill_sample}\n\n"
+            f"Rules:\n"
+            f"- MATCH: The job's core requirements directly align with the candidate's skills and target roles\n"
+            f"- PARTIAL: Some overlap but the job requires a significantly different primary focus\n"
+            f"- SKIP: No meaningful match — wrong domain, purely sales/non-technical, or requires skills the candidate doesn't have\n"
+            f"Reply with exactly one word."
         )
         result = await self._call_haiku(prompt)
         for word in ["MATCH", "PARTIAL", "SKIP"]:
@@ -73,26 +271,49 @@ class ScraperService:
             await self.db.rollback()
             return None  # duplicate — silently dropped
 
-    async def run_jobspy(self, campaign: JobHunterCampaign) -> list[dict]:
-        """Scrape jobs from multiple sources via JobSpy."""
+    async def run_jobspy(self, campaign: JobHunterCampaign, results_wanted: int = 100, search_term: str | None = None) -> list[dict]:
+        """Scrape jobs from multiple sources via JobSpy, tolerating per-source failures."""
         import asyncio
         from jobspy import scrape_jobs
-        results = await asyncio.to_thread(
-            scrape_jobs,
-            site_name=["google", "indeed", "glassdoor", "zip_recruiter"],
-            search_term=campaign.broad_category,
-            results_wanted=50,
-            hours_old=24,
-        )
+
+        term = search_term or campaign.broad_category
+        sources = ["indeed", "google", "zip_recruiter", "glassdoor"]
+        all_rows = []
+
+        for source in sources:
+            try:
+                results = await asyncio.to_thread(
+                    scrape_jobs,
+                    site_name=[source],
+                    search_term=term,
+                    results_wanted=results_wanted,
+                    hours_old=48,
+                )
+                all_rows.append(results)
+                await self._publish(f"  ↳ {source}: {len(results)} listings")
+            except Exception as e:
+                await self._publish(f"  ↳ {source}: skipped ({e})")
+
+        non_empty = [df for df in all_rows if not df.empty]
+        if not non_empty:
+            return []
+
+        import pandas as pd
+        combined = pd.concat(non_empty, ignore_index=True)
+
         jobs = []
-        for _, row in results.iterrows():
+        seen_hashes: set[str] = set()
+        for _, row in combined.iterrows():
             is_remote = str(row.get("is_remote", "")).lower() == "true"
-            # skip LinkedIn Easy Apply
             apply_url = str(row.get("job_url_direct") or row.get("job_url") or "")
             if "linkedin.com/jobs/apply" in apply_url:
                 continue
+            dedup_key = f"{str(row.get('company') or '').lower()}|{str(row.get('title') or '').lower()}"
+            if dedup_key in seen_hashes:
+                continue
+            seen_hashes.add(dedup_key)
             jobs.append({
-                "source": "jobspy",
+                "source": str(row.get("site") or "jobspy"),
                 "title": str(row.get("title") or ""),
                 "company": str(row.get("company") or ""),
                 "location": str(row.get("location") or "") or None,
@@ -104,16 +325,196 @@ class ScraperService:
             })
         return jobs
 
-    async def scrape_campaign(self, campaign_id: str, user_id: str) -> int:
+    async def scrape_campaign(self, campaign_id: str, user_id: str, target: int = 100) -> int:
+        import asyncio
+        from datetime import datetime, timezone
+        from app.services.job_hunter.ats_scrapers import scrape_all_ats
+        from app.services.job_hunter.startup_scrapers import scrape_all_startup_boards
+
+        self._campaign_id = campaign_id
         result = await self.db.execute(select(JobHunterCampaign).where(JobHunterCampaign.id == campaign_id))
         campaign = result.scalar_one()
-        raw_jobs = await self.run_jobspy(campaign)
-        saved = 0
-        for job in raw_jobs:
-            if not self.passes_remote_filter(job, campaign.user_country or ""):
+
+        # Eagerly read all attributes before any thread boundary
+        broad_category = campaign.broad_category
+        user_country = campaign.user_country or ""
+        sub_categories = list(campaign.sub_categories or [])
+        work_type = campaign.work_type or "remote"
+        anywhere = bool(campaign.anywhere)
+        # Resolve LinkedIn credentials: UserIntegration (global) takes priority over legacy campaign field
+        linkedin_creds: dict | None = None
+        linkedin_enabled = bool(campaign.linkedin_enabled)
+        if linkedin_enabled:
+            try:
+                from app.services.job_hunter.email_service import EmailService
+                from app.models.pg.job_hunter import UserIntegration
+                svc = EmailService(self.db)
+                ui_result = await self.db.execute(
+                    select(UserIntegration).where(UserIntegration.user_id == user_id)
+                )
+                ui = ui_result.scalar_one_or_none()
+                encrypted = (ui.linkedin_account_encrypted if ui else None) or campaign.linkedin_account_encrypted
+                if encrypted:
+                    linkedin_creds = svc.decrypt_credentials(encrypted)
+            except Exception:
+                await self._publish("⚠️ LinkedIn: failed to decrypt credentials — skipping LinkedIn source")
+
+        # Load campaign profile for skills-based scoring
+        from app.models.pg.job_hunter import CampaignProfile
+        profile_result = await self.db.execute(
+            select(CampaignProfile).where(CampaignProfile.campaign_id == campaign_id)
+        )
+        cp = profile_result.scalar_one_or_none()
+        profile_skills: list[str] = list(cp.skills or []) if cp else []
+        if profile_skills:
+            await self._publish(f"🧠 Scoring with {len(profile_skills)} profile skills for better match accuracy")
+
+        deadline = datetime.now(timezone.utc).timestamp() + 86400  # 24h window
+
+        location_label = "anywhere" if anywhere else (user_country or "any country")
+        await self._publish(f"🔍 Starting scrape for '{broad_category}' | {work_type} | {location_label} (target: {target} matches, window: 24h)")
+        await self._publish(f"📋 Sub-categories: {', '.join(sub_categories)}")
+
+        matches_found = 0  # only MATCH jobs count toward target
+        skipped_location = 0
+        skipped_duplicate = 0
+        match_counts = {"MATCH": 0, "PARTIAL": 0, "SKIP": 0}
+        attempt = 0
+        results_wanted = target * 2
+        consecutive_empty = 0
+        ats_fetched = False  # ATS APIs return static snapshots — only fetch once per campaign run
+
+        while matches_found < target:
+            # Check 24h deadline
+            remaining_seconds = deadline - datetime.now(timezone.utc).timestamp()
+            if remaining_seconds <= 0:
+                await self._publish(f"⏰ 24h window reached — stopping at {matches_found}/{target} matches")
+                break
+
+            attempt += 1
+            remaining_h = int(remaining_seconds // 3600)
+            remaining_m = int((remaining_seconds % 3600) // 60)
+            await self._publish(
+                f"⏳ Pass {attempt} — fetching {results_wanted} listings "
+                f"({matches_found}/{target} matches, {remaining_h}h {remaining_m}m remaining)"
+            )
+
+            try:
+                if not ats_fetched:
+                    # First pass: jobspy + ATS company boards + startup boards + LinkedIn in parallel
+                    sources_label = "job boards + ATS company boards + startup boards"
+                    if linkedin_creds:
+                        sources_label += " + LinkedIn"
+                    await self._publish(f"🌐 Querying {sources_label} in parallel...")
+                    try:
+                        gather_coros = [
+                            self.run_jobspy(campaign, results_wanted=results_wanted, search_term=broad_category),
+                            scrape_all_ats(broad_category, publish_fn=self._publish),
+                            scrape_all_startup_boards(broad_category, publish_fn=self._publish),
+                        ]
+                        if linkedin_creds:
+                            from app.services.job_hunter.linkedin_scraper import LinkedInScraper
+                            li_scraper = LinkedInScraper(
+                                email=linkedin_creds.get("email"),
+                                password=linkedin_creds.get("password"),
+                                session_cookie=linkedin_creds.get("session_cookie"),
+                            )
+                            gather_coros.append(
+                                _run_linkedin_subprocess(
+                                    li_scraper, broad_category, user_country,
+                                    work_type, self._publish,
+                                )
+                            )
+                        results = await asyncio.gather(*gather_coros, return_exceptions=True)
+                        jobspy_jobs  = results[0] if not isinstance(results[0], Exception) else []
+                        ats_jobs     = results[1] if not isinstance(results[1], Exception) else []
+                        startup_jobs = results[2] if not isinstance(results[2], Exception) else []
+                        li_jobs      = results[3] if len(results) > 3 and not isinstance(results[3], Exception) else []
+                        if linkedin_creds and len(results) > 3 and isinstance(results[3], Exception):
+                            li_err = results[3]
+                            li_err_msg = repr(li_err) if not str(li_err) else str(li_err)
+                            await self._publish(f"⚠️ LinkedIn scrape error: {type(li_err).__name__}: {li_err_msg}")
+                    except Exception as e:
+                        await self._publish(f"⚠️ Parallel fetch error ({e}) — falling back to job boards only")
+                        jobspy_jobs = await self.run_jobspy(campaign, results_wanted=results_wanted, search_term=broad_category)
+                        ats_jobs = []
+                        startup_jobs = []
+                        li_jobs = []
+                    raw_jobs = jobspy_jobs + ats_jobs + startup_jobs + li_jobs
+                    ats_fetched = True
+                else:
+                    # Subsequent passes: jobspy + startup boards + LinkedIn (ATS snapshot doesn't change)
+                    gather_coros = [
+                        self.run_jobspy(campaign, results_wanted=results_wanted, search_term=broad_category),
+                        scrape_all_startup_boards(broad_category, publish_fn=self._publish),
+                    ]
+                    if linkedin_creds:
+                        from app.services.job_hunter.linkedin_scraper import LinkedInScraper
+                        li_scraper = LinkedInScraper(
+                            email=linkedin_creds.get("email"),
+                            password=linkedin_creds.get("password"),
+                            session_cookie=linkedin_creds.get("session_cookie"),
+                        )
+                        gather_coros.append(
+                            _run_linkedin_subprocess(
+                                li_scraper, broad_category, user_country,
+                                work_type, self._publish,
+                            )
+                        )
+                    results = await asyncio.gather(*gather_coros, return_exceptions=True)
+                    jobspy_jobs  = results[0] if not isinstance(results[0], Exception) else []
+                    startup_jobs = results[1] if not isinstance(results[1], Exception) else []
+                    li_jobs      = results[2] if len(results) > 2 and not isinstance(results[2], Exception) else []
+                    raw_jobs = jobspy_jobs + startup_jobs + li_jobs
+            except Exception as e:
+                await self._publish(f"❌ Pass {attempt} failed: {e} — retrying in 5m")
+                await asyncio.sleep(300)
                 continue
-            score = await self.score_job_match(job["title"], job["description"], campaign.sub_categories)
-            listing = await self.save_listing(campaign_id, user_id, job, score)
-            if listing:
-                saved += 1
-        return saved
+
+            await self._publish(f"📦 Pass {attempt}: {len(raw_jobs)} raw listings — filtering and scoring...")
+
+            new_matches_this_pass = 0
+            for job in raw_jobs:
+                if matches_found >= target:
+                    break
+                if not self.passes_work_type_filter(job, work_type, user_country, anywhere):
+                    skipped_location += 1
+                    continue
+
+                score = await self.score_job_match(job["title"], job["description"], sub_categories, profile_skills)
+                match_counts[score] = match_counts.get(score, 0) + 1
+
+                if score != "SKIP":
+                    await self._publish(f"{'✅' if score == 'MATCH' else '🟡'} {score} — {job['title']} @ {job['company']}")
+
+                listing = await self.save_listing(campaign_id, user_id, job, score)
+                if listing:
+                    if score == "MATCH":
+                        matches_found += 1
+                        new_matches_this_pass += 1
+                        # Dispatch tailor → apply pipeline via Celery
+                        try:
+                            from app.workers.tailor_worker import tailor_listing
+                            tailor_listing.delay(listing.id, user_id)
+                        except Exception as e:
+                            await self._publish(f"⚠️ Failed to queue tailor task for {listing.id}: {e}")
+                elif score == "MATCH":
+                    skipped_duplicate += 1
+
+            await self._publish(f"📊 Pass {attempt} complete — {new_matches_this_pass} new matches ({matches_found}/{target} matches total)")
+
+            if new_matches_this_pass == 0:
+                consecutive_empty += 1
+                wait_minutes = min(15 * consecutive_empty, 60)  # backoff: 15m, 30m, 60m cap
+                await self._publish(f"⏸ No new matches — waiting {wait_minutes}m before retrying (sources need to refresh)")
+                await asyncio.sleep(wait_minutes * 60)
+            else:
+                consecutive_empty = 0
+                results_wanted = max(results_wanted, (target - matches_found) * 2)
+
+        await self._publish(
+            f"✔ Done — {matches_found} matches found | "
+            f"{match_counts['PARTIAL']} partial, {match_counts['SKIP']} skipped | "
+            f"{skipped_location} filtered by location | {skipped_duplicate} duplicates"
+        )
+        return matches_found

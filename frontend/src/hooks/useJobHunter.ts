@@ -1,11 +1,11 @@
 import { useAuthStore } from '../store/authStore'
+import { apiFetch } from '../lib/apiFetch'
 import type {
   Campaign,
   CampaignSummary,
   Application,
   ScheduledInterview,
   InterviewContext,
-  JobHunterProfile,
 } from '../types/jobHunter'
 
 const BASE = '/api/v1'
@@ -18,86 +18,8 @@ export function useJobHunter() {
     Authorization: `Bearer ${token}`,
   }
 
-  async function getProfile(): Promise<JobHunterProfile> {
-    const res = await fetch(`${BASE}/job-hunter/profiles/me`, { headers })
-    const { data } = await res.json()
-    return {
-      id: data.id,
-      isComplete: data.is_complete,
-      completionScore: data.completion_score,
-      missingFields: data.missing_fields ?? [],
-      fullName: data.full_name ?? null,
-      email: data.email ?? null,
-      phone: data.phone ?? null,
-      city: data.city ?? null,
-      country: data.country ?? null,
-      linkedinUrl: data.linkedin_url ?? null,
-      githubUrl: data.github_url ?? null,
-      skills: data.skills ?? [],
-      workExperience: data.work_experience ?? [],
-      education: data.education ?? [],
-      projects: data.projects ?? [],
-    }
-  }
-
-  async function upsertProfile(
-    fields: Record<string, unknown>
-  ): Promise<{ isComplete: boolean; completionScore: number; missingFields: string[] }> {
-    // Pydantic v2 rejects explicit null for list[...] fields — null must become []
-    // Skills from Haiku may arrive as a comma-separated string instead of an array
-    const sanitized: Record<string, unknown> = { ...fields }
-    const listFields = ['work_experience', 'education', 'projects'] as const
-    for (const key of listFields) {
-      if (!Array.isArray(sanitized[key])) sanitized[key] = []
-    }
-    // languages_spoken must be list[dict] — Haiku sometimes returns list[str]
-    if (!Array.isArray(sanitized.languages_spoken)) {
-      sanitized.languages_spoken = []
-    } else {
-      sanitized.languages_spoken = (sanitized.languages_spoken as unknown[]).map((item) =>
-        typeof item === 'string' ? { language: item, proficiency: 'conversational' } : item
-      )
-    }
-    if (!Array.isArray(sanitized.skills)) {
-      sanitized.skills =
-        typeof sanitized.skills === 'string'
-          ? (sanitized.skills as string).split(',').map((s) => s.trim()).filter(Boolean)
-          : []
-    }
-
-    const res = await fetch(`${BASE}/job-hunter/profiles/me`, {
-      method: 'PUT',
-      headers,
-      body: JSON.stringify(sanitized),
-    })
-    if (!res.ok) {
-      const body = await res.json().catch(() => null)
-      // Pydantic v2 returns detail as an array of {loc, msg, type} objects
-      const detail = Array.isArray(body?.detail)
-        ? body.detail.map((e: { loc?: string[]; msg?: string }) => `${(e.loc ?? []).slice(1).join('.')}: ${e.msg}`).join('; ')
-        : (body?.detail ?? body?.error?.message ?? `HTTP ${res.status}`)
-      throw new Error(String(detail))
-    }
-    const { data } = await res.json()
-    return {
-      isComplete: data.is_complete,
-      completionScore: data.completion_score,
-      missingFields: data.missing_fields ?? [],
-    }
-  }
-
-  async function parseResume(text: string): Promise<Record<string, unknown>> {
-    const res = await fetch(`${BASE}/job-hunter/profiles/me/parse-resume`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ text }),
-    })
-    const { data } = await res.json()
-    return data
-  }
-
   async function listCampaigns(): Promise<Campaign[]> {
-    const res = await fetch(`${BASE}/job-hunter/campaigns`, { headers })
+    const res = await apiFetch(`${BASE}/job-hunter/campaigns`, { headers })
     const { data } = await res.json()
     return (data ?? []).map((c: Record<string, unknown>) => ({
       id: c.id,
@@ -108,35 +30,102 @@ export function useJobHunter() {
     })) as Campaign[]
   }
 
+  async function getCampaignMeta(): Promise<{ categories: string[]; workTypes: string[] }> {
+    const res = await apiFetch(`${BASE}/job-hunter/campaigns/meta`, { headers })
+    const { data } = await res.json()
+    return { categories: data.categories, workTypes: data.work_types }
+  }
+
   async function createCampaign(body: {
     name: string
     broadCategory: string
-    userCountry: string
+    userCountry?: string
+    anywhere?: boolean
+    workType?: string
   }): Promise<Campaign> {
-    const res = await fetch(`${BASE}/job-hunter/campaigns`, {
+    const res = await apiFetch(`${BASE}/job-hunter/campaigns`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
         name: body.name,
         broad_category: body.broadCategory,
-        user_country: body.userCountry,
+        user_country: body.userCountry ?? null,
+        anywhere: body.anywhere ?? false,
+        work_type: body.workType ?? 'remote',
       }),
     })
+    if (!res.ok) {
+      const b = await res.json().catch(() => null)
+      throw new Error(b?.detail ?? `HTTP ${res.status}`)
+    }
     const { data } = await res.json()
     return {
       id: data.id,
       name: data.name,
       status: data.status,
-      broadCategory: body.broadCategory,
+      broadCategory: data.broad_category,
       subCategories: data.sub_categories ?? [],
+      workType: data.work_type,
+      anywhere: data.anywhere,
+      userCountry: data.user_country,
     }
+  }
+
+  async function getCampaignProfile(campaignId: string): Promise<Record<string, unknown>> {
+    const res = await apiFetch(`${BASE}/job-hunter/campaigns/${campaignId}/profile`, { headers })
+    const { data } = await res.json()
+    return data
+  }
+
+  async function upsertCampaignProfile(campaignId: string, data: Record<string, unknown>): Promise<void> {
+    const res = await apiFetch(`${BASE}/job-hunter/campaigns/${campaignId}/profile`, {
+      method: 'PUT', headers, body: JSON.stringify(data),
+    })
+    if (!res.ok) {
+      const b = await res.json().catch(() => null)
+      throw new Error(b?.detail ?? `HTTP ${res.status}`)
+    }
+  }
+
+  async function analyzeProfileGaps(campaignId: string): Promise<{
+    score: number; is_ready: boolean; gaps: string[]; questions: { gap: string; question: string }[]; summary: string
+  }> {
+    const res = await apiFetch(`${BASE}/job-hunter/campaigns/${campaignId}/profile/analyze`, {
+      method: 'POST', headers,
+    })
+    const { data } = await res.json()
+    return data
+  }
+
+  async function processRawContext(campaignId: string, rawContext: string): Promise<{
+    extracted: Record<string, unknown>; gaps: { score: number; is_ready: boolean; gaps: string[]; questions: { gap: string; question: string }[] }
+  }> {
+    const res = await apiFetch(`${BASE}/job-hunter/campaigns/${campaignId}/profile/context`, {
+      method: 'POST', headers, body: JSON.stringify({ raw_context: rawContext }),
+    })
+    if (!res.ok) {
+      const b = await res.json().catch(() => null)
+      throw new Error(b?.detail ?? `HTTP ${res.status}`)
+    }
+    const { data } = await res.json()
+    return data
+  }
+
+  async function triggerScrape(campaignId: string): Promise<number> {
+    const res = await apiFetch(`${BASE}/job-hunter/campaigns/${campaignId}/scrape`, {
+      method: 'POST',
+      headers,
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const { data } = await res.json()
+    return data.scraped as number
   }
 
   async function setCampaignStatus(
     campaignId: string,
     status: 'active' | 'paused' | 'archived'
   ): Promise<void> {
-    await fetch(`${BASE}/job-hunter/campaigns/${campaignId}/status`, {
+    await apiFetch(`${BASE}/job-hunter/campaigns/${campaignId}/status`, {
       method: 'PATCH',
       headers,
       body: JSON.stringify({ status }),
@@ -147,8 +136,9 @@ export function useJobHunter() {
     summary: CampaignSummary
     pipeline: Application[]
     interviews: ScheduledInterview[]
+    activityLog: { message: string; createdAt: string }[]
   }> {
-    const res = await fetch(`${BASE}/job-hunter/campaigns/${campaignId}/dashboard`, { headers })
+    const res = await apiFetch(`${BASE}/job-hunter/campaigns/${campaignId}/dashboard`, { headers })
     const { data } = await res.json()
     return {
       summary: {
@@ -165,7 +155,7 @@ export function useJobHunter() {
         company: a.company,
         title: a.title,
         location: a.location ?? '',
-        appliedAt: a.applied_at ?? '',
+        appliedAt: a.applied_at ?? a.discovered_at ?? '',
         status: a.status,
         matchScore: a.match_score ?? null,
         source: a.source ?? '',
@@ -176,6 +166,10 @@ export function useJobHunter() {
         role: i.role,
         scheduledAt: i.scheduled_at,
       })) as ScheduledInterview[],
+      activityLog: (data.activity_log ?? []).map((l: Record<string, unknown>) => ({
+        message: l.message as string,
+        createdAt: l.created_at as string,
+      })),
     }
   }
 
@@ -183,7 +177,7 @@ export function useJobHunter() {
     campaignId: string,
     applicationId: string
   ): Promise<InterviewContext> {
-    const res = await fetch(
+    const res = await apiFetch(
       `${BASE}/job-hunter/campaigns/${campaignId}/applications/${applicationId}/interview-context`,
       { headers }
     )
@@ -198,14 +192,115 @@ export function useJobHunter() {
     }
   }
 
+  async function getCredentialsStatus(campaignId: string): Promise<{ emailConfigured: boolean; caldavConfigured: boolean; linkedinConfigured: boolean }> {
+    const res = await apiFetch(`${BASE}/job-hunter/campaigns/${campaignId}/credentials/status`, { headers })
+    const { data } = await res.json()
+    return {
+      emailConfigured: data.email_configured,
+      caldavConfigured: data.caldav_configured,
+      linkedinConfigured: data.linkedin_configured ?? false,
+    }
+  }
+
+  async function testEmailCredentials(campaignId: string, creds: {
+    host: string; port: number; username: string; password: string; smtp_host?: string; smtp_port?: number
+  }): Promise<void> {
+    const res = await apiFetch(`${BASE}/job-hunter/campaigns/${campaignId}/credentials/email/test`, {
+      method: 'POST', headers, body: JSON.stringify(creds),
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => null)
+      throw new Error(body?.detail ?? `HTTP ${res.status}`)
+    }
+  }
+
+  async function setEmailCredentials(campaignId: string, creds: {
+    host: string; port: number; username: string; password: string; smtp_host?: string; smtp_port?: number
+  }): Promise<void> {
+    const res = await apiFetch(`${BASE}/job-hunter/campaigns/${campaignId}/credentials/email`, {
+      method: 'PUT', headers, body: JSON.stringify(creds),
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  }
+
+  async function testCalDAVCredentials(campaignId: string, creds: {
+    url: string; username: string; password: string
+  }): Promise<string> {
+    const res = await apiFetch(`${BASE}/job-hunter/campaigns/${campaignId}/credentials/caldav/test`, {
+      method: 'POST', headers, body: JSON.stringify(creds),
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => null)
+      throw new Error(body?.detail ?? `HTTP ${res.status}`)
+    }
+    const { data } = await res.json()
+    return data.message as string
+  }
+
+  async function setCalDAVCredentials(campaignId: string, creds: {
+    url: string; username: string; password: string
+  }): Promise<void> {
+    const res = await apiFetch(`${BASE}/job-hunter/campaigns/${campaignId}/credentials/caldav`, {
+      method: 'PUT', headers, body: JSON.stringify(creds),
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  }
+
+  async function testLinkedInCredentials(campaignId: string, creds: {
+    email?: string; password?: string; session_cookie?: string
+  }): Promise<void> {
+    const res = await apiFetch(`${BASE}/job-hunter/campaigns/${campaignId}/credentials/linkedin/test`, {
+      method: 'POST', headers, body: JSON.stringify(creds),
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => null)
+      throw new Error(body?.detail ?? `HTTP ${res.status}`)
+    }
+  }
+
+  async function setLinkedInCredentials(campaignId: string, creds: {
+    email?: string; password?: string; session_cookie?: string
+  }): Promise<void> {
+    const res = await apiFetch(`${BASE}/job-hunter/campaigns/${campaignId}/credentials/linkedin`, {
+      method: 'PUT', headers, body: JSON.stringify(creds),
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  }
+
+  async function setCampaignToggles(campaignId: string, toggles: { email_enabled?: boolean; caldav_enabled?: boolean; linkedin_enabled?: boolean }): Promise<void> {
+    const res = await apiFetch(`${BASE}/job-hunter/campaigns/${campaignId}/toggles`, {
+      method: 'PATCH', headers, body: JSON.stringify(toggles),
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  }
+
+  async function deleteCampaign(campaignId: string): Promise<void> {
+    const res = await apiFetch(`${BASE}/job-hunter/campaigns/${campaignId}`, {
+      method: 'DELETE', headers,
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  }
+
   return {
-    getProfile,
-    upsertProfile,
-    parseResume,
     listCampaigns,
+    getCampaignMeta,
     createCampaign,
+    getCampaignProfile,
+    upsertCampaignProfile,
+    analyzeProfileGaps,
+    processRawContext,
+    triggerScrape,
     setCampaignStatus,
     getDashboard,
     getInterviewContext,
+    getCredentialsStatus,
+    testEmailCredentials,
+    setEmailCredentials,
+    testCalDAVCredentials,
+    setCalDAVCredentials,
+    testLinkedInCredentials,
+    setLinkedInCredentials,
+    setCampaignToggles,
+    deleteCampaign,
   }
 }

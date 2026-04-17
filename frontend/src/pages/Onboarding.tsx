@@ -21,8 +21,8 @@ export default function Onboarding() {
     })
     const body = await res.json()
     if (!res.ok) { setError(body.error?.message ?? 'Registration failed'); return }
-    const { access_token, user_id, name: userName, language_pref } = body.data
-    setAuth(access_token, user_id, userName, language_pref)
+    const { access_token, refresh_token, user_id, name: userName, language_pref } = body.data
+    setAuth(access_token, refresh_token, user_id, userName, language_pref)
   }
 
   return (

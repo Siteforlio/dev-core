@@ -13,7 +13,7 @@ from app.api.v1.sessions import router as sessions_router
 from app.api.v1.speech import router as speech_router
 from app.api.v1.ws import router as ws_router
 from app.api.v1.emotion import router as emotion_router
-from app.api.v1.job_hunter.profiles import router as jh_profiles_router
+from app.api.v1.integrations import router as integrations_router
 from app.api.v1.job_hunter.campaigns import router as jh_campaigns_router
 from app.api.v1.job_hunter.applications import router as jh_applications_router
 from app.api.v1.job_hunter.ws import router as jh_ws_router
@@ -48,7 +48,7 @@ app.include_router(sessions_router, prefix="/api/v1")
 app.include_router(speech_router, prefix="/api/v1")
 app.include_router(ws_router, prefix="/api/v1")
 app.include_router(emotion_router, prefix="/api/v1")
-app.include_router(jh_profiles_router, prefix="/api/v1")
+app.include_router(integrations_router, prefix="/api/v1")
 app.include_router(jh_campaigns_router, prefix="/api/v1")
 app.include_router(jh_applications_router, prefix="/api/v1")
 app.include_router(jh_ws_router, prefix="/api/v1")
