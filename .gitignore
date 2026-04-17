@@ -30,3 +30,10 @@ out/
 .DS_Store
 Thumbs.db
 .worktrees/
+
+# Backend scratch files
+backend/*.png
+backend/screenshots/
+backend/resumes/
+backend/test_output/
+backend/test_*.py
