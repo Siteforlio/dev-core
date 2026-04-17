@@ -388,6 +388,7 @@ class ScraperService:
         from datetime import datetime, timezone
         from app.services.job_hunter.ats_scrapers import scrape_all_ats
         from app.services.job_hunter.startup_scrapers import scrape_all_startup_boards
+        from app.services.job_hunter.kenya_scrapers import scrape_all_kenya_boards
 
         self._campaign_id = campaign_id
         result = await self.db.execute(select(JobHunterCampaign).where(JobHunterCampaign.id == campaign_id))
@@ -435,12 +436,14 @@ class ScraperService:
 
         matches_found = 0  # only MATCH jobs count toward target
         skipped_location = 0
+        skipped_non_tech = 0
         skipped_duplicate = 0
         match_counts = {"MATCH": 0, "PARTIAL": 0, "SKIP": 0}
         attempt = 0
         results_wanted = target * 2
         consecutive_empty = 0
-        ats_fetched = False  # ATS APIs return static snapshots — only fetch once per campaign run
+        ats_fetched = False    # ATS APIs return static snapshots — only fetch once per campaign run
+        kenya_fetched = False  # Kenya boards are fetched on first pass only (alongside ATS)
 
         while matches_found < target:
             # Check 24h deadline
@@ -469,6 +472,7 @@ class ScraperService:
                             self.run_jobspy(campaign, results_wanted=results_wanted, search_term=broad_category),
                             scrape_all_ats(broad_category, publish_fn=self._publish),
                             scrape_all_startup_boards(broad_category, publish_fn=self._publish),
+                            scrape_all_kenya_boards(broad_category, publish_fn=self._publish),
                         ]
                         if linkedin_creds:
                             from app.services.job_hunter.linkedin_scraper import LinkedInScraper
@@ -487,18 +491,21 @@ class ScraperService:
                         jobspy_jobs  = results[0] if not isinstance(results[0], Exception) else []
                         ats_jobs     = results[1] if not isinstance(results[1], Exception) else []
                         startup_jobs = results[2] if not isinstance(results[2], Exception) else []
-                        li_jobs      = results[3] if len(results) > 3 and not isinstance(results[3], Exception) else []
-                        if linkedin_creds and len(results) > 3 and isinstance(results[3], Exception):
-                            li_err = results[3]
+                        kenya_jobs   = results[3] if not isinstance(results[3], Exception) else []
+                        li_jobs      = results[4] if len(results) > 4 and not isinstance(results[4], Exception) else []
+                        if linkedin_creds and len(results) > 4 and isinstance(results[4], Exception):
+                            li_err = results[4]
                             li_err_msg = repr(li_err) if not str(li_err) else str(li_err)
                             await self._publish(f"⚠️ LinkedIn scrape error: {type(li_err).__name__}: {li_err_msg}")
+                        kenya_fetched = True
                     except Exception as e:
                         await self._publish(f"⚠️ Parallel fetch error ({e}) — falling back to job boards only")
                         jobspy_jobs = await self.run_jobspy(campaign, results_wanted=results_wanted, search_term=broad_category)
                         ats_jobs = []
                         startup_jobs = []
+                        kenya_jobs = []
                         li_jobs = []
-                    raw_jobs = jobspy_jobs + ats_jobs + startup_jobs + li_jobs
+                    raw_jobs = jobspy_jobs + ats_jobs + startup_jobs + kenya_jobs + li_jobs
                     ats_fetched = True
                 else:
                     # Subsequent passes: jobspy + startup boards + LinkedIn (ATS snapshot doesn't change)
@@ -532,12 +539,30 @@ class ScraperService:
             await self._publish(f"📦 Pass {attempt}: {len(raw_jobs)} raw listings — filtering and scoring...")
 
             new_matches_this_pass = 0
+
+            # Step 1: work-type filter
+            work_type_filtered = []
             for job in raw_jobs:
+                if self.passes_work_type_filter(job, work_type, user_country, anywhere):
+                    work_type_filtered.append(job)
+                else:
+                    skipped_location += 1
+
+            # Step 2: tech-role pre-filter (drops obvious non-tech before Haiku)
+            tech_filtered = []
+            for job in work_type_filtered:
+                if self._tech_role_prefilter(job["title"], job["description"]):
+                    tech_filtered.append(job)
+                else:
+                    skipped_non_tech += 1
+
+            # Step 3: sort by SMB score descending so startup-native sources are scored first
+            tech_filtered.sort(key=_smb_score, reverse=True)
+
+            # Step 4: score and dispatch
+            for job in tech_filtered:
                 if matches_found >= target:
                     break
-                if not self.passes_work_type_filter(job, work_type, user_country, anywhere):
-                    skipped_location += 1
-                    continue
 
                 score = await self.score_job_match(job["title"], job["description"], sub_categories, profile_skills)
                 match_counts[score] = match_counts.get(score, 0) + 1
@@ -573,6 +598,7 @@ class ScraperService:
         await self._publish(
             f"✔ Done — {matches_found} matches found | "
             f"{match_counts['PARTIAL']} partial, {match_counts['SKIP']} skipped | "
-            f"{skipped_location} filtered by location | {skipped_duplicate} duplicates"
+            f"{skipped_location} filtered by location | {skipped_non_tech} non-tech filtered | "
+            f"{skipped_duplicate} duplicates"
         )
         return matches_found
