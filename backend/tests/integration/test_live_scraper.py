@@ -58,7 +58,7 @@ import re as _re
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-PER_BOARD_TARGET = 20   # jobs to collect per board; total = 12 * 20 = 240
+PER_BOARD_TARGET = 10   # jobs to collect per board; total = 12 * 10 = 120
 
 SEARCH_TERMS = [
     "software engineer",
@@ -75,9 +75,8 @@ SEARCH_TERMS = [
     "qa engineer",
 ]
 
-# Boards that need a browser (nodriver) share the same httpx client stub —
-# the individual scrapers open their own browser internally.
-# Fuzu is listed but will always return 0: Cloudflare Turnstile blocks headless.
+# Boards that need a browser open their own browser internally.
+# Fuzu uses headless=False — Cloudflare Turnstile auto-solves for visible Chrome.
 BOARDS = [
     # name              scraper fn              uses_nodriver
     ("remotive",            scrape_remotive,            False),
@@ -86,7 +85,7 @@ BOARDS = [
     ("weworkremotely",      scrape_weworkremotely,      False),
     ("zindi",               scrape_zindi,               False),
     ("startupdeals_africa", scrape_startupdeals_africa, False),
-    ("fuzu",                scrape_fuzu,                True),   # blocked: CF Turnstile
+    ("fuzu",                scrape_fuzu,                True),   # headless=False, CF auto-solves
     ("brightermonday",      scrape_brightermonday,      True),
     ("myjobmag",            scrape_myjobmag,            False),
     ("kuhustle",            scrape_kuhustle,            False),
@@ -120,11 +119,13 @@ def _is_tech(title: str, description: str) -> bool:
 
 
 def _fmt_job(job: dict, idx: int) -> str:
-    title   = (job.get("title") or "").strip()[:55]
-    company = (job.get("company") or "").strip()[:35]
-    loc     = "remote" if job.get("remote") else (job.get("location") or "-")[:20]
-    tag     = "[startup]" if _smb_score(job) >= 2 else ""
-    return f"  {idx:>4}. {title:<55}  {company:<35}  {loc:<20}  {tag}"
+    title     = (job.get("title") or "").strip()[:50]
+    company   = (job.get("company") or "").strip()[:30]
+    loc       = "remote" if job.get("remote") else (job.get("location") or "-")[:18]
+    apply_url = job.get("apply_url") or job.get("url") or ""
+    tag       = "[startup]" if _smb_score(job) >= 2 else ""
+    apply_tag = f"  -> {apply_url[:80]}" if apply_url else "  -> (no apply link)"
+    return f"  {idx:>3}. {title:<50}  {company:<30}  {loc:<18}  {tag}\n{apply_tag}"
 
 
 # ---------------------------------------------------------------------------
@@ -154,7 +155,7 @@ async def scrape_board_to_quota(
             _log(f"  [{name}] error on '{term}': {e}")
             raw = []
 
-        new = 0
+        before = len(collected)
         for job in raw:
             key = f"{(job.get('company') or '').lower().strip()}|{(job.get('title') or '').lower().strip()}"
             if not key.strip("|") or key in seen:
@@ -162,12 +163,18 @@ async def scrape_board_to_quota(
             seen.add(key)
             if not _is_tech(job.get("title", ""), job.get("description", "")):
                 continue
-            job["source"] = name  # ensure source tag is correct
+            job["source"] = name
             collected.append(job)
             if len(collected) >= quota:
                 break
-        new = sum(1 for j in collected if True)  # re-count not needed; track delta
-        _log(f"  [{name}] term='{term}' raw={len(raw)} total_collected={len(collected)}/{quota}")
+        added = len(collected) - before
+        _log(f"  [{name}] term='{term}' raw={len(raw)} +{added} total={len(collected)}/{quota}")
+
+        # If we got results but zero were new, this board always returns the same page
+        # (e.g. Fuzu maps all tech terms to the same category URL) — no point retrying
+        if raw and added == 0 and len(collected) > 0:
+            _log(f"  [{name}] all results were duplicates — stopping early")
+            break
 
     return collected
 
@@ -184,18 +191,19 @@ async def main() -> dict[str, list[dict]]:
     # One shared httpx client (browser-based scrapers ignore it but signature requires it)
     async with httpx.AsyncClient(follow_redirects=True) as client:
 
-        # Run all 12 boards in parallel
-        _log("Launching all boards in parallel...")
-        tasks = {
-            name: asyncio.create_task(
-                scrape_board_to_quota(name, fn, PER_BOARD_TARGET, client)
-            )
-            for name, fn, _ in BOARDS
-        }
-        results: dict[str, list[dict]] = {}
-        for name, task in tasks.items():
-            results[name] = await task   # gather sequentially to keep logs readable
-        # (For true parallel, replace the above with asyncio.gather)
+        # HTTP boards run in parallel; browser boards run after (avoid Chrome conflicts)
+        http_boards   = [(n, f) for n, f, browser in BOARDS if not browser]
+        browser_boards = [(n, f) for n, f, browser in BOARDS if browser]
+
+        _log(f"Running {len(http_boards)} HTTP boards in parallel...")
+        http_results = await asyncio.gather(
+            *[scrape_board_to_quota(n, f, PER_BOARD_TARGET, client) for n, f in http_boards]
+        )
+        results: dict[str, list[dict]] = dict(zip([n for n, _ in http_boards], http_results))
+
+        _log(f"Running {len(browser_boards)} browser boards sequentially...")
+        for name, fn in browser_boards:
+            results[name] = await scrape_board_to_quota(name, fn, PER_BOARD_TARGET, client)
 
     # ---------------------------------------------------------------------------
     # Print results
@@ -210,14 +218,13 @@ async def main() -> dict[str, list[dict]]:
         jobs = results[name]
         grand_total += len(jobs)
         browser_tag = "(browser)" if is_browser else "(httpx) "
-        status = "BLOCKED" if name == "fuzu" and len(jobs) == 0 else f"{len(jobs):>3} / {PER_BOARD_TARGET}"
+        status = f"{len(jobs):>3} / {PER_BOARD_TARGET}"
         print(f"\n  {name:<22} {browser_tag}  {status}")
         print(f"  {SEP}")
         for i, job in enumerate(jobs, 1):
             print(_fmt_job(job, i))
         if not jobs:
-            note = "Cloudflare Turnstile (requires real browser + human interaction)" if name == "fuzu" else "0 results"
-            print(f"    -- {note}")
+            print(f"    -- 0 results")
 
     print()
     print(SEP2)
@@ -250,7 +257,7 @@ async def test_live_scraper_per_board_quota():
     Boards with known blocks (fuzu) are excluded from assertions.
     Run explicitly: pytest tests/integration/ -s -v
     """
-    KNOWN_BLOCKED = {"fuzu"}
+    KNOWN_BLOCKED: set[str] = set()
 
     results = await main()
 

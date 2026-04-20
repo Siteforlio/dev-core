@@ -30,34 +30,14 @@ def _normalize(job: dict) -> dict:
 
 
 async def scrape_fuzu(search_term: str, client: httpx.AsyncClient) -> list[dict]:
-    """Fuzu.com — Kenya's most active job board for SMBs. Uses nodriver (SPA)."""
+    """Fuzu.com — uses the browser-use autonomous agent (Vertex Gemini).
+
+    The agent navigates the category page, dismisses popups, and extracts
+    job listings autonomously — no brittle CSS selectors needed.
+    """
     try:
-        from app.services.job_hunter.browser_service import BrowserService
-        jobs = []
-        async with BrowserService(headless=True) as browser:
-            page = await browser.new_page()
-            url = f"https://www.fuzu.com/kenya/jobs?q={search_term.replace(' ', '+')}"
-            await browser.goto(page, url, wait=3.0)
-            await browser.wait_past_cloudflare(page, timeout=10.0)
-            html = await page.evaluate("document.body.innerText")
-            titles = re.findall(r'"title"\s*:\s*"([^"]{5,100})"', html)
-            companies = re.findall(r'"hiringOrganization"[^}]*"name"\s*:\s*"([^"]{2,80})"', html)
-            urls_found = re.findall(r'"url"\s*:\s*"(https://www\.fuzu\.com/kenya/jobs/[^"]+)"', html)
-            for i, title in enumerate(titles[:50]):
-                company = companies[i] if i < len(companies) else "Fuzu Company"
-                job_url = urls_found[i] if i < len(urls_found) else "https://www.fuzu.com/kenya/jobs"
-                jobs.append(_normalize({
-                    "source": "fuzu",
-                    "title": title,
-                    "company": company,
-                    "location": "Kenya",
-                    "location_country": "KE",
-                    "remote": False,
-                    "url": job_url,
-                    "apply_url": job_url,
-                    "description": f"Job listing on Fuzu Kenya: {title} at {company}",
-                }))
-        return jobs
+        from app.services.job_hunter.fuzu_agent import scrape_fuzu_agent
+        return await scrape_fuzu_agent(search_term)
     except Exception:
         return []
 

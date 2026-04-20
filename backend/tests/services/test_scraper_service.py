@@ -11,20 +11,20 @@ def mock_db():
     db.commit = AsyncMock()
     return db
 
-async def test_passes_remote_filter(mock_db):
+async def test_passes_work_type_filter(mock_db):
     service = ScraperService(mock_db)
     job = {"remote": True, "location_country": "US"}
-    assert service.passes_remote_filter(job, user_country="GB") is True
+    assert service.passes_work_type_filter(job, work_type="remote", user_country="GB", anywhere=False) is True
 
 async def test_blocks_onsite_different_country(mock_db):
     service = ScraperService(mock_db)
     job = {"remote": False, "location_country": "US"}
-    assert service.passes_remote_filter(job, user_country="GB") is False
+    assert service.passes_work_type_filter(job, work_type="onsite", user_country="GB", anywhere=False) is False
 
 async def test_allows_onsite_same_country(mock_db):
     service = ScraperService(mock_db)
     job = {"remote": False, "location_country": "GB"}
-    assert service.passes_remote_filter(job, user_country="GB") is True
+    assert service.passes_work_type_filter(job, work_type="onsite", user_country="GB", anywhere=False) is True
 
 async def test_build_url_hash_is_deterministic(mock_db):
     service = ScraperService(mock_db)
