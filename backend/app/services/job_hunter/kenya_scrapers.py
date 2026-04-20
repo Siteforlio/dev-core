@@ -63,7 +63,9 @@ async def scrape_fuzu(search_term: str, client: httpx.AsyncClient) -> list[dict]
 
 
 async def scrape_brightermonday(search_term: str, client: httpx.AsyncClient) -> list[dict]:
-    """BrighterMonday Kenya — high-volume local board. Uses nodriver (SPA)."""
+    """BrighterMonday Kenya — high-volume local board. Uses nodriver (SPA).
+    Selectors confirmed 2026-04: data-cy=listing-title-link + text-blue-700 company line.
+    """
     try:
         from app.services.job_hunter.browser_service import BrowserService
         jobs = []
@@ -71,26 +73,37 @@ async def scrape_brightermonday(search_term: str, client: httpx.AsyncClient) -> 
             page = await browser.new_page()
             query = search_term.replace(' ', '%20')
             url = f"https://www.brightermonday.co.ke/jobs?q={query}"
-            await browser.goto(page, url, wait=3.0)
-            await browser.wait_past_cloudflare(page, timeout=10.0)
+            # 8s wait gives the JS time to inject listing cards
+            await browser.goto(page, url, wait=8.0)
             html = await page.evaluate("document.body.innerHTML")
-            titles = re.findall(r'class="[^"]*job-title[^"]*"[^>]*>([^<]{5,100})<', html)
-            companies = re.findall(r'class="[^"]*company[^"]*"[^>]*>([^<]{2,80})<', html)
-            links = re.findall(r'href="(/jobs/[^"?]+)"', html)
+            # Full listing URLs (e.g. /listings/support-engineer-7wn4dx)
+            links = re.findall(
+                r'href="(https://www\.brightermonday\.co\.ke/listings/[^"]+)"',
+                html,
+            )
+            # Title is inside the <p> nested in the listing-title-link anchor
+            titles = re.findall(
+                r'data-cy="listing-title-link"[^>]*>\s*<p[^>]*>([^<]{5,120})</p>',
+                html,
+            )
+            # Company name in the sibling <p class="text-sm text-blue-700 ...">
+            companies = re.findall(
+                r'class="text-sm text-blue-700[^"]*"[^>]*>\s*([^\n<]{2,80}?)\s*</p>',
+                html,
+            )
             for i, title in enumerate(titles[:50]):
-                company = companies[i] if i < len(companies) else "BrighterMonday Company"
-                path = links[i] if i < len(links) else "/jobs"
-                job_url = f"https://www.brightermonday.co.ke{path}"
+                company = companies[i].strip() if i < len(companies) else "BrighterMonday Company"
+                job_url = links[i] if i < len(links) else "https://www.brightermonday.co.ke/jobs"
                 jobs.append(_normalize({
                     "source": "brightermonday",
                     "title": title.strip(),
-                    "company": company.strip(),
+                    "company": company,
                     "location": "Kenya",
                     "location_country": "KE",
                     "remote": False,
                     "url": job_url,
                     "apply_url": job_url,
-                    "description": f"Job on BrighterMonday Kenya: {title.strip()} at {company.strip()}",
+                    "description": f"Job on BrighterMonday Kenya: {title.strip()} at {company}",
                 }))
         return jobs
     except Exception:
@@ -98,34 +111,42 @@ async def scrape_brightermonday(search_term: str, client: httpx.AsyncClient) -> 
 
 
 async def scrape_myjobmag(search_term: str, client: httpx.AsyncClient) -> list[dict]:
-    """MyJobMag Kenya — standard HTML, httpx sufficient."""
+    """MyJobMag Kenya — standard HTML, httpx sufficient.
+    Selectors confirmed 2026-04: <h2><a href="/job/...">Title at Company</a></h2>
+    """
     try:
-        query = search_term.replace(' ', '+')
         r = await client.get(
-            f"https://www.myjobmag.co.ke/jobs-by-field/{query}",
+            "https://www.myjobmag.co.ke/jobs/",
             headers={"User-Agent": "Mozilla/5.0"},
             timeout=_HTTP_TIMEOUT,
         )
         if r.status_code != 200:
             return []
         html = r.text
-        titles = re.findall(r'class="[^"]*job-title[^"]*"[^>]*>([^<]{5,100})<', html)
-        companies = re.findall(r'class="[^"]*company-name[^"]*"[^>]*>([^<]{2,80})<', html)
-        links = re.findall(r'href="(https://www\.myjobmag\.co\.ke/job/[^"]+)"', html)
+        # Each listing: <h2><a href="/job/slug">Title at Company Name</a></h2>
+        entries = re.findall(r'<h2><a[^>]+href="(/job/[^"]+)"[^>]*>([^<]{5,200})</a></h2>', html)
         jobs = []
-        for i, title in enumerate(titles[:50]):
-            company = companies[i] if i < len(companies) else "MyJobMag Company"
-            url = links[i] if i < len(links) else "https://www.myjobmag.co.ke"
+        for path, raw_title in entries[:50]:
+            raw_title = raw_title.strip()
+            # Format is "Job Title at Company Name"
+            if " at " in raw_title:
+                parts = raw_title.rsplit(" at ", 1)
+                title = parts[0].strip()
+                company = parts[1].strip()
+            else:
+                title = raw_title
+                company = "MyJobMag Company"
+            job_url = f"https://www.myjobmag.co.ke{path}"
             jobs.append(_normalize({
                 "source": "myjobmag",
-                "title": title.strip(),
-                "company": company.strip(),
+                "title": title,
+                "company": company,
                 "location": "Kenya",
                 "location_country": "KE",
                 "remote": False,
-                "url": url,
-                "apply_url": url,
-                "description": f"Job on MyJobMag Kenya: {title.strip()} at {company.strip()}",
+                "url": job_url,
+                "apply_url": job_url,
+                "description": f"Job on MyJobMag Kenya: {title} at {company}",
             }))
         return jobs
     except Exception:
