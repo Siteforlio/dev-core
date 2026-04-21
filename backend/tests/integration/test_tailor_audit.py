@@ -202,10 +202,12 @@ async def _scrape_boards(client: httpx.AsyncClient) -> list[dict]:
             if len(collected) >= JOBS_PER_BOARD:
                 break
             try:
-                kwargs = {"search_term": term}
-                if uses_browser:
+                kwargs = {"search_term": term, "client": client}
+                import inspect as _inspect
+                sig = _inspect.signature(fn)
+                if "headless" in sig.parameters:
                     kwargs["headless"] = True
-                raw = await fn(client=client, **kwargs)
+                raw = await fn(**kwargs)
                 for job in raw:
                     if len(collected) >= JOBS_PER_BOARD:
                         break
@@ -340,12 +342,19 @@ async def _inspect_form(apply_url: str) -> dict:
                 })
 
                 # Flag text/textarea with question-like labels as "questions"
-                if ftype in ("text", "textarea") and label and (
-                    "?" in label
-                    or any(kw in label.lower() for kw in [
-                        "why", "describe", "tell us", "explain", "how", "what",
-                        "experience", "cover", "additional", "comment",
-                    ])
+                # Skip labels that look like JS code or are too long (>200 chars)
+                if (
+                    ftype in ("text", "textarea")
+                    and label
+                    and len(label) <= 200
+                    and not label.strip().startswith(("$(", "function", "var ", "const ", "let ", "<"))
+                    and (
+                        "?" in label
+                        or any(kw in label.lower() for kw in [
+                            "why", "describe", "tell us", "explain", "how", "what",
+                            "experience", "cover", "additional", "comment",
+                        ])
+                    )
                 ):
                     result["questions"].append(label)
 

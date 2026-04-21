@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     jwt_refresh_expire_days: int = 7
     anthropic_api_key: str = ""
     gemini_api_key: str = ""
+    vertex_api_key: str = ""  # aiplatform.googleapis.com key for gemini-2.5-flash-lite
     heygen_api_key: str = ""
     simli_api_key: str = ""
     openai_api_key: str = ""
