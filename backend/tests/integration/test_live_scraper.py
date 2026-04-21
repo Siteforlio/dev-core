@@ -191,19 +191,12 @@ async def main() -> dict[str, list[dict]]:
     # One shared httpx client (browser-based scrapers ignore it but signature requires it)
     async with httpx.AsyncClient(follow_redirects=True) as client:
 
-        # HTTP boards run in parallel; browser boards run after (avoid Chrome conflicts)
-        http_boards   = [(n, f) for n, f, browser in BOARDS if not browser]
-        browser_boards = [(n, f) for n, f, browser in BOARDS if browser]
-
-        _log(f"Running {len(http_boards)} HTTP boards in parallel...")
-        http_results = await asyncio.gather(
-            *[scrape_board_to_quota(n, f, PER_BOARD_TARGET, client) for n, f in http_boards]
+        # All 12 boards run fully in parallel — each browser board opens its own Chrome
+        _log(f"Running all {len(BOARDS)} boards in parallel...")
+        all_results = await asyncio.gather(
+            *[scrape_board_to_quota(n, f, PER_BOARD_TARGET, client) for n, f, _ in BOARDS]
         )
-        results: dict[str, list[dict]] = dict(zip([n for n, _ in http_boards], http_results))
-
-        _log(f"Running {len(browser_boards)} browser boards sequentially...")
-        for name, fn in browser_boards:
-            results[name] = await scrape_board_to_quota(name, fn, PER_BOARD_TARGET, client)
+        results: dict[str, list[dict]] = dict(zip([n for n, _, _ in BOARDS], all_results))
 
     # ---------------------------------------------------------------------------
     # Print results
