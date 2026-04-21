@@ -307,18 +307,53 @@ class ApplyService:
 
     async def _detect_form_url(self, url: str) -> str | None:
         """
-        Fetch the page HTML BEFORE opening Chrome to find the direct form URL.
-        Avoids keeping Chrome idle while doing HTTP work (which can cause CDP disconnects).
-        Returns the resolved form URL, or None if the page is already a direct form.
+        Return the direct application form URL before Chrome opens.
+
+        Priority:
+          1. Greenhouse job-boards.greenhouse.io/COMPANY/jobs/JOB_ID
+             → https://job-boards.greenhouse.io/embed/job_app?for=COMPANY&token=JOB_ID
+          2. Old-format boards.greenhouse.io/COMPANY/jobs/JOB_ID
+             → https://boards.greenhouse.io/embed/job_app?for=COMPANY&token=JOB_ID
+          3. Already on a direct ATS domain (Lever, Ashby, Workday) → no rewrite needed
+          4. Company career page with embedded ATS → HTTP-fetch and scan for iframe src
+             or Greenhouse embed.js script tag
         """
         import httpx, re as _re
         from urllib.parse import urlparse, parse_qs
 
-        _ats_domains = [p for patterns in ATS_PATTERNS.values() for p in patterns
-                        if p != "linkedin.com/jobs/apply"]
-        if any(d in url for d in _ats_domains):
-            return None  # already a direct ATS URL, no detection needed
+        # ── 1. Already on a Greenhouse embed form URL — nothing to do ─────────
+        if '/embed/job_app' in url or '/embed/job_board/apply' in url:
+            return None
 
+        # ── 2. New-format Greenhouse SPA: job-boards.greenhouse.io/CO/jobs/ID ──
+        #   The job description page requires clicking an Apply button (React SPA).
+        #   Navigate directly to the embed form instead — no JS injection needed.
+        m = re.search(r'job-boards\.greenhouse\.io/([^/?]+)/jobs/(\d+)', url)
+        if m:
+            form_url = (
+                f"https://job-boards.greenhouse.io/embed/job_app"
+                f"?for={m.group(1)}&token={m.group(2)}"
+            )
+            logger.info("_detect_form_url: new-format Greenhouse → %s", form_url)
+            return form_url
+
+        # ── 3. Old-format Greenhouse: boards.greenhouse.io/COMPANY/jobs/ID ────
+        m = re.search(r'(?<!job-)boards\.greenhouse\.io/([^/?]+)/jobs/(\d+)', url)
+        if m:
+            form_url = (
+                f"https://boards.greenhouse.io/embed/job_app"
+                f"?for={m.group(1)}&token={m.group(2)}"
+            )
+            logger.info("_detect_form_url: old-format Greenhouse → %s", form_url)
+            return form_url
+
+        # ── 4. Already on a direct non-Greenhouse ATS domain — no rewrite ─────
+        _ats_domains = [p for patterns in ATS_PATTERNS.values() for p in patterns
+                        if p not in ("linkedin.com/jobs/apply", "greenhouse.io")]
+        if any(d in url for d in _ats_domains):
+            return None
+
+        # ── 5. Company career page — HTTP-fetch and look for embedded ATS ─────
         try:
             async with httpx.AsyncClient(
                 timeout=10,
@@ -328,20 +363,18 @@ class ApplyService:
                 resp = await hc.get(url)
                 html = resp.text
 
-                # 1. Iframe src already in static HTML
+                # 5a. Iframe src already in static HTML
                 m = _re.search(
                     r'<iframe[^>]+src="(https://[^"]*'
                     r'(?:greenhouse|lever|ashby|workday|myworkdayjobs)[^"]*)"',
                     html,
                 )
                 if m:
-                    logger.info("_detect_form_url: iframe in HTML: %s", m.group(1)[:100])
+                    logger.info("_detect_form_url: iframe in HTML → %s", m.group(1)[:100])
                     return m.group(1)
 
-                # 2. Greenhouse embed script → construct direct embed form URL
-                #    boards.greenhouse.io/embed/job_board/js?for=COMPANY injects an
-                #    application form via JS.  The direct rendered form lives at:
-                #    job-boards.greenhouse.io/embed/job_app?for=COMPANY&token=JOB_ID
+                # 5b. Greenhouse embed.js → construct embed form URL
+                #   boards.greenhouse.io/embed/job_board/js?for=COMPANY is the embed loader
                 m_for = _re.search(
                     r'greenhouse\.io/embed/job_board/js\?for=([^"&\s]+)', html
                 )
@@ -359,7 +392,7 @@ class ApplyService:
                             f"https://job-boards.greenhouse.io/embed/job_app"
                             f"?for={company}&token={job_id}"
                         )
-                        logger.info("_detect_form_url: constructed embed form URL: %s", form_url)
+                        logger.info("_detect_form_url: embed.js → %s", form_url)
                         return form_url
         except Exception as e:
             logger.debug("_detect_form_url: %s", e)
@@ -702,16 +735,18 @@ class ApplyService:
                         logger.warning("no iframe or Apply button found — scanning current page as-is")
 
         # ── Pre-loop: navigate to the actual form if we're still on a description page ──
-        # job-boards.greenhouse.io/COMPANY/jobs/ID  shows job description.
-        # The application form is at .../jobs/ID/apply — navigate there first.
-        # For other sites, try a broad Apply-button click before the fill loop starts.
-        # Give the React/SPA page time to fully render before checking fields
-        await asyncio.sleep(3.0)
-        pre_count = await page.evaluate(
-            "document.querySelectorAll("
-            "'input:not([type=hidden]):not([disabled]),"
-            "select:not([disabled]),textarea:not([disabled])').length"
-        ) or 0
+        # Poll for up to 10 s for fields to appear (React SPAs render asynchronously).
+        pre_count = 0
+        for _ in range(20):  # 20 × 0.5 s = 10 s
+            await asyncio.sleep(0.5)
+            pre_count = await page.evaluate(
+                "document.querySelectorAll("
+                "'input:not([type=hidden]):not([disabled]),"
+                "select:not([disabled]),textarea:not([disabled])').length"
+            ) or 0
+            if pre_count > 0:
+                break
+        logger.info("pre-loop: %d field(s) visible after initial wait", pre_count)
 
         if pre_count == 0:
             logger.info("pre-loop: no form fields visible — locating application form")

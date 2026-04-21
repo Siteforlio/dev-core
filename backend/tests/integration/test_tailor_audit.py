@@ -373,7 +373,7 @@ async def _tailor_job(job: dict) -> dict:
     Run the full tailoring pipeline against a job dict using TEST_PROFILE.
     Returns {"html": str, "cover_letter": str, "keywords": list, "summary": str}
     """
-    from app.services.job_hunter.tailor_service import TailorService
+    from app.services.job_hunter.tailor_service import TailorService, _build_immutable_facts
     from app.services.job_hunter.matcher_service import matcher
 
     # Build a minimal mock profile object from TEST_PROFILE dict
@@ -408,17 +408,21 @@ async def _tailor_job(job: dict) -> dict:
     top_competencies = svc.pick_top_competencies(jd or title, profile.skills)
     resume_skills    = svc.pick_resume_skills(jd or title, profile.skills)
 
+    # --- Immutable facts (education + employers + location — never changed) ---
+    immutable_facts = _build_immutable_facts(profile, profile.work_experience)
+
     # --- Parallel LLM calls: summary + salary + bullets ---
     bullet_pairs = svc._extract_bullets(profile.work_experience)
     bullets_only = [b for _, b in bullet_pairs]
     jd_summary   = jd[:400]
 
     summary, salary, rewritten = await asyncio.gather(
-        svc.generate_summary(profile, keywords, title),
+        svc.generate_summary(profile, keywords, title, immutable_facts=immutable_facts),
         svc.infer_salary(profile.years_of_experience, location, company),
         svc.rewrite_bullets(
             bullets_only[:20], keywords,
-            target_role=title, target_company=company, jd_summary=jd_summary,
+            target_role=title, target_company=company,
+            jd_summary=jd_summary, immutable_facts=immutable_facts,
         ),
     )
 
@@ -430,7 +434,8 @@ async def _tailor_job(job: dict) -> dict:
         f"Middle: highlight 2-3 specific achievements from their experience.\n"
         f"Closing: express enthusiasm and salary expectation of {salary}.\n"
         f"Candidate skills: {', '.join(profile.skills[:10])}.\n"
-        f"JD keywords to address: {', '.join(keywords[:8])}.\n"
+        f"JD keywords to address: {', '.join(keywords[:8])}.\n\n"
+        f"{immutable_facts}\n\n"
         f"End with 'Sincerely,' then '{profile.full_name}'. No markdown.",
         max_tokens=500,
     )

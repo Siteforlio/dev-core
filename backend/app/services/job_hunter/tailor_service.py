@@ -27,6 +27,63 @@ def _get_haiku_sem() -> asyncio.Semaphore:
     return _HAIKU_SEM
 
 
+def _build_immutable_facts(profile, experience: list[dict]) -> str:
+    """
+    Build the IMMUTABLE FACTS block that is injected into every LLM prompt.
+
+    These three things NEVER change regardless of the target role:
+      1. Education — degrees, institutions, years, certifications
+      2. Previous employers — exact company names as they appear in the profile
+      3. Candidate location — city and country as entered by the user
+
+    Any LLM prompt that includes this block must treat these facts as read-only.
+    """
+    lines = ["IMMUTABLE FACTS (DO NOT change, rewrite, omit, or invent alternatives):"]
+
+    # 1. Education
+    edu = getattr(profile, "education", None) or []
+    if edu:
+        edu_strs = []
+        for e in edu:
+            degree = e.get("degree", "")
+            field  = e.get("field_of_study", "")
+            inst   = e.get("institution", "")
+            year   = e.get("graduation_year", "")
+            entry  = degree
+            if field:
+                entry += f" in {field}"
+            if inst:
+                entry += f" — {inst}"
+            if year:
+                entry += f" ({year})"
+            if entry.strip():
+                edu_strs.append(entry.strip())
+        if edu_strs:
+            lines.append(f"  Education: {' | '.join(edu_strs)}")
+
+    # 2. Previous employers — exact names, never paraphrased
+    companies = []
+    for job in experience:
+        name = (job.get("company") or "").strip()
+        if name and name not in companies:
+            companies.append(name)
+    if companies:
+        lines.append(f"  Previous employers (exact names): {', '.join(companies)}")
+
+    # 3. Location
+    city    = (getattr(profile, "city", None) or "").strip()
+    country = (getattr(profile, "country", None) or "").strip()
+    loc = ", ".join(filter(None, [city, country]))
+    if loc:
+        lines.append(f"  Location: {loc}")
+
+    lines.append(
+        "RULE: Every output must preserve the above facts exactly. "
+        "Do not rename companies, move the location, alter degree titles, or remove education."
+    )
+    return "\n".join(lines)
+
+
 class TailorService:
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -69,6 +126,7 @@ class TailorService:
         target_role: str = "",
         target_company: str = "",
         jd_summary: str = "",
+        immutable_facts: str = "",
     ) -> list[str]:
         """
         Rewrite resume bullets with domain translation.
@@ -99,6 +157,7 @@ class TailorService:
         raw = await self._call_haiku(
             f"You are rewriting resume bullets so a candidate looks like a strong fit for a new role.\n\n"
             f"{domain_context}\n\n"
+            f"{immutable_facts}\n\n"
             f"TASK: For each bullet, keep the achievement (the numbers, the scale, the outcome) "
             f"but translate the CONTEXT into the language of the target role. "
             f"The achievement belongs to the candidate — just tell it in the vocabulary of the new field.\n\n"
@@ -139,14 +198,21 @@ class TailorService:
         match = re.search(r'[\$€£KES][\d,\s]+[-–][\s]*[\$€£KES]?[\d,\s]+', raw)
         return match.group(0).strip() if match else "$80,000 - $120,000"
 
-    async def generate_summary(self, profile: CampaignProfile, keywords: list[str], role: str) -> str:
+    async def generate_summary(
+        self,
+        profile,
+        keywords: list[str],
+        role: str,
+        immutable_facts: str = "",
+    ) -> str:
         exp = profile.work_experience or []
         years = getattr(profile, "years_of_experience", None)
         years_phrase = f"{years} years of" if years else f"{len(exp)} roles of"
         return await self._call_haiku(
             f"Write a 2-3 sentence professional summary for a {role} application.\n"
             f"Candidate has {years_phrase} experience. "
-            f"Top skills: {', '.join((profile.skills or [])[:12])}.\n"
+            f"Top skills: {', '.join((profile.skills or [])[:12])}.\n\n"
+            f"{immutable_facts}\n\n"
             f"Rules:\n"
             f"- Use exactly '{years_phrase}' — do NOT change, round up, or invent a different number\n"
             f"- Include quantified achievements only if they appear in the profile data below\n"
@@ -502,6 +568,17 @@ a:hover {{ text-decoration:underline; }}
         location = (listing.location or "remote")[:100]
         experience = profile.work_experience or []
 
+        # ── EDUCATION GUARD — do not proceed without education on the profile ──
+        if not (profile.education or []):
+            import logging as _log2
+            _log2.getLogger(__name__).warning(
+                "tailor_for_listing: blocked — no education on profile for listing %s", listing_id
+            )
+            return None
+
+        # ── Build immutable facts block (injected into every LLM prompt) ──────
+        immutable_facts = _build_immutable_facts(profile, experience)
+
         # --- Pre-filter: skip tailoring for very poor fits ---
         profile_text = (
             f"{', '.join((profile.skills or [])[:20])} | "
@@ -528,9 +605,13 @@ a:hover {{ text-decoration:underline; }}
         jd_summary = (listing.description or "")[:400]
 
         summary, salary, rewritten = await asyncio.gather(
-            self.generate_summary(profile, keywords, title),
+            self.generate_summary(profile, keywords, title, immutable_facts=immutable_facts),
             self.infer_salary(profile.years_of_experience or len(experience), location, company),
-            self.rewrite_bullets(bullets_only[:20], keywords, target_role=title, target_company=company, jd_summary=jd_summary),
+            self.rewrite_bullets(
+                bullets_only[:20], keywords,
+                target_role=title, target_company=company,
+                jd_summary=jd_summary, immutable_facts=immutable_facts,
+            ),
         )
 
         candidate_name = (profile.full_name or "").strip()
@@ -541,7 +622,8 @@ a:hover {{ text-decoration:underline; }}
             f"Middle: highlight 2-3 specific achievements from their experience that directly match the role.\n"
             f"Closing: express enthusiasm and salary expectation of {salary}.\n"
             f"Candidate skills: {', '.join((profile.skills or [])[:10])}.\n"
-            f"JD keywords to address: {', '.join(keywords[:8])}.\n"
+            f"JD keywords to address: {', '.join(keywords[:8])}.\n\n"
+            f"{immutable_facts}\n\n"
             f"End the letter with 'Sincerely,' on one line, then '{candidate_name}' on the next line. "
             f"Do NOT use placeholders like [Your Name] — use the actual name above.\n"
             f"Return plain text only, no markdown.",
