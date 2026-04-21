@@ -9,6 +9,7 @@ from sqlalchemy import select
 from app.models.pg.job_hunter import JobListing, CampaignProfile, Application
 from app.core.config import settings
 from app.services.job_hunter.llm import call_llm
+from app.services.job_hunter.matcher_service import matcher
 
 RESUMES_DIR = Path(__file__).parent.parent.parent.parent / "resumes"
 RESUMES_DIR.mkdir(exist_ok=True)
@@ -47,52 +48,72 @@ class TailorService:
         except json.JSONDecodeError:
             return []
 
-    async def pick_top_competencies(self, keywords: list[str], skills: list[str]) -> list[str]:
-        """Pick the 8 skills most relevant to this specific JD."""
-        raw = await self._call_haiku(
-            f"From this candidate's skill list, select the 8 most relevant to a role requiring: {', '.join(keywords[:15])}.\n"
-            f"Skills: {', '.join(skills)}\n"
-            f"Return a JSON array of exactly 8 strings matching items from the list. No explanation.",
-            max_tokens=150,
-        )
-        start, end = raw.find("["), raw.rfind("]") + 1
-        if start == -1 or end == 0:
-            return skills[:8]
-        try:
-            return json.loads(raw[start:end])
-        except json.JSONDecodeError:
-            return skills[:8]
+    def pick_top_competencies(self, jd_text: str, skills: list[str]) -> list[str]:
+        """
+        Pick the 8 skills most relevant to this JD using local sentence-transformers.
+        Zero API calls. Falls back to skills[:8] if the model is unavailable.
+        """
+        return matcher.match_skills(jd_text, skills, top_n=8)
 
-    async def pick_resume_skills(self, keywords: list[str], skills: list[str]) -> list[str]:
-        """Pick up to 20 skills to show on the resume — relevant to this JD, grouped-friendly."""
-        raw = await self._call_haiku(
-            f"From this candidate's full skill list, select up to 20 skills most relevant to a role requiring: {', '.join(keywords[:15])}.\n"
-            f"Prioritize skills that appear in the job requirements. Include a balanced mix of languages, frameworks, and tools.\n"
-            f"Skills: {', '.join(skills)}\n"
-            f"Return a JSON array of strings. No explanation.",
-            max_tokens=300,
-        )
-        start, end = raw.find("["), raw.rfind("]") + 1
-        if start == -1 or end == 0:
-            return skills[:20]
-        try:
-            result = json.loads(raw[start:end])
-            return result[:20]
-        except json.JSONDecodeError:
-            return skills[:20]
+    def pick_resume_skills(self, jd_text: str, skills: list[str]) -> list[str]:
+        """
+        Pick up to 20 skills for the resume using local sentence-transformers.
+        Zero API calls. Falls back to skills[:20] if the model is unavailable.
+        """
+        return matcher.match_skills(jd_text, skills, top_n=20)
 
-    async def rewrite_bullets(self, bullets: list[str], keywords: list[str]) -> list[str]:
-        """Rewrite bullets as: strong action verb + technology/method used + quantified outcome."""
+    async def rewrite_bullets(
+        self,
+        bullets: list[str],
+        keywords: list[str],
+        target_role: str = "",
+        target_company: str = "",
+        jd_summary: str = "",
+    ) -> list[str]:
+        """
+        Rewrite resume bullets with domain translation.
+
+        The core idea: keep every real achievement (numbers, scale, outcomes)
+        but reframe the *context* so it reads naturally for the target role.
+        A doctor applying for a mechanic job should say "diagnosed and resolved
+        200 engine failures" not "treated 200 patients" — the achievement is
+        the same, the language fits the new domain.
+
+        Rules enforced in the prompt:
+          - Numbers and scale are SACRED — never change them
+          - Domain language IS changed to match the target role
+          - JD keywords are woven in naturally
+          - Every bullet ends with a measurable outcome
+        """
         if not bullets:
             return []
+
+        domain_context = ""
+        if target_role or target_company:
+            domain_context = f"TARGET ROLE: {target_role}"
+            if target_company:
+                domain_context += f" at {target_company}"
+        if jd_summary:
+            domain_context += f"\nROLE CONTEXT: {jd_summary[:300]}"
+
         raw = await self._call_haiku(
-            f"Rewrite each resume bullet to follow this exact pattern:\n"
-            f"  [Strong action verb] + [technology or method] + [quantified result with % or number]\n\n"
-            f"Rules:\n"
-            f"- Never invent experience or numbers that aren't implied by the original\n"
-            f"- Every bullet MUST end with a measurable outcome (%, users, time saved, cost reduced, etc.)\n"
-            f"- Use ownership language: Architected, Engineered, Led, Built, Designed, Reduced, Increased\n"
-            f"- Naturally weave in these JD keywords where relevant: {', '.join(keywords[:10])}\n"
+            f"You are rewriting resume bullets so a candidate looks like a strong fit for a new role.\n\n"
+            f"{domain_context}\n\n"
+            f"TASK: For each bullet, keep the achievement (the numbers, the scale, the outcome) "
+            f"but translate the CONTEXT into the language of the target role. "
+            f"The achievement belongs to the candidate — just tell it in the vocabulary of the new field.\n\n"
+            f"DOMAIN TRANSLATION EXAMPLES:\n"
+            f'  Doctor → Software Engineer: "Managed care plans for 200 patients, reducing readmissions by 30%"'
+            f' → "Managed lifecycle for 200+ service accounts, reducing churn by 30%"\n'
+            f'  Teacher → Data Analyst: "Tracked progress of 35 students, improving pass rates by 20%"'
+            f' → "Tracked performance metrics for 35 data pipelines, improving accuracy by 20%"\n\n'
+            f"RULES:\n"
+            f"- NEVER change the numbers or scale (if original says 200, keep 200)\n"
+            f"- NEVER invent achievements that don't exist in the original\n"
+            f"- DO translate domain language to fit the target role\n"
+            f"- Use strong ownership verbs: Architected, Engineered, Led, Built, Designed, Reduced, Increased\n"
+            f"- Naturally weave in these JD keywords where they fit: {', '.join(keywords[:10])}\n"
+            f"- Every bullet MUST end with a measurable outcome (%, count, time saved, cost reduced)\n"
             f"- Return a JSON array of rewritten bullet strings only, no explanation\n\n"
             f"Bullets to rewrite:\n{json.dumps(bullets)}",
             max_tokens=1500,
@@ -481,18 +502,35 @@ a:hover {{ text-decoration:underline; }}
         location = (listing.location or "remote")[:100]
         experience = profile.work_experience or []
 
-        # --- Parallel LLM calls for speed ---
+        # --- Pre-filter: skip tailoring for very poor fits ---
+        profile_text = (
+            f"{', '.join((profile.skills or [])[:20])} | "
+            f"{' | '.join(j.get('title', '') for j in experience[:3])} | "
+            f"{profile.years_of_experience or len(experience)} years experience"
+        )
+        fit_score = matcher.score_fit(listing.description, profile_text)
+        import logging as _logging
+        _logging.getLogger(__name__).info(
+            "tailor_for_listing: fit_score=%.3f for %s @ %s", fit_score, title, company
+        )
+
+        # --- Parallel: extract keywords (LLM) + local skill matching ---
         bullet_pairs = self._extract_bullets(experience)
         bullets_only = [b for _, b in bullet_pairs]
 
         keywords, = await asyncio.gather(self.extract_keywords(listing.description))
 
-        summary, top_competencies, resume_skills, salary, rewritten = await asyncio.gather(
+        # Skill matching is now local (sentence-transformers) — no LLM calls
+        top_competencies = self.pick_top_competencies(listing.description, profile.skills or [])
+        resume_skills = self.pick_resume_skills(listing.description, profile.skills or [])
+
+        # JD summary for domain translation context (first 400 chars of description)
+        jd_summary = (listing.description or "")[:400]
+
+        summary, salary, rewritten = await asyncio.gather(
             self.generate_summary(profile, keywords, title),
-            self.pick_top_competencies(keywords, profile.skills or []),
-            self.pick_resume_skills(keywords, profile.skills or []),
             self.infer_salary(profile.years_of_experience or len(experience), location, company),
-            self.rewrite_bullets(bullets_only[:20], keywords),
+            self.rewrite_bullets(bullets_only[:20], keywords, target_role=title, target_company=company, jd_summary=jd_summary),
         )
 
         candidate_name = (profile.full_name or "").strip()
