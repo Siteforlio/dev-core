@@ -6,6 +6,9 @@ import type {
   Application,
   ScheduledInterview,
   InterviewContext,
+  ScrapePreferences,
+  BoardStatus,
+  ScrapeRunStatus,
 } from '../types/jobHunter'
 
 const BASE = '/api/v1'
@@ -111,14 +114,32 @@ export function useJobHunter() {
     return data
   }
 
-  async function triggerScrape(campaignId: string): Promise<number> {
+  async function triggerScrape(campaignId: string, prefs?: Partial<ScrapePreferences>): Promise<void> {
+    const body: Record<string, unknown> = {}
+    if (prefs?.companyTypes?.length)   body.company_types  = prefs.companyTypes
+    if (prefs?.workType)               body.work_type      = prefs.workType
+    if (prefs?.regions?.length)        body.regions        = prefs.regions
+    if (prefs?.dailyTarget)            body.daily_target   = prefs.dailyTarget
+
     const res = await apiFetch(`${BASE}/job-hunter/campaigns/${campaignId}/scrape`, {
       method: 'POST',
       headers,
+      body: JSON.stringify(body),
     })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    if (!res.ok) {
+      const b = await res.json().catch(() => null)
+      throw new Error(b?.detail ?? `HTTP ${res.status}`)
+    }
+  }
+
+  async function getScrapeStatus(campaignId: string): Promise<{
+    run: ScrapeRunStatus | null
+    boards: Record<string, BoardStatus>
+  }> {
+    const res = await apiFetch(`${BASE}/job-hunter/campaigns/${campaignId}/scrape/status`, { headers })
+    if (!res.ok) return { run: null, boards: {} }
     const { data } = await res.json()
-    return data.scraped as number
+    return { run: data.run ?? null, boards: data.boards ?? {} }
   }
 
   async function setCampaignStatus(
@@ -290,6 +311,7 @@ export function useJobHunter() {
     analyzeProfileGaps,
     processRawContext,
     triggerScrape,
+    getScrapeStatus,
     setCampaignStatus,
     getDashboard,
     getInterviewContext,

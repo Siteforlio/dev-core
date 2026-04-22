@@ -50,6 +50,28 @@ def tailor_listing(self, listing_id: str, user_id: str) -> dict:
     result = asyncio.run(_run())
     application_id = result.get("application_id")
     if application_id:
+        # Pass the board_id (= listing.source) so the apply worker routes
+        # to the correct per-board applier instead of the generic filler.
         from app.workers.apply_worker import submit_application
-        submit_application.delay(application_id)
+
+        async def _get_board_id():
+            from sqlalchemy import select
+            from app.models.pg.job_hunter import Application, JobListing
+            Session, engine = _make_session()
+            try:
+                async with Session() as db:
+                    app_row = (await db.execute(
+                        select(Application).where(Application.id == application_id)
+                    )).scalar_one_or_none()
+                    if not app_row:
+                        return None
+                    listing = (await db.execute(
+                        select(JobListing).where(JobListing.id == app_row.job_listing_id)
+                    )).scalar_one_or_none()
+                    return listing.source if listing else None
+            finally:
+                await engine.dispose()
+
+        board_id = asyncio.run(_get_board_id())
+        submit_application.delay(application_id, board_id)
     return result

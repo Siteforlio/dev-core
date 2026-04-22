@@ -560,14 +560,88 @@ def _write_summary(out_dir: Path, jobs: list[dict], form_results: dict, tailor_r
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Step 5 — Actually apply (fill + submit the form)
+# ─────────────────────────────────────────────────────────────────────────────
+
+RESUMES_DIR = OUTPUT_BASE / "resumes"
+
+
+async def _apply_job(job: dict, tailor_result: dict) -> dict:
+    """
+    Generate a PDF resume, build the candidate context, and call ApplyService
+    to fill and submit the real application form.
+
+    Chrome opens in VISIBLE mode so you can watch and intervene if needed.
+    Returns {"success": bool, "ats": str, "error": str | None}
+    """
+    from app.services.job_hunter.apply_service import ApplyService
+    from app.services.job_hunter.tailor_service import TailorService
+
+    apply_url = job.get("apply_url") or job.get("url") or ""
+    if not apply_url:
+        return {"success": False, "ats": "none", "error": "no apply URL"}
+
+    # ── Generate PDF from tailored HTML ───────────────────────────────────────
+    html = tailor_result.get("html", "")
+    pdf_path_str = ""
+    if html:
+        RESUMES_DIR.mkdir(parents=True, exist_ok=True)
+        pdf_name = f"resume_{_slugify(job.get('title', ''))[:20]}_{_slugify(job.get('company', ''))[:15]}.pdf"
+        pdf_path = RESUMES_DIR / pdf_name
+        try:
+            tailor_svc = TailorService(db=None)
+            await asyncio.to_thread(tailor_svc._generate_pdf_sync, html, pdf_path)
+            pdf_path_str = str(pdf_path)
+            _log(f"    PDF generated: {pdf_path.name}")
+        except Exception as exc:
+            _log(f"    WARNING: PDF generation failed ({exc}) — will apply without resume upload")
+
+    # ── Build candidate context ───────────────────────────────────────────────
+    ctx = {
+        "full_name":           TEST_PROFILE["full_name"],
+        "email":               TEST_PROFILE["email"],
+        "phone":               TEST_PROFILE["phone"],
+        "city":                TEST_PROFILE["city"],
+        "country":             TEST_PROFILE["country"],
+        "linkedin_url":        TEST_PROFILE["linkedin_url"],
+        "github_url":          TEST_PROFILE["github_url"],
+        "portfolio_url":       TEST_PROFILE["portfolio_url"],
+        "years_of_experience": TEST_PROFILE["years_of_experience"],
+        "skills":              ", ".join(TEST_PROFILE["skills"][:15]),
+        "cover_letter":        tailor_result.get("cover_letter", ""),
+        "salary":              tailor_result.get("salary", ""),
+        "summary":             tailor_result.get("summary", ""),
+        "resume_pdf":          pdf_path_str,
+        "job_title":           job.get("title", ""),
+        "company":             job.get("company", ""),
+    }
+
+    # ── Detect ATS and apply ──────────────────────────────────────────────────
+    svc = ApplyService.__new__(ApplyService)
+    svc.db = None  # db not needed — we call _apply() directly
+    ats = svc.detect_ats(apply_url)
+    _log(f"    ATS detected: {ats}  |  URL: {apply_url[:80]}")
+
+    try:
+        success = await svc._apply(apply_url, ats, ctx, headless=False)
+        return {"success": success, "ats": ats, "error": None}
+    except Exception as exc:
+        return {"success": False, "ats": ats, "error": str(exc)}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def main() -> None:
+    submit_mode = "--submit" in sys.argv
+
     run_ts  = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     out_dir = OUTPUT_BASE / run_ts
     out_dir.mkdir(parents=True, exist_ok=True)
     _log(f"Output folder: {out_dir}")
+    if submit_mode:
+        _log("*** SUBMIT MODE — applications will be ACTUALLY submitted ***")
 
     # ── 1. Scrape ─────────────────────────────────────────────────────────────
     _log(SEP)
@@ -653,6 +727,55 @@ async def main() -> None:
     _log(f"  job_NNN_*/resume.html       — open in browser to see tailored resume")
     _log(f"  job_NNN_*/form_fields.json  — every field on the apply form")
     _log(f"  job_NNN_*/cover_letter.txt  — tailored cover letter")
+    _log(SEP)
+
+    if not submit_mode:
+        _log("To actually submit applications, re-run with --submit")
+        return
+
+    # ── 6. Apply (only with --submit flag) ────────────────────────────────────
+    _log(SEP)
+    _log("STEP 6 — Applying (Chrome visible — watch for captchas / login walls)")
+    _log(SEP)
+
+    # Only attempt jobs that have a tailored resume
+    to_apply = [
+        (i, job) for i, job in enumerate(to_inspect, 1)
+        if tailor_results.get(i)
+    ]
+    _log(f"{len(to_apply)} jobs have tailored resumes — press Enter to start applying, Ctrl+C to abort")
+    try:
+        input()
+    except KeyboardInterrupt:
+        _log("Aborted by user")
+        return
+
+    apply_results: dict[int, dict] = {}
+    for i, job in to_apply:
+        title = job.get("title", "")[:45]
+        company = job.get("company", "")[:25]
+        _log(f"\n  [{i}/{len(to_apply)}] {title} @ {company}")
+        try:
+            result = await _apply_job(job, tailor_results[i])
+            apply_results[i] = result
+            status = "✅ applied" if result["success"] else f"❌ failed — {result.get('error') or 'unknown'}"
+            _log(f"    {status}")
+        except Exception as exc:
+            apply_results[i] = {"success": False, "ats": "error", "error": str(exc)}
+            _log(f"    ❌ exception: {exc}")
+
+    # ── Summary ───────────────────────────────────────────────────────────────
+    _log(SEP)
+    _log("APPLY SUMMARY")
+    _log(SEP)
+    applied = sum(1 for r in apply_results.values() if r.get("success"))
+    _log(f"  {applied}/{len(to_apply)} applications submitted successfully")
+    for i, job in to_apply:
+        r = apply_results.get(i, {})
+        icon = "✅" if r.get("success") else "❌"
+        ats  = r.get("ats", "?")
+        err  = f" — {r['error']}" if r.get("error") else ""
+        _log(f"  {icon} [{ats}] {job.get('title','')[:40]} @ {job.get('company','')[:20]}{err}")
     _log(SEP)
 
 

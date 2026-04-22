@@ -132,25 +132,35 @@ async def list_campaigns(
 @router.post("/{campaign_id}/scrape", response_model=dict)
 async def trigger_scrape(
     campaign_id: str,
+    body: dict = None,
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(get_user_id),
 ):
-    """Manually trigger a scrape run for a campaign and return results immediately."""
-    from sqlalchemy import select
-    from app.models.pg.job_hunter import CampaignProfile
+    """
+    Trigger a parallel per-board scrape run via the Celery dispatcher.
 
-    # Guard: profile must exist and have the minimum fields to tailor a resume
+    Optional body fields (all have sensible defaults from the campaign):
+      company_types: list[str]  — ["startup","faang","enterprise","sme"] subset
+      work_type:     str        — "remote"|"hybrid"|"onsite"|"any"
+      regions:       list[str]  — ["kenya","africa","global"] subset; [] = anywhere
+      daily_target:  int        — max MATCH listings to collect (default 100)
+    """
+    from sqlalchemy import select
+    from app.models.pg.job_hunter import CampaignProfile, JobHunterCampaign
+    from app.services.job_hunter.email_service import EmailService
+    from app.services.job_hunter.campaign_profile_service import CampaignProfileService
+
+    body = body or {}
+
+    # ── Profile guard ─────────────────────────────────────────────────────
     profile_result = await db.execute(
         select(CampaignProfile).where(CampaignProfile.campaign_id == campaign_id)
     )
     profile = profile_result.scalar_one_or_none()
+    if not profile:
+        raise HTTPException(status_code=400, detail="No profile found. Fill in your profile before scraping.")
 
     missing = []
-    if not profile:
-        raise HTTPException(
-            status_code=400,
-            detail="No profile found for this campaign. Go to Profile and fill in your details before scraping."
-        )
     if not (profile.full_name or "").strip():
         missing.append("full name")
     if not (profile.email or "").strip():
@@ -159,32 +169,107 @@ async def trigger_scrape(
         missing.append("skills")
     if not profile.work_experience:
         missing.append("work experience")
-
     if missing:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Profile is incomplete. Add the following before scraping: {', '.join(missing)}."
-        )
+        raise HTTPException(status_code=400, detail=f"Profile incomplete: {', '.join(missing)}.")
 
-    # Run scrape in the background — it can take minutes to hours.
-    # Frontend receives live updates via WebSocket activity feed.
-    import asyncio
-    import logging
-    from app.services.job_hunter.scraper_service import ScraperService
+    # ── Load campaign ─────────────────────────────────────────────────────
+    campaign_result = await db.execute(
+        select(JobHunterCampaign).where(JobHunterCampaign.id == campaign_id)
+    )
+    campaign = campaign_result.scalar_one_or_none()
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found.")
 
-    logger = logging.getLogger(__name__)
+    # ── Resolve LinkedIn credentials (if enabled) ─────────────────────────
+    linkedin_creds: dict | None = None
+    if campaign.linkedin_enabled:
+        try:
+            from app.models.pg.job_hunter import UserIntegration
+            svc = EmailService(db)
+            ui_result = await db.execute(select(UserIntegration).where(UserIntegration.user_id == user_id))
+            ui = ui_result.scalar_one_or_none()
+            encrypted = (ui.linkedin_account_encrypted if ui else None) or campaign.linkedin_account_encrypted
+            if encrypted:
+                linkedin_creds = svc.decrypt_credentials(encrypted)
+        except Exception:
+            pass
 
-    async def _run_scrape():
-        from app.core.database import AsyncSessionLocal
-        async with AsyncSessionLocal() as scrape_db:
-            try:
-                svc = ScraperService(scrape_db)
-                await svc.scrape_campaign(campaign_id, user_id)
-            except Exception:
-                logger.exception("scrape_campaign failed for campaign %s", campaign_id)
+    # ── Build preferences ─────────────────────────────────────────────────
+    work_type   = body.get("work_type") or campaign.work_type or "any"
+    anywhere    = bool(campaign.anywhere)
+    user_country = campaign.user_country or ""
 
-    asyncio.create_task(_run_scrape())
-    return {"data": {"scraped": 0, "started": True}, "error": None}
+    # Derive regions from location settings
+    regions: list[str] = body.get("regions") or []
+    if not regions and not anywhere:
+        country_upper = user_country.upper()
+        if country_upper == "KE":
+            regions = ["kenya"]
+        elif country_upper in ("NG", "GH", "ZA", "ET", "TZ", "UG", "RW"):
+            regions = ["africa", "kenya"]
+        # else: global (empty = all regions)
+
+    preferences = {
+        "search_term":    campaign.broad_category,
+        "company_types":  body.get("company_types") or [],
+        "work_type":      work_type,
+        "regions":        regions,
+        "user_country":   user_country,
+        "anywhere":       anywhere,
+        "daily_target":   int(body.get("daily_target") or 100),
+        "max_rounds":     5,
+        "sub_categories": list(campaign.sub_categories or []),
+        "profile_skills": list(profile.skills or []),
+        "linkedin_creds": linkedin_creds,
+    }
+
+    # ── Dispatch ──────────────────────────────────────────────────────────
+    from app.workers.board_scrape_worker import dispatch_scrape
+    dispatch_scrape.delay(
+        campaign_id=campaign_id,
+        user_id=user_id,
+        preferences=preferences,
+        dynamic_only=False,
+        round_=1,
+    )
+
+    return {"data": {"started": True, "preferences": {k: v for k, v in preferences.items() if k != "linkedin_creds"}}, "error": None}
+
+
+@router.get("/{campaign_id}/scrape/status", response_model=dict)
+async def get_scrape_status(
+    campaign_id: str,
+    user_id: str = Depends(get_user_id),
+):
+    """
+    Returns per-board scrape status for the current run.
+
+    Each board entry: {status: queued|running|done|failed, count: int, error: str|None}
+    Also returns the overall run status.
+    """
+    from app.workers.board_scrape_worker import _get_all_board_statuses, _redis
+    from app.services.job_hunter.board_registry import all_boards
+    import json
+
+    board_statuses = _get_all_board_statuses(campaign_id)
+
+    # Overall run status
+    run_status: dict = {}
+    try:
+        r = _redis()
+        raw = r.get(f"scrape_run:{campaign_id}")
+        if raw:
+            run_status = json.loads(raw)
+    except Exception:
+        pass
+
+    return {
+        "data": {
+            "run": run_status,
+            "boards": board_statuses,
+        },
+        "error": None,
+    }
 
 
 @router.put("/{campaign_id}/credentials/email", response_model=dict)

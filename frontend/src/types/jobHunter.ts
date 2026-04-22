@@ -64,3 +64,27 @@ export interface InterviewContext {
   role: string
   applicationId: string
 }
+
+export type BoardStatusState = 'idle' | 'queued' | 'running' | 'done' | 'failed'
+
+export interface BoardStatus {
+  status: BoardStatusState
+  count: number
+  error: string | null
+  updated_at: string
+}
+
+export interface ScrapeRunStatus {
+  status: 'running' | 'done'
+  matches: number
+  round: number
+  started_at: string
+  updated_at: string
+}
+
+export interface ScrapePreferences {
+  companyTypes: ('faang' | 'enterprise' | 'startup' | 'sme')[]
+  workType: 'remote' | 'hybrid' | 'onsite' | 'any'
+  regions: ('global' | 'africa' | 'kenya')[]
+  dailyTarget: number
+}

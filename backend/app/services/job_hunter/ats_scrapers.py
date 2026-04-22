@@ -158,6 +158,14 @@ async def scrape_greenhouse(slug: str, client: httpx.AsyncClient) -> list[dict]:
             if "," in location:
                 country = location.split(",")[-1].strip()[:2].upper()
             content = j.get("content", "") or ""
+            job_id  = j.get("id", "")
+            # Use canonical Greenhouse job-boards URL so _detect_form_url can
+            # rewrite it directly to the embed form, even when absolute_url is
+            # a company-specific SPA page (e.g. stripe.com/jobs/search?gh_jid=…)
+            canonical_url = (
+                f"https://job-boards.greenhouse.io/{slug}/jobs/{job_id}"
+                if job_id else j.get("absolute_url", "")
+            )
             jobs.append(_normalize({
                 "source": "greenhouse",
                 "title": j.get("title", ""),
@@ -165,8 +173,8 @@ async def scrape_greenhouse(slug: str, client: httpx.AsyncClient) -> list[dict]:
                 "location": location or None,
                 "location_country": country or None,
                 "remote": remote,
-                "url": j.get("absolute_url", ""),
-                "apply_url": j.get("absolute_url", ""),
+                "url": canonical_url,
+                "apply_url": canonical_url,
                 "description": content[:5000],
             }))
         return jobs

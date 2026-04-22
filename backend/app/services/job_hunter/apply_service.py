@@ -881,12 +881,8 @@ class ApplyService:
 
             # ── Step 4: AI maps every field to a value ────────────────────────
             if fillable:
-                answers = await self._ai_map_fields(fillable, ctx)
-                logger.info("step %d: AI produced %d answer(s)", step, len(answers))
-
-                # Build combobox set: any field where the NEXT field in the raw list
-                # has selector '__idx__N' and required=True — these are custom
-                # React Select / Select2 dropdowns that require click-selection.
+                # Build combobox set: any field where the NEXT raw field has
+                # selector '__idx__N' — these are custom React/Select2 dropdowns.
                 combobox_selectors: set[str] = set()
                 for i, f in enumerate(fields):
                     nxt = fields[i + 1] if i + 1 < len(fields) else None
@@ -894,6 +890,23 @@ class ApplyService:
                         sel = f.get("selector", "")
                         if sel and not sel.startswith("__idx__"):
                             combobox_selectors.add(sel)
+
+                # Pre-read real options from every combobox so the LLM gets
+                # actual choices instead of guessing. Runs before _ai_map_fields.
+                if combobox_selectors:
+                    logger.info("step %d: pre-reading options from %d combobox(es)",
+                                step, len(combobox_selectors))
+                    for field in fillable:
+                        sel = field.get("selector", "")
+                        if sel in combobox_selectors and not field.get("options"):
+                            opts = await self._read_combobox_options(browser, page, sel)
+                            if opts:
+                                field["options"] = opts
+                                logger.info("  combobox [%s] options: %s",
+                                            (field.get("label") or sel)[:40], opts[:8])
+
+                answers = await self._ai_map_fields(fillable, ctx)
+                logger.info("step %d: AI produced %d answer(s)", step, len(answers))
 
                 # ── Step 5: fill each field ───────────────────────────────────
                 for field in fillable:
@@ -972,6 +985,56 @@ class ApplyService:
                 native_virtual_key_code=vk,
             ))
             await asyncio.sleep(0.05)
+
+    async def _read_combobox_options(
+        self,
+        browser: "BrowserService",
+        page,
+        selector: str,
+    ) -> list[str]:
+        """
+        Click a custom dropdown open, read the visible option texts, then close it.
+        Returns a list of option label strings (empty if not a dropdown or on error).
+        Does NOT select anything.
+        """
+        try:
+            el = await page.find(selector, timeout=4)
+            if not el:
+                return []
+            await el.click()
+            await asyncio.sleep(0.8)
+
+            opts: list[str] = []
+            for lb_sel in ('[role="listbox"]', '[class*="-menu"]', '.pac-container',
+                           '[role="combobox"] + *', '[aria-expanded="true"] ~ *'):
+                try:
+                    listbox = await page.find(lb_sel, timeout=1)
+                    if not listbox:
+                        continue
+                    for opt_sel in ('[role="option"]', 'li', '.pac-item'):
+                        els = await listbox.query_selector_all(opt_sel)
+                        if els:
+                            for oe in els[:30]:
+                                try:
+                                    html = await oe.get_html()
+                                    txt = re.sub(r'<[^>]+>', '', html or '').strip()
+                                    if txt and not re.match(r'^\+\d+$', txt):
+                                        opts.append(txt)
+                                except Exception:
+                                    pass
+                            break
+                    if opts:
+                        break
+                except Exception:
+                    pass
+
+            # Close the dropdown without selecting
+            await self._cdp_key(page, "Escape", "Escape", 27)
+            await asyncio.sleep(0.3)
+            return opts
+
+        except Exception:
+            return []
 
     async def _interact_combobox(
         self,
@@ -1259,3 +1322,93 @@ class ApplyService:
             ))
         """)
         return bool(has_confirm_el)
+
+    # ── Static helpers for board_appliers package ─────────────────────────────
+    # These expose instance-method logic as static/class methods so per-board
+    # applier files can call them without instantiating ApplyService.
+
+    @classmethod
+    async def _ai_map_fields_static(cls, fields: list[dict], ctx: dict) -> dict:
+        """Static alias for _ai_map_fields — used by board appliers."""
+        svc = cls.__new__(cls)
+        return await svc._ai_map_fields(fields, ctx)
+
+    @classmethod
+    async def _read_combobox_options_static(cls, browser, page, selector: str) -> list[str]:
+        """Static alias for _read_combobox_options — used by board appliers and tests."""
+        svc = cls.__new__(cls)
+        return await svc._read_combobox_options(browser, page, selector)
+
+    @classmethod
+    async def _is_success_page_static(cls, browser, page, url: str) -> bool:
+        """Static alias for _is_success_page — used by board appliers."""
+        svc = cls.__new__(cls)
+        return await svc._is_success_page(browser, page, url)
+
+    # ── Per-board dispatcher ───────────────────────────────────────────────────
+
+    async def submit_application_for_board(self, application_id: str, board_id: str) -> bool:
+        """
+        Route application submission to the correct per-board applier.
+
+        Called instead of submit_application() when board_id is known.
+        Falls back to submit_application() for unknown boards.
+        """
+        from app.services.job_hunter.board_appliers import get_applier
+
+        application = (await self.db.execute(
+            select(Application).where(Application.id == application_id)
+        )).scalar_one_or_none()
+        if not application:
+            logger.warning("submit_application_for_board: application %s not found", application_id)
+            return False
+
+        listing = (await self.db.execute(
+            select(JobListing).where(JobListing.id == application.job_listing_id)
+        )).scalar_one_or_none()
+        if not listing or not listing.apply_url:
+            application.status = "failed"
+            await self.db.commit()
+            return False
+
+        profile = (await self.db.execute(
+            select(CampaignProfile).where(CampaignProfile.campaign_id == listing.campaign_id)
+        )).scalar_one_or_none()
+
+        ctx = self._build_context(application, profile, listing)
+        applier = get_applier(board_id)
+
+        logger.info(
+            "submit_application_for_board: %s | board=%s | applier=%s | url=%s",
+            application_id, board_id, type(applier).__name__, listing.apply_url,
+        )
+
+        try:
+            # Detect real form URL before opening browser
+            form_url = await self._detect_form_url(listing.apply_url)
+            navigate_to = form_url or listing.apply_url
+
+            async with BrowserService(headless=self._headless) as browser:
+                page = await browser.new_page()
+                await browser.goto(page, navigate_to, wait=3.0)
+                await browser.wait_past_cloudflare(page)
+
+                from app.services.job_hunter.board_appliers import ApplyResult
+                result: ApplyResult = await applier.apply(navigate_to, ctx, browser, page)
+
+        except Exception:
+            logger.exception("submit_application_for_board: browser error for %s", application_id)
+            result = ApplyResult(success=False, skipped=False, reason="browser exception")
+
+        if result.skipped:
+            application.status = "skipped"
+            logger.info("application %s skipped: %s", application_id, result.reason)
+        elif result.success:
+            application.status = "applied"
+            listing.status = "applied"
+        else:
+            application.status = "failed"
+            logger.warning("application %s failed: %s", application_id, result.reason)
+
+        await self.db.commit()
+        return result.success

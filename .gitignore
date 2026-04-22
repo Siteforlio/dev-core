@@ -37,3 +37,8 @@ backend/screenshots/
 backend/resumes/
 backend/test_output/
 backend/test_*.py
+
+# Test/audit output directories
+tailor_audit_output/
+apply_test_output/
+pipeline_test.log

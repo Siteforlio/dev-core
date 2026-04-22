@@ -8,6 +8,7 @@ celery_app = Celery(
     backend=settings.celery_result_backend,
     include=[
         "app.workers.scraper_worker",
+        "app.workers.board_scrape_worker",
         "app.workers.tailor_worker",
         "app.workers.apply_worker",
         "app.workers.email_worker",

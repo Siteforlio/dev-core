@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useJobHunter } from '../../hooks/useJobHunter'
 import { useCampaignActivity, type ActivityMessage } from '../../hooks/useCampaignActivity'
 import { useAuthStore } from '../../store/authStore'
@@ -6,7 +6,10 @@ import SummaryStrip from './SummaryStrip'
 import ApplicationCard from './ApplicationCard'
 import ActivityFeed from './ActivityFeed'
 import CampaignSettings from './CampaignSettings'
-import type { CampaignSummary, Application, ScheduledInterview } from '../../types/jobHunter'
+import type {
+  CampaignSummary, Application, ScheduledInterview,
+  ScrapePreferences, BoardStatus, ScrapeRunStatus,
+} from '../../types/jobHunter'
 
 interface Props {
   campaignId: string
@@ -15,8 +18,15 @@ interface Props {
   onGoToSettings?: () => void
 }
 
+const DEFAULT_PREFS: ScrapePreferences = {
+  companyTypes: [],
+  workType: 'any',
+  regions: [],
+  dailyTarget: 100,
+}
+
 export default function CampaignDashboard({ campaignId, onBack, onStartInterviewPrep, onGoToSettings }: Props) {
-  const { getDashboard, getInterviewContext, triggerScrape } = useJobHunter()
+  const { getDashboard, getInterviewContext, triggerScrape, getScrapeStatus } = useJobHunter()
   const token = useAuthStore((s) => s.accessToken)
   const [persistedFeed, setPersistedFeed] = useState<ActivityMessage[]>([])
   const { feed: liveFeed } = useCampaignActivity(campaignId, token)
@@ -41,6 +51,12 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
   const [pipelineTab, setPipelineTab] = useState<'all' | 'match' | 'partial' | 'applied' | 'interview'>('all')
   const [page, setPage] = useState(1)
   const PAGE_SIZE = 10
+
+  // Scrape preferences + per-board status
+  const [prefs, setPrefs] = useState<ScrapePreferences>(DEFAULT_PREFS)
+  const [boardStatuses, setBoardStatuses] = useState<Record<string, BoardStatus>>({})
+  const [runStatus, setRunStatus] = useState<ScrapeRunStatus | null>(null)
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const filteredPipeline = pipeline.filter((app) => {
     if (pipelineTab === 'all') return true
@@ -76,18 +92,51 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
     )
   }
 
+  const startStatusPolling = () => {
+    if (pollRef.current) return
+    pollRef.current = setInterval(async () => {
+      try {
+        const { run, boards } = await getScrapeStatus(campaignId)
+        setBoardStatuses(boards)
+        if (run) setRunStatus(run)
+        // Stop polling once run is done and no boards are still running
+        const stillRunning = Object.values(boards).some(
+          (b) => b.status === 'running' || b.status === 'queued'
+        )
+        if (run?.status === 'done' && !stillRunning) {
+          stopStatusPolling()
+          setScraping(false)
+          await loadDashboard()
+        }
+      } catch {
+        // polling errors are silent
+      }
+    }, 2000)
+  }
+
+  const stopStatusPolling = () => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current)
+      pollRef.current = null
+    }
+  }
+
   const handleTriggerScrape = async () => {
     setScraping(true)
     setScrapeError('')
+    setBoardStatuses({})
+    setRunStatus(null)
     try {
-      await triggerScrape(campaignId)
-      await loadDashboard()
+      await triggerScrape(campaignId, prefs)
+      startStatusPolling()
     } catch (e: unknown) {
       setScrapeError(e instanceof Error ? e.message : 'Scrape failed')
-    } finally {
       setScraping(false)
     }
   }
+
+  // Clean up polling on unmount
+  useEffect(() => () => stopStatusPolling(), [])
 
   useEffect(() => {
     let cancelled = false
@@ -263,6 +312,10 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
               onClear={() => setPersistedFeed([])}
               scraping={scraping}
               scrapeError={scrapeError}
+              prefs={prefs}
+              onPrefsChange={setPrefs}
+              boardStatuses={boardStatuses}
+              runStatus={runStatus}
             />
           ) : (
             <CampaignSettings campaignId={campaignId} onGoToGlobalSettings={onGoToSettings} />
