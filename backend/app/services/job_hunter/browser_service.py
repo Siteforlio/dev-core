@@ -65,10 +65,10 @@ class BrowserService:
             profile_dir = os.environ.get("CHROME_PROFILE_DIR", self._DEFAULT_PROFILE)
             # CHROME_PROFILE_NAME: "Default", "Profile 1", "Profile 2", etc.
             profile_name = os.environ.get("CHROME_PROFILE_NAME", "Default")
-            args += [
-                f"--user-data-dir={profile_dir}",
-                f"--profile-directory={profile_name}",
-            ]
+            # nodriver takes user_data_dir as a direct kwarg (not a browser arg)
+            # so it doesn't get overridden by nodriver's internal temp-dir logic.
+            kwargs["user_data_dir"] = profile_dir
+            args += [f"--profile-directory={profile_name}"]
 
         self._browser = await uc.start(**kwargs)
         return self
