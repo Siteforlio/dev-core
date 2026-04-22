@@ -39,20 +39,38 @@ class BrowserService:
             await browser.type_human(page, 'input[name="email"]', "me@example.com")
     """
 
-    def __init__(self, headless: bool = True):
+    # Default Chrome profile path on Windows
+    _DEFAULT_PROFILE = r"C:\Users\Admin\AppData\Local\Google\Chrome\User Data"
+
+    def __init__(self, headless: bool = False, use_profile: bool = False):
         self.headless = headless
+        # use_profile=True: launch with the real Chrome profile (Google signed in,
+        # cookies, history intact — passes bot verification). Chrome must be closed first.
+        self.use_profile = use_profile
         self._browser: uc.Browser | None = None
 
     async def __aenter__(self):
-        self._browser = await uc.start(
-            headless=self.headless,
-            browser_args=[
-                "--no-sandbox",
-                "--disable-blink-features=AutomationControlled",
-                "--disable-infobars",
-                "--window-size=1280,900",
-            ],
-        )
+        args = [
+            "--no-sandbox",
+            "--disable-blink-features=AutomationControlled",
+            "--disable-infobars",
+            "--window-size=1280,900",
+            "--lang=en-US,en",
+            "--accept-lang=en-US,en;q=0.9",
+        ]
+        kwargs: dict = {"headless": self.headless, "browser_args": args}
+
+        if self.use_profile:
+            import os
+            profile_dir = os.environ.get("CHROME_PROFILE_DIR", self._DEFAULT_PROFILE)
+            # CHROME_PROFILE_NAME: "Default", "Profile 1", "Profile 2", etc.
+            profile_name = os.environ.get("CHROME_PROFILE_NAME", "Default")
+            args += [
+                f"--user-data-dir={profile_dir}",
+                f"--profile-directory={profile_name}",
+            ]
+
+        self._browser = await uc.start(**kwargs)
         return self
 
     async def __aexit__(self, *_):

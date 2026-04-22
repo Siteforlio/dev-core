@@ -1028,9 +1028,11 @@ class ApplyService:
                 except Exception:
                     pass
 
-            # Close the dropdown without selecting
+            # Close the dropdown without selecting, then click body to fully dismiss
             await self._cdp_key(page, "Escape", "Escape", 27)
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(0.2)
+            await page.evaluate("document.body && document.body.click()")
+            await asyncio.sleep(0.2)
             return opts
 
         except Exception:
@@ -1216,6 +1218,8 @@ class ApplyService:
             f"CANDIDATE PROFILE:\n{profile_block}\n\n"
             "RULES:\n"
             "- For select/radio fields, use the EXACT short option text (e.g. 'Yes', 'No')\n"
+            "- IMPORTANT: when a field has a finite list of options (select/radio/dropdown), you MUST always pick one — never leave it blank. If none match the candidate perfectly, pick the closest or most neutral option.\n"
+            "- For location dropdowns where the candidate's city is not listed: pick the first non-empty option (e.g. the first city listed)\n"
             "- For EEO questions (race, ethnicity, gender, disability, veteran status, LGBTQ+): use 'Decline' as the value (the bot will find the exact 'Decline to...' option in the dropdown)\n"
             "- For 'Are you authorized / legally authorised to work...' questions: 'Yes'\n"
             "- For 'Are you currently located in the US / Bay Area': 'No'\n"
@@ -1225,7 +1229,7 @@ class ApplyService:
             "- For cover letter / additional info / why work here fields: use the cover letter text provided\n"
             "- For checkbox fields (e.g. agree to terms, consent): 'true'\n"
             "- For 'How did you hear about this job': 'Internet / Job Board' or similar short option\n"
-            "- Skip fields you cannot answer — leave them out of the JSON\n\n"
+            "- Only skip fields with no options and no clear answer from the profile\n\n"
             f"Cover letter (use for cover letter / additional comments fields):\n{ctx.get('cover_letter', '')[:800]}\n\n"
             "Output ONLY valid JSON: {\"field_idx\": \"value\", ...}"
         )

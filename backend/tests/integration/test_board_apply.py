@@ -58,8 +58,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 # CONFIG
 # ─────────────────────────────────────────────────────────────────────────────
 
-HEADLESS = os.environ.get("HEADLESS", "0") == "1"
-SUBMIT   = os.environ.get("SUBMIT",   "0") == "1"  # set SUBMIT=1 to actually click submit
+HEADLESS     = os.environ.get("HEADLESS",     "0") == "1"
+SUBMIT       = os.environ.get("SUBMIT",       "0") == "1"
+USE_PROFILE  = os.environ.get("USE_PROFILE",  "0") == "1"  # use real Chrome profile (Google signed in)
 
 # Which boards to test (override via CLI args)
 ALL_BOARDS = [
@@ -89,9 +90,12 @@ FILLED_PAUSE_SECS = int(os.environ.get("FILLED_PAUSE", "5"))
 # TEST PROFILE — realistic fake data, safe to auto-fill forms with
 # ─────────────────────────────────────────────────────────────────────────────
 
+_RUN_TS = datetime.now().strftime("%m%d%H%M")
+
 TEST_PROFILE = {
     "full_name":           "Alex Testuser",
-    "email":               "alex.testuser.dev@gmail.com",
+    # Unique per run so boards don't reject as "already applied"
+    "email":               f"alex.testuser.{_RUN_TS}@gmail.com",
     "phone":               "+254712345678",
     "city":                "Nairobi",
     "country":             "Kenya",
@@ -239,7 +243,10 @@ async def _get_jobs_for_board(board_id: str, n: int = JOBS_PER_BOARD) -> list[di
 
             elif board_id == "lever":
                 from app.services.job_hunter.ats_scrapers import scrape_lever
-                for slug in ["netflix", "atlassian", "gitlab"]:
+                for slug in [
+                    "benchling", "verkada", "ramp", "brex", "mercury",
+                    "scale-ai", "anduril", "flexport", "plaid", "gusto",
+                ]:
                     jobs = await scrape_lever(slug, client)
                     if jobs:
                         return jobs[:n]
@@ -406,7 +413,7 @@ async def _test_apply_board(
         if form_url:
             print(f"  🔀 Resolved to form URL: {form_url[:90]}")
 
-        async with BrowserService(headless=HEADLESS) as browser:
+        async with BrowserService(headless=HEADLESS, use_profile=USE_PROFILE) as browser:
             page = await browser.new_page()
             await browser.goto(page, navigate_to, wait=3.0)
             await browser.wait_past_cloudflare(page)
@@ -429,9 +436,19 @@ async def _test_apply_board(
                         current_url = await browser.current_url(page)
                         print(f"  📄 Company page: {current_url[:90]}")
 
-            # ── Scan all fields ────────────────────────────────────────────
-            await asyncio.sleep(1.5)
+            # ── Wait for form fields to appear (React SPAs render async) ─────
             import json as _json
+            for _ in range(20):
+                await asyncio.sleep(0.5)
+                cnt = await page.evaluate(
+                    "document.querySelectorAll("
+                    "'input:not([type=hidden]):not([disabled]),"
+                    "select:not([disabled]),textarea:not([disabled])').length"
+                ) or 0
+                if cnt > 0:
+                    break
+
+            # ── Scan all fields ────────────────────────────────────────────
             raw = await page.evaluate(_SCAN_FIELDS_JS) or "[]"
             fields: list[dict] = _json.loads(raw) if isinstance(raw, str) else (raw or [])
             # Include all fields (not just labelled ones) — same as _apply()
@@ -600,7 +617,7 @@ async def main(boards: list[str]) -> None:
     print(f"\n{'='*70}")
     print(f"  Board Apply Test — {timestamp}")
     print(f"  Boards: {', '.join(boards)}")
-    print(f"  Headless: {HEADLESS}  |  Submit: {SUBMIT}")
+    print(f"  Headless: {HEADLESS}  |  Submit: {SUBMIT}  |  Profile: {USE_PROFILE}")
     print(f"  Output: {run_dir}")
     print(f"{'='*70}\n")
 
