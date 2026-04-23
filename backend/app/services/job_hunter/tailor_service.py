@@ -11,8 +11,10 @@ from app.core.config import settings
 from app.services.job_hunter.llm import call_llm
 from app.services.job_hunter.matcher_service import matcher
 
-RESUMES_DIR = Path(__file__).parent.parent.parent.parent / "resumes"
-RESUMES_DIR.mkdir(exist_ok=True)
+RESUMES_BASE = Path(__file__).parent.parent.parent.parent / "resumes"
+RESUMES_BASE.mkdir(exist_ok=True)
+# Keep legacy alias so any existing references still resolve
+RESUMES_DIR = RESUMES_BASE
 
 # Semaphore is created lazily per event loop to avoid "bound to a different event loop"
 # errors when Celery re-uses the same process across multiple asyncio.run() calls.
@@ -655,11 +657,28 @@ a:hover {{ text-decoration:underline; }}
             s = re.sub(r'[^a-z0-9]+', '_', s)
             return s.strip('_')[:40]
 
-        name_slug = slugify(profile.full_name or "candidate")
-        role_slug = slugify(title)
-        company_slug = slugify(company)
-        pdf_filename = f"{name_slug}_{role_slug}_{company_slug}.pdf"
-        pdf_path = RESUMES_DIR / pdf_filename
+        # Fetch campaign name for the folder hierarchy
+        from app.models.pg.job_hunter import JobHunterCampaign
+        campaign_result = await self.db.execute(
+            select(JobHunterCampaign).where(JobHunterCampaign.id == listing.campaign_id)
+        )
+        campaign_obj = campaign_result.scalar_one_or_none()
+        campaign_name = (campaign_obj.name if campaign_obj else listing.campaign_id)
+
+        # Folder: resumes/{campaign_name}/{company}/
+        campaign_folder = RESUMES_BASE / slugify(campaign_name) / slugify(company)
+        campaign_folder.mkdir(parents=True, exist_ok=True)
+
+        # Professional filename: "Full Name - Company - Role.pdf"
+        candidate_display = (profile.full_name or "Candidate").strip()
+        company_display = company.strip()
+        role_display = title.strip()
+        # Sanitise display chars that are invalid on Windows/macOS filenames
+        def safe(s: str, maxlen: int = 50) -> str:
+            return re.sub(r'[\\/:*?"<>|]', '', s)[:maxlen].strip()
+
+        pdf_filename = f"{safe(candidate_display)} - {safe(company_display)} - {safe(role_display)}.pdf"
+        pdf_path = campaign_folder / pdf_filename
         await asyncio.to_thread(self._generate_pdf_sync, html, pdf_path)
 
         application = Application(

@@ -88,3 +88,44 @@ export interface ScrapePreferences {
   regions: ('global' | 'africa' | 'kenya')[]
   dailyTarget: number
 }
+
+// ── Apply panel ───────────────────────────────────────────────────────────────
+
+export interface ApplicationDetail {
+  applicationId: string
+  status: Application['status']
+  company: string
+  title: string
+  location: string
+  applyUrl: string | null
+  campaignName: string
+  resumePath: string | null
+  resumeFolder: string | null
+  resumeFilename: string | null
+  coverLetter: string | null
+  appliedAt: string | null
+  statusUpdatedAt: string | null
+}
+
+export interface ChatMessage {
+  role: 'user' | 'assistant'
+  content: string
+}
+
+export interface EmailEvent {
+  id: string
+  subject: string
+  sender: string
+  classification: string
+  receivedAt: string
+}
+
+export interface TrackingStatus {
+  applicationId: string
+  status: Application['status']
+  appliedAt: string | null
+  statusUpdatedAt: string | null
+  company: string
+  title: string
+  emailEvents: EmailEvent[]
+}

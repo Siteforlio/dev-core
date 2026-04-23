@@ -6,10 +6,15 @@ import SummaryStrip from './SummaryStrip'
 import ApplicationCard from './ApplicationCard'
 import ActivityFeed from './ActivityFeed'
 import CampaignSettings from './CampaignSettings'
+import ApplyPanel from './ApplyPanel'
+import DidYouApplyPopup from './DidYouApplyPopup'
+import TrackingPanel from './TrackingPanel'
 import type {
   CampaignSummary, Application, ScheduledInterview,
   ScrapePreferences, BoardStatus, ScrapeRunStatus,
 } from '../../types/jobHunter'
+
+type PanelMode = 'none' | 'apply' | 'tracking'
 
 interface Props {
   campaignId: string
@@ -30,6 +35,12 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
   const token = useAuthStore((s) => s.accessToken)
   const [persistedFeed, setPersistedFeed] = useState<ActivityMessage[]>([])
   const { feed: liveFeed } = useCampaignActivity(campaignId, token)
+
+  // Apply panel state machine
+  const [panelMode, setPanelMode] = useState<PanelMode>('none')
+  const [activeApplicationId, setActiveApplicationId] = useState<string | null>(null)
+  const [prevApplicationId, setPrevApplicationId] = useState<string | null>(null)
+  const [showDidYouApply, setShowDidYouApply] = useState(false)
 
   // Merge persisted + live, deduplicated by message+timestamp
   const feed = [
@@ -158,6 +169,53 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
     }
   }
 
+  // Open apply panel — if switching away from a pending application, prompt "did you apply?"
+  const handleApply = (applicationId: string) => {
+    if (
+      activeApplicationId &&
+      activeApplicationId !== applicationId &&
+      panelMode === 'apply'
+    ) {
+      const prev = pipeline.find((a) => a.id === activeApplicationId)
+      if (prev && prev.status === 'pending') {
+        setPrevApplicationId(activeApplicationId)
+        setShowDidYouApply(true)
+        return
+      }
+    }
+    setActiveApplicationId(applicationId)
+    setPanelMode('apply')
+  }
+
+  const handleViewTracking = (applicationId: string) => {
+    setActiveApplicationId(applicationId)
+    setPanelMode('tracking')
+  }
+
+  const handlePanelClose = () => {
+    // If closing an apply panel for a pending app, prompt
+    if (panelMode === 'apply' && activeApplicationId) {
+      const app = pipeline.find((a) => a.id === activeApplicationId)
+      if (app && app.status === 'pending') {
+        setPrevApplicationId(activeApplicationId)
+        setShowDidYouApply(true)
+        setPanelMode('none')
+        return
+      }
+    }
+    setPanelMode('none')
+    setActiveApplicationId(null)
+  }
+
+  const handleDidYouApplyDone = (status: 'applied' | 'failed' | 'withdrawn') => {
+    setShowDidYouApply(false)
+    setPrevApplicationId(null)
+    // Refresh pipeline so status badge updates
+    loadDashboard().catch(() => {})
+  }
+
+  const activeApp = activeApplicationId ? pipeline.find((a) => a.id === activeApplicationId) : null
+
   if (loading) {
     return (
       <div className="flex flex-1 items-center justify-center py-20">
@@ -191,7 +249,7 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
 
     <div className="flex gap-4 flex-1 min-h-0 overflow-hidden">
       {/* Main panel */}
-      <div className="flex-1 flex flex-col gap-4 min-w-0 overflow-hidden">
+      <div className={`flex flex-col gap-4 min-w-0 overflow-hidden transition-all ${panelMode !== 'none' ? 'w-[30%] flex-shrink-0' : 'flex-1'}`}>
         {summary && <SummaryStrip summary={summary} />}
 
         {interviews.length > 0 && (
@@ -256,7 +314,12 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
                   key={app.id}
                   className={bridgeLoading === app.id ? 'opacity-60 pointer-events-none' : ''}
                 >
-                  <ApplicationCard application={app} onStartInterviewPrep={handleStartInterviewPrep} />
+                  <ApplicationCard
+                    application={app}
+                    onStartInterviewPrep={handleStartInterviewPrep}
+                    onApply={handleApply}
+                    onViewTracking={handleViewTracking}
+                  />
                 </div>
               ))
             )}
@@ -287,7 +350,28 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
         </div>
       </div>
 
-      {/* Right panel — Activity / Settings */}
+      {/* Apply / Tracking panel (70% when active) */}
+      {panelMode !== 'none' && activeApplicationId && (
+        <div className="flex-1 min-w-0 border border-[#1c1c1c] rounded-xl overflow-hidden" style={{ maxHeight: 'calc(100vh - 160px)' }}>
+          {panelMode === 'apply' && (
+            <ApplyPanel
+              campaignId={campaignId}
+              applicationId={activeApplicationId}
+              onClose={handlePanelClose}
+            />
+          )}
+          {panelMode === 'tracking' && (
+            <TrackingPanel
+              campaignId={campaignId}
+              applicationId={activeApplicationId}
+              onClose={handlePanelClose}
+            />
+          )}
+        </div>
+      )}
+
+      {/* Right panel — Activity / Settings (hidden when apply/tracking panel is open) */}
+      {panelMode === 'none' && (
       <div className="w-72 flex-shrink-0 bg-gray-950/50 border border-gray-800 rounded-lg flex flex-col overflow-hidden" style={{ maxHeight: 'calc(100vh - 160px)' }}>
         {/* Panel tabs */}
         <div className="flex border-b border-gray-800 flex-shrink-0">
@@ -322,7 +406,24 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
           )}
         </div>
       </div>
+      )}
     </div>
+
+    {/* "Did you apply?" popup */}
+    {showDidYouApply && prevApplicationId && (() => {
+      const app = pipeline.find((a) => a.id === prevApplicationId)
+      if (!app) return null
+      return (
+        <DidYouApplyPopup
+          campaignId={campaignId}
+          applicationId={prevApplicationId}
+          company={app.company}
+          title={app.title}
+          onDone={handleDidYouApplyDone}
+          onDismiss={() => { setShowDidYouApply(false); setPrevApplicationId(null) }}
+        />
+      )
+    })()}
     </div>
   )
 }

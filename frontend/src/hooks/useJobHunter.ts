@@ -9,6 +9,9 @@ import type {
   ScrapePreferences,
   BoardStatus,
   ScrapeRunStatus,
+  ApplicationDetail,
+  ChatMessage,
+  TrackingStatus,
 } from '../types/jobHunter'
 
 const BASE = '/api/v1'
@@ -302,6 +305,110 @@ export function useJobHunter() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
   }
 
+  // ── Apply panel ─────────────────────────────────────────────────────────────
+
+  async function getApplicationDetail(campaignId: string, applicationId: string): Promise<ApplicationDetail> {
+    const res = await apiFetch(
+      `${BASE}/job-hunter/campaigns/${campaignId}/applications/${applicationId}/detail`,
+      { headers }
+    )
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const { data } = await res.json()
+    return {
+      applicationId: data.application_id,
+      status: data.status,
+      company: data.company,
+      title: data.title,
+      location: data.location ?? '',
+      applyUrl: data.apply_url ?? null,
+      campaignName: data.campaign_name ?? '',
+      resumePath: data.resume_path ?? null,
+      resumeFolder: data.resume_folder ?? null,
+      resumeFilename: data.resume_filename ?? null,
+      coverLetter: data.cover_letter ?? null,
+      appliedAt: data.applied_at ?? null,
+      statusUpdatedAt: data.status_updated_at ?? null,
+    }
+  }
+
+  async function patchApplicationStatus(
+    campaignId: string,
+    applicationId: string,
+    status: Application['status'],
+    notes?: string
+  ): Promise<void> {
+    const res = await apiFetch(
+      `${BASE}/job-hunter/campaigns/${campaignId}/applications/${applicationId}/status`,
+      {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ status, notes }),
+      }
+    )
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  }
+
+  async function generateCoverLetter(campaignId: string, applicationId: string): Promise<string> {
+    const res = await apiFetch(
+      `${BASE}/job-hunter/campaigns/${campaignId}/applications/${applicationId}/cover-letter`,
+      { method: 'POST', headers }
+    )
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const { data } = await res.json()
+    return data.cover_letter as string
+  }
+
+  async function chatWithApplication(
+    campaignId: string,
+    applicationId: string,
+    message: string,
+    history: ChatMessage[]
+  ): Promise<string> {
+    const res = await apiFetch(
+      `${BASE}/job-hunter/campaigns/${campaignId}/applications/${applicationId}/chat`,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ message, history }),
+      }
+    )
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const { data } = await res.json()
+    return data.reply as string
+  }
+
+  async function openInChrome(campaignId: string, applicationId: string): Promise<void> {
+    const res = await apiFetch(
+      `${BASE}/job-hunter/campaigns/${campaignId}/applications/${applicationId}/open-in-chrome`,
+      { method: 'POST', headers }
+    )
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  }
+
+  async function getTrackingStatus(campaignId: string, applicationId: string): Promise<TrackingStatus> {
+    const res = await apiFetch(
+      `${BASE}/job-hunter/campaigns/${campaignId}/applications/${applicationId}/tracking`,
+      { headers }
+    )
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const { data } = await res.json()
+    return {
+      applicationId: data.application_id,
+      status: data.status,
+      appliedAt: data.applied_at ?? null,
+      statusUpdatedAt: data.status_updated_at ?? null,
+      company: data.company,
+      title: data.title,
+      emailEvents: (data.email_events ?? []).map((e: Record<string, unknown>) => ({
+        id: e.id,
+        subject: e.subject,
+        sender: e.sender,
+        classification: e.classification,
+        receivedAt: e.received_at,
+      })),
+    }
+  }
+
   return {
     listCampaigns,
     getCampaignMeta,
@@ -324,5 +431,11 @@ export function useJobHunter() {
     setLinkedInCredentials,
     setCampaignToggles,
     deleteCampaign,
+    getApplicationDetail,
+    patchApplicationStatus,
+    generateCoverLetter,
+    chatWithApplication,
+    openInChrome,
+    getTrackingStatus,
   }
 }
