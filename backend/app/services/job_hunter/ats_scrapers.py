@@ -212,29 +212,44 @@ async def scrape_lever(slug: str, client: httpx.AsyncClient) -> list[dict]:
         return []
 
 
+_ASHBY_GQL = """
+query ApiJobBoardWithTeams($organizationHostedJobsPageName: String!) {
+    jobBoard: jobBoardWithTeams(organizationHostedJobsPageName: $organizationHostedJobsPageName) {
+        jobPostings { id title }
+    }
+}
+"""
+
 async def scrape_ashby(slug: str, client: httpx.AsyncClient) -> list[dict]:
     try:
         r = await client.post(
-            "https://api.ashbyhq.com/posting-api/job-board",
-            json={"organizationHostedJobsPageName": slug},
+            "https://jobs.ashbyhq.com/api/non-user-graphql",
+            json={
+                "operationName": "ApiJobBoardWithTeams",
+                "variables": {"organizationHostedJobsPageName": slug},
+                "query": _ASHBY_GQL,
+            },
+            headers={"content-type": "application/json"},
             timeout=_HTTP_TIMEOUT,
         )
         if r.status_code != 200:
             return []
+        board = ((r.json().get("data") or {}).get("jobBoard")) or {}
+        postings = board.get("jobPostings") or []
         jobs = []
-        for j in r.json().get("jobs", []):
-            location = j.get("location", "") or ""
-            remote = j.get("isRemote", False) or "remote" in location.lower()
+        for j in postings:
+            job_url = f"https://jobs.ashbyhq.com/{slug}/{j['id']}"
             jobs.append(_normalize({
                 "source": "ashby",
                 "title": j.get("title", ""),
-                "company": j.get("companyName", slug.replace("-", " ").title()),
-                "location": location or None,
+                "company": slug.replace("-", " ").title(),
+                "location": None,
                 "location_country": None,
-                "remote": remote,
-                "url": j.get("jobUrl", ""),
-                "apply_url": j.get("applyUrl", "") or j.get("jobUrl", ""),
-                "description": (j.get("descriptionHtml") or j.get("description") or "")[:5000],
+                "remote": None,
+                "url": job_url,
+                # /application goes directly to the form, not the job description
+                "apply_url": f"{job_url}/application",
+                "description": "",
             }))
         return jobs
     except Exception:

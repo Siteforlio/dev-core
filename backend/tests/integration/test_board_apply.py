@@ -254,7 +254,11 @@ async def _get_jobs_for_board(board_id: str, n: int = JOBS_PER_BOARD) -> list[di
 
             elif board_id == "ashby":
                 from app.services.job_hunter.ats_scrapers import scrape_ashby
-                for slug in ["cursor", "codeium", "warp"]:
+                for slug in [
+                    "linear", "ramp", "vercel", "rippling", "retool",
+                    "brex", "notion", "cursor", "codeium", "warp",
+                    "loom", "figma", "descript", "replit",
+                ]:
                     jobs = await scrape_ashby(slug, client)
                     if jobs:
                         return jobs[:n]
@@ -436,8 +440,19 @@ async def _test_apply_board(
                         current_url = await browser.current_url(page)
                         print(f"  📄 Company page: {current_url[:90]}")
 
-            # ── Wait for form fields to appear (React SPAs render async) ─────
+            # ── Upload resume FIRST so autofill fires before field scan ──────
             import json as _json
+            resume_uploaded = False
+            if ctx.get("resume_pdf") and Path(ctx["resume_pdf"]).exists():
+                try:
+                    await browser.upload_file(page, 'input[type="file"]', ctx["resume_pdf"])
+                    resume_uploaded = True
+                    print("  📎 Resume uploaded early (triggers autofill)")
+                    await asyncio.sleep(4.0)  # wait for autofill to complete
+                except Exception:
+                    pass
+
+            # ── Wait for form fields to appear (React SPAs render async) ─────
             for _ in range(20):
                 await asyncio.sleep(0.5)
                 cnt = await page.evaluate(
@@ -460,8 +475,6 @@ async def _test_apply_board(
                 _json.dumps(fields, indent=2, default=str), encoding="utf-8"
             )
             print(f"  📋 {len(fillable)} fillable fields found ({len(fields)} total in scan)")
-
-            resume_uploaded = False
 
             if fillable:
                 from app.services.job_hunter.apply_service import ApplyService, _make_fill_js
@@ -567,7 +580,11 @@ async def _test_apply_board(
                 # ── Click submit ───────────────────────────────────────────
                 print("  🚀 SUBMIT=1 — clicking submit button…")
                 clicked = await browser.click_human(
-                    page, '#submit_app, button[type="submit"], input[type="submit"]'
+                    page,
+                    '#submit_app, button[type="submit"], input[type="submit"], '
+                    '[data-testid*="submit"], [data-testid*="Submit"], '
+                    'button[class*="submit"], button[class*="Submit"], '
+                    'form button:last-of-type'
                 )
                 result["submitted"] = clicked
                 if not clicked:

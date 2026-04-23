@@ -55,32 +55,20 @@ class AshbyApplier(BaseBoardApplier):
             except Exception:
                 pass
 
-        # ── 2. Resume upload ──────────────────────────────────────────────────
+        # ── 2. Resume upload FIRST — triggers Ashby autofill ─────────────────
+        # Upload before filling other fields so Ashby's autofill fires now
+        # rather than overwriting fields we've already filled.
         resume_uploaded = False
         if ctx.get("resume_pdf"):
             try:
                 await browser.upload_file(page, 'input[type="file"]', ctx["resume_pdf"])
                 resume_uploaded = True
-                await asyncio.sleep(1.0)
+                # Wait for Ashby autofill to complete (banner: "Autofill completed!")
+                await asyncio.sleep(4.0)
             except Exception:
                 pass
 
-        # ── 3. Cover letter ───────────────────────────────────────────────────
-        if ctx.get("cover_letter"):
-            for csel in [
-                'textarea[name*="cover" i]',
-                'textarea[placeholder*="cover" i]',
-                'textarea[placeholder*="letter" i]',
-                'textarea',
-            ]:
-                try:
-                    filled = await browser.fill_field(page, csel, ctx["cover_letter"])
-                    if filled:
-                        break
-                except Exception:
-                    pass
-
-        # ── 4. Poll for React form to render ──────────────────────────────────
+        # ── 3. Poll for React form to render ──────────────────────────────────
         for _ in range(20):
             await asyncio.sleep(0.5)
             cnt = await page.evaluate(
@@ -170,10 +158,31 @@ class AshbyApplier(BaseBoardApplier):
                 except Exception as e:
                     logger.debug("ashby: fill failed [%s] %s: %s", ftype, label, e)
 
-        # ── 6. Submit ─────────────────────────────────────────────────────────
+        # ── 6. Cover letter safety pass ──────────────────────────────────────
+        # Ashby autofill may have cleared the cover letter. Refill it last.
+        if ctx.get("cover_letter"):
+            for csel in [
+                'textarea[data-testid*="cover" i]',
+                'textarea[placeholder*="cover" i]',
+                'textarea[placeholder*="letter" i]',
+                'textarea[name*="cover" i]',
+                'textarea',
+            ]:
+                try:
+                    filled = await browser.fill_field(page, csel, ctx["cover_letter"])
+                    if filled:
+                        break
+                except Exception:
+                    pass
+            await asyncio.sleep(0.5)
+
+        # ── 7. Submit ─────────────────────────────────────────────────────────
         clicked = await browser.click_human(
             page,
-            'button[type="submit"], input[type="submit"], [data-testid*="submit"]',
+            'button[type="submit"], input[type="submit"], '
+            '[data-testid*="submit"], [data-testid*="Submit"], '
+            'button._apply-button, button[class*="submit"], '
+            'button[class*="Submit"], form button:last-of-type',
         )
         if not clicked:
             await browser.screenshot(page, "ashby_no_submit")

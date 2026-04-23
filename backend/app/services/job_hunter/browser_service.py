@@ -17,7 +17,9 @@ Used by:
 """
 import asyncio
 import random
+import socket
 import string
+import subprocess
 import time
 from pathlib import Path
 
@@ -41,6 +43,7 @@ class BrowserService:
 
     # Default Chrome profile path on Windows
     _DEFAULT_PROFILE = r"C:\Users\Admin\AppData\Local\Google\Chrome\User Data"
+    _CHROME_EXE = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
 
     def __init__(self, headless: bool = False, use_profile: bool = False):
         self.headless = headless
@@ -48,30 +51,87 @@ class BrowserService:
         # cookies, history intact — passes bot verification). Chrome must be closed first.
         self.use_profile = use_profile
         self._browser: uc.Browser | None = None
+        self._chrome_proc: subprocess.Popen | None = None
 
     async def __aenter__(self):
-        args = [
+        if self.use_profile:
+            self._browser = await self._start_with_profile()
+        else:
+            args = [
+                "--no-sandbox",
+                "--disable-blink-features=AutomationControlled",
+                "--disable-infobars",
+                "--window-size=1280,900",
+                "--lang=en-US,en",
+                "--accept-lang=en-US,en;q=0.9",
+            ]
+            self._browser = await uc.start(headless=self.headless, browser_args=args)
+        return self
+
+    async def _start_with_profile(self) -> uc.Browser:
+        """
+        Launch Chrome with the real user profile and connect nodriver to it.
+
+        nodriver only waits ~2.75s for Chrome to be ready, which is too short
+        when Chrome loads extensions and a real profile. Instead we:
+          1. Pick a free port
+          2. Launch Chrome manually with --remote-debugging-port
+          3. Poll /json/version until Chrome is ready (up to 20s)
+          4. Connect nodriver to the already-running Chrome
+        """
+        import os, shutil
+        profile_dir  = os.environ.get("CHROME_PROFILE_DIR", self._DEFAULT_PROFILE)
+        profile_name = os.environ.get("CHROME_PROFILE_NAME", "Default")
+
+        # Find Chrome executable
+        chrome_exe = self._CHROME_EXE
+        if not Path(chrome_exe).exists():
+            alt = r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"
+            chrome_exe = alt if Path(alt).exists() else shutil.which("chrome") or chrome_exe
+
+        # Pick a free port
+        with socket.socket() as s:
+            s.bind(("", 0))
+            port = s.getsockname()[1]
+
+        # Remove stale lock files so Chrome starts cleanly
+        for lock in ["LOCK", "SingletonLock", "SingletonSocket", "SingletonCookie"]:
+            try:
+                Path(profile_dir, lock).unlink(missing_ok=True)
+            except Exception:
+                pass
+
+        cmd = [
+            chrome_exe,
+            f"--user-data-dir={profile_dir}",
+            f"--profile-directory={profile_name}",
+            f"--remote-debugging-port={port}",
+            "--remote-allow-origins=*",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-session-crashed-bubble",
+            "--disable-features=ChromeWhatsNewUI",
+            "--window-size=1280,900",
             "--no-sandbox",
             "--disable-blink-features=AutomationControlled",
-            "--disable-infobars",
-            "--window-size=1280,900",
-            "--lang=en-US,en",
-            "--accept-lang=en-US,en;q=0.9",
+            "about:blank",
         ]
-        kwargs: dict = {"headless": self.headless, "browser_args": args}
+        self._chrome_proc = subprocess.Popen(cmd)
 
-        if self.use_profile:
-            import os
-            profile_dir = os.environ.get("CHROME_PROFILE_DIR", self._DEFAULT_PROFILE)
-            # CHROME_PROFILE_NAME: "Default", "Profile 1", "Profile 2", etc.
-            profile_name = os.environ.get("CHROME_PROFILE_NAME", "Default")
-            # nodriver takes user_data_dir as a direct kwarg (not a browser arg)
-            # so it doesn't get overridden by nodriver's internal temp-dir logic.
-            kwargs["user_data_dir"] = profile_dir
-            args += [f"--profile-directory={profile_name}"]
+        # Poll until Chrome's debug port is ready (up to 20s)
+        import urllib.request, urllib.error
+        for _ in range(40):
+            await asyncio.sleep(0.5)
+            try:
+                urllib.request.urlopen(
+                    f"http://127.0.0.1:{port}/json/version", timeout=1
+                )
+                break
+            except Exception:
+                pass
 
-        self._browser = await uc.start(**kwargs)
-        return self
+        # Connect nodriver to the running Chrome (no new process spawned)
+        return await uc.start(host="127.0.0.1", port=port)
 
     async def __aexit__(self, *_):
         if self._browser:
@@ -80,6 +140,12 @@ class BrowserService:
             except Exception:
                 pass
             self._browser = None
+        if self._chrome_proc:
+            try:
+                self._chrome_proc.terminate()
+            except Exception:
+                pass
+            self._chrome_proc = None
 
     # ── Navigation ───────────────────────────────────────────────────────────
 
@@ -119,11 +185,41 @@ class BrowserService:
             return False
 
     async def click_human(self, page: uc.Tab, selector: str) -> bool:
-        """Click element with small pre-click pause."""
+        """Click element with small pre-click pause.
+        Supports comma-separated selectors — tries each one in order."""
+        # nodriver's page.find() doesn't support comma-separated CSS selectors,
+        # so we try each part individually, then fall back to JS querySelector.
+        parts = [s.strip() for s in selector.split(",") if s.strip()]
+        el = None
+        for part in parts:
+            try:
+                el = await page.find(part, timeout=2)
+                if el:
+                    break
+            except Exception:
+                pass
+        # JS fallback: querySelector with the full selector string
+        if not el:
+            try:
+                import json as _json
+                found = await page.evaluate(
+                    f"(function(){{var e=document.querySelector({_json.dumps(selector)});"
+                    f"return e?true:false;}})();"
+                )
+                if found:
+                    await page.evaluate(
+                        f"document.querySelector({_json.dumps(selector)}).scrollIntoView();"
+                    )
+                    await asyncio.sleep(0.2)
+                    await page.evaluate(
+                        f"document.querySelector({_json.dumps(selector)}).click();"
+                    )
+                    await asyncio.sleep(random.uniform(0.3, 0.8))
+                    return True
+            except Exception:
+                pass
+            return False
         try:
-            el = await page.find(selector, timeout=5)
-            if not el:
-                return False
             await asyncio.sleep(random.uniform(0.1, 0.4))
             await el.click()
             await asyncio.sleep(random.uniform(0.3, 0.8))
