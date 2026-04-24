@@ -135,8 +135,11 @@ async def patch_application_status(
         raise HTTPException(status_code=404, detail="Application not found")
 
     from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     app.status = body.status
-    app.status_updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    app.status_updated_at = now
+    if body.status == "applied":
+        app.applied_at = now
     if body.notes:
         existing = app.form_answers or {}
         existing["apply_notes"] = body.notes
