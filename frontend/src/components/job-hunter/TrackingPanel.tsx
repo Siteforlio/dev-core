@@ -26,6 +26,7 @@ export default function TrackingPanel({ campaignId, applicationId, onClose }: Pr
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [scanning, setScanning] = useState(false)
+  const [scanMsg, setScanMsg] = useState('')
 
   const load = async () => {
     setLoading(true)
@@ -42,12 +43,18 @@ export default function TrackingPanel({ campaignId, applicationId, onClose }: Pr
 
   const handleCheckEmail = async () => {
     setScanning(true)
+    setScanMsg('')
     try {
-      await scanEmails(campaignId)
+      const { noCredentials } = await scanEmails(campaignId)
+      if (noCredentials) {
+        setScanMsg('No email account configured. Add credentials in Campaign Settings.')
+        return
+      }
       const t = await getTrackingStatus(campaignId, applicationId)
       setTracking(t)
+      setScanMsg('Scan complete.')
     } catch {
-      // silent — still show last known state
+      setScanMsg('Scan failed.')
     } finally {
       setScanning(false)
     }
@@ -80,21 +87,26 @@ export default function TrackingPanel({ campaignId, applicationId, onClose }: Pr
     <div className="flex flex-col h-full bg-[#0a0a0a] overflow-hidden">
 
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-[#141414] flex-shrink-0">
-        <div className="min-w-0 flex-1">
-          <p className="text-[11px] text-[#444] mb-0.5">{tracking.company}</p>
-          <p className="text-base font-semibold text-[#efefef] truncate">{tracking.title}</p>
+      <div className="flex-shrink-0 border-b border-[#141414]">
+        <div className="flex items-center justify-between px-6 py-4">
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] text-[#444] mb-0.5">{tracking.company}</p>
+            <p className="text-base font-semibold text-[#efefef] truncate">{tracking.title}</p>
+          </div>
+          <div className="flex items-center gap-2 flex-shrink-0 ml-4">
+            <button
+              onClick={handleCheckEmail}
+              disabled={scanning}
+              className="text-[12px] px-3 py-1.5 rounded-md border border-[#1c1c1c] text-[#444] hover:text-[#888] hover:border-[#2a2a2a] transition-all disabled:opacity-50"
+            >
+              {scanning ? 'Scanning…' : 'Check email'}
+            </button>
+            <button onClick={onClose} className="text-[12px] px-2 py-1.5 text-[#444] hover:text-[#888] transition-colors">✕</button>
+          </div>
         </div>
-        <div className="flex items-center gap-2 flex-shrink-0 ml-4">
-          <button
-            onClick={handleCheckEmail}
-            disabled={scanning}
-            className="text-[12px] px-3 py-1.5 rounded-md border border-[#1c1c1c] text-[#444] hover:text-[#888] hover:border-[#2a2a2a] transition-all disabled:opacity-50"
-          >
-            {scanning ? 'Scanning…' : 'Check email'}
-          </button>
-          <button onClick={onClose} className="text-[12px] px-2 py-1.5 text-[#444] hover:text-[#888] transition-colors">✕</button>
-        </div>
+        {scanMsg && (
+          <p className="text-[11px] text-[#555] px-6 pb-2">{scanMsg}</p>
+        )}
       </div>
 
       {/* Status row */}

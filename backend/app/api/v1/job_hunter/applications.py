@@ -321,7 +321,7 @@ async def get_tracking_status(
             "id": e.id,
             "subject": e.subject,
             "sender": e.sender,
-            "classification": e.classification,
+            "classification": e.type,
             "received_at": e.received_at.isoformat() if e.received_at else None,
         }
         for e in events
@@ -358,9 +358,13 @@ async def scan_campaign_emails(
             JobHunterCampaign.deleted_at.is_(None),
         )
     )
-    if not result.scalar_one_or_none():
+    campaign = result.scalar_one_or_none()
+    if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
+
+    if not campaign.email_account_encrypted:
+        return {"data": {"ok": False, "no_credentials": True}, "error": None}
 
     service = EmailService(db)
     await service.process_campaign_emails(campaign_id)
-    return {"data": {"ok": True}, "error": None}
+    return {"data": {"ok": True, "no_credentials": False}, "error": None}

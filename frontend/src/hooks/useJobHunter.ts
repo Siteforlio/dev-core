@@ -386,11 +386,13 @@ export function useJobHunter() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
   }
 
-  async function scanEmails(campaignId: string): Promise<void> {
+  async function scanEmails(campaignId: string): Promise<{ noCredentials: boolean }> {
     const res = await apiFetch(`${BASE}/job-hunter/campaigns/${campaignId}/email/scan`, {
       method: 'POST', headers,
     })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const { data } = await res.json()
+    return { noCredentials: data.no_credentials ?? false }
   }
 
   async function getTrackingStatus(campaignId: string, applicationId: string): Promise<TrackingStatus> {
