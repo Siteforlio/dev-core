@@ -28,7 +28,7 @@ function BoldText({ text }: { text: string }) {
 }
 
 export default function ApplyPanel({ campaignId, applicationId, onClose }: Props) {
-  const { getApplicationDetail, generateCoverLetter, chatWithApplication, openInChrome } = useJobHunter()
+  const { getApplicationDetail, generateCoverLetter, chatWithApplication, openInChrome, patchApplicationStatus } = useJobHunter()
 
   const [detail, setDetail] = useState<ApplicationDetail | null>(null)
   const [loading, setLoading] = useState(true)
@@ -43,6 +43,7 @@ export default function ApplyPanel({ campaignId, applicationId, onClose }: Props
   const [showCover, setShowCover] = useState(false)
 
   const [chromeLoading, setChromeLoading] = useState(false)
+  const [markingApplied, setMarkingApplied] = useState(false)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -104,6 +105,18 @@ export default function ApplyPanel({ campaignId, applicationId, onClose }: Props
       await openInChrome(campaignId, applicationId)
     } finally {
       setChromeLoading(false)
+    }
+  }
+
+  const handleMarkApplied = async () => {
+    setMarkingApplied(true)
+    try {
+      await patchApplicationStatus(campaignId, applicationId, 'applied')
+      setDetail((d) => d ? { ...d, status: 'applied' } : d)
+    } catch {
+      // silent — user can retry
+    } finally {
+      setMarkingApplied(false)
     }
   }
 
@@ -170,6 +183,19 @@ export default function ApplyPanel({ campaignId, applicationId, onClose }: Props
           >
             {chromeLoading ? 'Opening…' : 'Open in Chrome →'}
           </button>
+          {detail.status !== 'applied' && detail.status !== 'interview' && detail.status !== 'offer' && detail.status !== 'responded' ? (
+            <button
+              onClick={handleMarkApplied}
+              disabled={markingApplied}
+              className="text-[12px] px-3 py-1.5 rounded-md bg-[#0f2a1a] border border-[#1a3d24] text-[#34d399] hover:bg-[#132e1e] hover:border-[#1f4a2a] transition-all whitespace-nowrap disabled:opacity-50 font-medium"
+            >
+              {markingApplied ? '…' : '✓ Applied'}
+            </button>
+          ) : (
+            <span className="text-[12px] px-3 py-1.5 rounded-md bg-[#0a1a11] border border-[#122018] text-[#1e7a4a] font-medium whitespace-nowrap select-none">
+              ✓ Applied
+            </span>
+          )}
           <button onClick={onClose} className="text-[12px] px-2 py-1.5 text-[#444] hover:text-[#888] transition-colors">✕</button>
         </div>
       </div>
