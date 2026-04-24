@@ -6,6 +6,7 @@ interface Props {
   campaignId: string
   applicationId: string
   onClose: () => void
+  onApplied?: () => void
 }
 
 const QUICK_PROMPTS = [
@@ -27,7 +28,7 @@ function BoldText({ text }: { text: string }) {
   )
 }
 
-export default function ApplyPanel({ campaignId, applicationId, onClose }: Props) {
+export default function ApplyPanel({ campaignId, applicationId, onClose, onApplied }: Props) {
   const { getApplicationDetail, generateCoverLetter, chatWithApplication, openInChrome, patchApplicationStatus } = useJobHunter()
 
   const [detail, setDetail] = useState<ApplicationDetail | null>(null)
@@ -112,7 +113,7 @@ export default function ApplyPanel({ campaignId, applicationId, onClose }: Props
     setMarkingApplied(true)
     try {
       await patchApplicationStatus(campaignId, applicationId, 'applied')
-      setDetail((d) => d ? { ...d, status: 'applied' } : d)
+      onApplied?.()
     } catch {
       // silent — user can retry
     } finally {

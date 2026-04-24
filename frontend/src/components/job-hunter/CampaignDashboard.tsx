@@ -212,10 +212,19 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
     setActiveApplicationId(null)
   }
 
+  const handleAppliedSuccess = () => {
+    setPanelMode('none')
+    setActiveApplicationId(null)
+    setPipelineTab('applied')
+    loadDashboard().catch(() => {})
+  }
+
   const handleDidYouApplyDone = (status: 'applied' | 'failed' | 'withdrawn') => {
     setShowDidYouApply(false)
     setPrevApplicationId(null)
-    // Refresh pipeline so status badge updates
+    if (status === 'applied') {
+      setPipelineTab('applied')
+    }
     loadDashboard().catch(() => {})
   }
 
@@ -363,6 +372,7 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
               campaignId={campaignId}
               applicationId={activeApplicationId}
               onClose={handlePanelClose}
+              onApplied={handleAppliedSuccess}
             />
           )}
           {panelMode === 'tracking' && (
