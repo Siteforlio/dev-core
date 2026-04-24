@@ -21,15 +21,14 @@ function classColor(cls: string) {
 }
 
 export default function TrackingPanel({ campaignId, applicationId, onClose }: Props) {
-  const { getTrackingStatus } = useJobHunter()
+  const { getTrackingStatus, scanEmails } = useJobHunter()
   const [tracking, setTracking] = useState<TrackingStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [refreshing, setRefreshing] = useState(false)
+  const [scanning, setScanning] = useState(false)
 
-  const load = async (showRefresh = false) => {
-    if (showRefresh) setRefreshing(true)
-    else setLoading(true)
+  const load = async () => {
+    setLoading(true)
     setError('')
     try {
       const t = await getTrackingStatus(campaignId, applicationId)
@@ -38,11 +37,23 @@ export default function TrackingPanel({ campaignId, applicationId, onClose }: Pr
       setError('Failed to load tracking data.')
     } finally {
       setLoading(false)
-      setRefreshing(false)
     }
   }
 
-  useEffect(() => { load() }, [applicationId])
+  const handleCheckEmail = async () => {
+    setScanning(true)
+    try {
+      await scanEmails(campaignId)
+      const t = await getTrackingStatus(campaignId, applicationId)
+      setTracking(t)
+    } catch {
+      // silent — still show last known state
+    } finally {
+      setScanning(false)
+    }
+  }
+
+  useEffect(() => { load() }, [applicationId])  // eslint-disable-line react-hooks/exhaustive-deps
 
   if (loading) {
     return (
@@ -76,11 +87,11 @@ export default function TrackingPanel({ campaignId, applicationId, onClose }: Pr
         </div>
         <div className="flex items-center gap-2 flex-shrink-0 ml-4">
           <button
-            onClick={() => load(true)}
-            disabled={refreshing}
+            onClick={handleCheckEmail}
+            disabled={scanning}
             className="text-[12px] px-3 py-1.5 rounded-md border border-[#1c1c1c] text-[#444] hover:text-[#888] hover:border-[#2a2a2a] transition-all disabled:opacity-50"
           >
-            {refreshing ? '…' : 'Check email'}
+            {scanning ? 'Scanning…' : 'Check email'}
           </button>
           <button onClick={onClose} className="text-[12px] px-2 py-1.5 text-[#444] hover:text-[#888] transition-colors">✕</button>
         </div>

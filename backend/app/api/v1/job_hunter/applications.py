@@ -9,6 +9,7 @@ from app.models.pg.job_hunter import Application, JobListing, JobHunterCampaign
 from app.services.job_hunter.dashboard_service import DashboardService
 from app.services.job_hunter.bridge_service import BridgeService
 from app.services.job_hunter.apply_chat_service import ApplyChatService
+from app.services.job_hunter.email_service import EmailService
 
 router = APIRouter(prefix="/job-hunter/campaigns", tags=["job-hunter-dashboard"])
 bearer = HTTPBearer()
@@ -339,3 +340,27 @@ async def get_tracking_status(
         },
         "error": None,
     }
+
+
+# ── Trigger inbox scan for a campaign ────────────────────────────────────────
+
+@router.post("/{campaign_id}/email/scan", response_model=dict)
+async def scan_campaign_emails(
+    campaign_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_user_id),
+):
+    """Run a live IMAP scan and classify new emails for this campaign."""
+    result = await db.execute(
+        select(JobHunterCampaign).where(
+            JobHunterCampaign.id == campaign_id,
+            JobHunterCampaign.user_id == user_id,
+            JobHunterCampaign.deleted_at.is_(None),
+        )
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Campaign not found")
+
+    service = EmailService(db)
+    await service.process_campaign_emails(campaign_id)
+    return {"data": {"ok": True}, "error": None}

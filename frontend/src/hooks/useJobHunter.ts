@@ -386,6 +386,13 @@ export function useJobHunter() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
   }
 
+  async function scanEmails(campaignId: string): Promise<void> {
+    const res = await apiFetch(`${BASE}/job-hunter/campaigns/${campaignId}/email/scan`, {
+      method: 'POST', headers,
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  }
+
   async function getTrackingStatus(campaignId: string, applicationId: string): Promise<TrackingStatus> {
     const res = await apiFetch(
       `${BASE}/job-hunter/campaigns/${campaignId}/applications/${applicationId}/tracking`,
@@ -437,6 +444,7 @@ export function useJobHunter() {
     generateCoverLetter,
     chatWithApplication,
     openInChrome,
+    scanEmails,
     getTrackingStatus,
   }
 }
