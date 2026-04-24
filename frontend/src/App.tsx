@@ -13,7 +13,7 @@ export default function App() {
   const sessionId = useInterviewStore((s) => s.sessionId)
 
   if (!isAuthenticated) {
-    if (showRegister) return <Onboarding />
+    if (showRegister) return <Onboarding onGoToLogin={() => setShowRegister(false)} />
     return <Login onGoToRegister={() => setShowRegister(true)} />
   }
 

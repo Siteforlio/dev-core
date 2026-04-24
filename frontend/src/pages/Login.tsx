@@ -6,20 +6,31 @@ export default function Login({ onGoToRegister }: { onGoToRegister: () => void }
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
   const setAuth = useAuthStore((s) => s.setAuth)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
-    const res = await fetch('http://localhost:8000/api/v1/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    })
-    const body = await res.json()
-    if (!res.ok) { setError(body.error?.message ?? 'Login failed'); return }
-    const { access_token, refresh_token, user_id, name, language_pref } = body.data
-    setAuth(access_token, refresh_token, user_id, name, language_pref)
+    setLoading(true)
+    try {
+      const res = await fetch('http://localhost:8000/api/v1/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      })
+      const body = await res.json()
+      if (!res.ok) {
+        setError(body.error?.message ?? 'Login failed')
+        return
+      }
+      const { access_token, refresh_token, user_id, name, language_pref } = body.data
+      setAuth(access_token, refresh_token, user_id, name, language_pref)
+    } catch {
+      setError('Could not reach the server. Is the backend running?')
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -32,6 +43,7 @@ export default function Login({ onGoToRegister }: { onGoToRegister: () => void }
           placeholder="Email"
           value={email}
           onChange={e => setEmail(e.target.value)}
+          disabled={loading}
         />
         <div className="relative">
           <input
@@ -40,6 +52,7 @@ export default function Login({ onGoToRegister }: { onGoToRegister: () => void }
             placeholder="Password"
             value={password}
             onChange={e => setPassword(e.target.value)}
+            disabled={loading}
           />
           <button
             type="button"
@@ -58,7 +71,18 @@ export default function Login({ onGoToRegister }: { onGoToRegister: () => void }
             )}
           </button>
         </div>
-        <button className="bg-blue-600 p-2 rounded font-semibold" type="submit">Sign In</button>
+        <button
+          className="bg-blue-600 p-2 rounded font-semibold flex items-center justify-center gap-2 disabled:opacity-60"
+          type="submit"
+          disabled={loading}
+        >
+          {loading ? (
+            <>
+              <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              Signing in…
+            </>
+          ) : 'Sign In'}
+        </button>
         <button type="button" className="text-sm text-gray-400 underline" onClick={onGoToRegister}>
           Create account
         </button>
