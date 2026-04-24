@@ -169,34 +169,39 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
     }
   }
 
-  // Open apply panel — if switching away from a pending application, prompt "did you apply?"
-  const handleApply = (applicationId: string) => {
+  // Open apply panel — if switching away from an in-progress panel, prompt "did you apply?"
+  const handleApply = (listingId: string) => {
+    const listing = pipeline.find((a) => a.id === listingId)
+    if (!listing?.applicationId) return // no application record yet — tailoring hasn't run
+
     if (
       activeApplicationId &&
-      activeApplicationId !== applicationId &&
+      activeApplicationId !== listing.applicationId &&
       panelMode === 'apply'
     ) {
-      const prev = pipeline.find((a) => a.id === activeApplicationId)
-      if (prev && prev.status === 'pending') {
+      const prev = pipeline.find((a) => a.applicationId === activeApplicationId)
+      if (prev && (prev.status === 'pending' || prev.status === 'tailored')) {
         setPrevApplicationId(activeApplicationId)
         setShowDidYouApply(true)
         return
       }
     }
-    setActiveApplicationId(applicationId)
+    setActiveApplicationId(listing.applicationId)
     setPanelMode('apply')
   }
 
-  const handleViewTracking = (applicationId: string) => {
-    setActiveApplicationId(applicationId)
+  const handleViewTracking = (listingId: string) => {
+    const listing = pipeline.find((a) => a.id === listingId)
+    if (!listing?.applicationId) return
+    setActiveApplicationId(listing.applicationId)
     setPanelMode('tracking')
   }
 
   const handlePanelClose = () => {
     // If closing an apply panel for a pending app, prompt
     if (panelMode === 'apply' && activeApplicationId) {
-      const app = pipeline.find((a) => a.id === activeApplicationId)
-      if (app && app.status === 'pending') {
+      const app = pipeline.find((a) => a.applicationId === activeApplicationId)
+      if (app && (app.status === 'pending' || app.status === 'tailored')) {
         setPrevApplicationId(activeApplicationId)
         setShowDidYouApply(true)
         setPanelMode('none')
@@ -249,8 +254,8 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
 
     <div className="flex gap-4 flex-1 min-h-0 overflow-hidden">
       {/* Main panel */}
-      <div className={`flex flex-col gap-4 min-w-0 overflow-hidden transition-all ${panelMode !== 'none' ? 'w-[30%] flex-shrink-0' : 'flex-1'}`}>
-        {summary && <SummaryStrip summary={summary} />}
+      <div className={`flex flex-col gap-4 overflow-hidden transition-all ${panelMode !== 'none' ? 'w-80 flex-shrink-0' : 'flex-1 min-w-0'}`}>
+        {summary && <SummaryStrip summary={summary} compact={panelMode !== 'none'} />}
 
         {interviews.length > 0 && (
           <div className="bg-purple-900/20 border border-purple-800 rounded-lg px-4 py-3">
@@ -276,7 +281,7 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
 
         {/* Pipeline tabs */}
         <div className="flex flex-col gap-2">
-          <div className="flex items-center gap-1 border-b border-gray-800 flex-shrink-0">
+          <div className="flex items-center gap-1 border-b border-gray-800 flex-shrink-0 overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
             {([
               { key: 'all', label: 'All' },
               { key: 'match', label: 'Match' },
@@ -411,7 +416,7 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
 
     {/* "Did you apply?" popup */}
     {showDidYouApply && prevApplicationId && (() => {
-      const app = pipeline.find((a) => a.id === prevApplicationId)
+      const app = pipeline.find((a) => a.applicationId === prevApplicationId)
       if (!app) return null
       return (
         <DidYouApplyPopup

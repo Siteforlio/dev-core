@@ -39,12 +39,13 @@ export interface CampaignSummary {
 }
 
 export interface Application {
-  id: string
+  id: string          // JobListing ID
+  applicationId: string | null  // Application record ID (null if not yet tailored)
   company: string
   title: string
   location: string
   appliedAt: string
-  status: 'pending' | 'applied' | 'responded' | 'interview' | 'offer' | 'rejected' | 'failed' | 'withdrawn'
+  status: 'pending' | 'applied' | 'responded' | 'interview' | 'offer' | 'rejected' | 'failed' | 'withdrawn' | 'tailored'
   matchScore: 'MATCH' | 'PARTIAL' | 'SKIP' | null
   source: string
 }

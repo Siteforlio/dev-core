@@ -64,6 +64,7 @@ class DashboardService:
         return [
             {
                 "id": listing.id,
+                "application_id": app.id if app else None,
                 "status": app.status if app else listing.status,
                 "discovered_at": listing.discovered_at.isoformat(),
                 "applied_at": app.applied_at.isoformat() if app else None,

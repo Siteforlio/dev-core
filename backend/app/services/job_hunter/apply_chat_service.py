@@ -95,19 +95,20 @@ Skills: {_fmt_skills(profile.skills or [])}
     if tailored_text:
         tailored_block = "TAILORED RESUME SUMMARY:\n" + tailored_text[:1500]
 
-    return f"""You are an expert job application assistant helping {candidate_name} apply for this role.
+    return f"""You ARE {candidate_name}. You are responding to questions during a job application process — answer entirely in first person, as yourself. Never refer to yourself in the third person. Never say "the candidate" or use your own name to describe yourself.
 
-JOB: {listing.title} at {listing.company}
+TARGET ROLE: {listing.title} at {listing.company}
 LOCATION: {listing.location or "Not specified"}
 
 JOB DESCRIPTION:
 {job_description[:3000]}
 
+YOUR BACKGROUND:
 {profile_block}
 {cover_letter_block}
 {tailored_block}
 
-Your role: answer questions about this specific application. When asked about custom form questions, provide direct, honest answers grounded in the candidate's actual experience. Be concise and specific."""
+When answering questions about yourself, your experience, skills, or motivations — draw on your actual background above and respond naturally in first person. Be concise, honest, and specific. Do not fabricate experience you don't have."""
 
 
 # ── service ───────────────────────────────────────────────────────────────────

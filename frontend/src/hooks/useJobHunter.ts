@@ -176,6 +176,7 @@ export function useJobHunter() {
       },
       pipeline: (data.pipeline ?? []).map((a: Record<string, unknown>) => ({
         id: a.id,
+        applicationId: a.application_id ?? null,
         company: a.company,
         title: a.title,
         location: a.location ?? '',
