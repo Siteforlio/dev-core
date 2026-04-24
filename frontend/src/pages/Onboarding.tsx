@@ -11,6 +11,12 @@ export default function Onboarding({ onGoToLogin }: { onGoToLogin: () => void })
   const [loading, setLoading] = useState(false)
   const setAuth = useAuthStore((s) => s.setAuth)
 
+  const isValid =
+    name.trim().length >= 2 &&
+    email.trim().includes('@') &&
+    password.length >= 6 &&
+    consent
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!consent) { setError('You must agree to data usage to continue.'); return }
@@ -100,7 +106,7 @@ export default function Onboarding({ onGoToLogin }: { onGoToLogin: () => void })
         <button
           className="bg-blue-600 p-2 rounded font-semibold flex items-center justify-center gap-2 disabled:opacity-60"
           type="submit"
-          disabled={loading}
+          disabled={loading || !isValid}
         >
           {loading ? (
             <>

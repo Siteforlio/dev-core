@@ -9,6 +9,8 @@ export default function Login({ onGoToRegister }: { onGoToRegister: () => void }
   const [loading, setLoading] = useState(false)
   const setAuth = useAuthStore((s) => s.setAuth)
 
+  const isValid = email.trim().includes('@') && password.length >= 6
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
@@ -74,7 +76,7 @@ export default function Login({ onGoToRegister }: { onGoToRegister: () => void }
         <button
           className="bg-blue-600 p-2 rounded font-semibold flex items-center justify-center gap-2 disabled:opacity-60"
           type="submit"
-          disabled={loading}
+          disabled={loading || !isValid}
         >
           {loading ? (
             <>
