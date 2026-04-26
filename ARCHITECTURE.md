@@ -36,6 +36,12 @@ Each module is designed as an independently deployable unit that shares the same
 | Task queue | Celery + Redis | Latest stable |
 | Containerization | Docker + Docker Compose | Latest stable |
 | CI | GitHub Actions | — |
+| Question detection | BERT (local, fine-tuned) | Devcore overlay module |
+| RAG embeddings | all-MiniLM-L6-v2 (local) | Devcore overlay module |
+| Fast LLM (overlay only) | Gemini Flash 2.0 | Devcore overlay real-time path — Claude Sonnet remains default everywhere else |
+| Audio capture | naudiodon (WASAPI loopback) | Devcore overlay module, Windows |
+| Code execution sandbox | Judge0 API / local Docker | Devcore overlay module |
+| Web search tool | SerpAPI or Brave Search | Devcore overlay module |
 
 ---
 
