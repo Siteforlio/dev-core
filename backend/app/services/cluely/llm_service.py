@@ -1,5 +1,5 @@
 import logging
-from typing import AsyncIterator
+from typing import AsyncGenerator, AsyncIterator
 import google.generativeai as genai
 import anthropic
 from app.core.config import settings
@@ -32,7 +32,7 @@ class LLMService:
         transcript: list[TranscriptEntry],
         context: dict,
         rag_chunks: list[str],
-    ) -> AsyncIterator[str]:
+    ) -> AsyncGenerator[str, None]:
         history = "\n".join(f"{e.speaker}: {e.text}" for e in transcript[-10:])
         rag_ctx = "\n".join(rag_chunks) if rag_chunks else ""
         prompt = f"{self._build_system_prompt(context)}\n\nConversation:\n{history}\n\nRelevant context:\n{rag_ctx}"
@@ -44,13 +44,15 @@ class LLMService:
                 raise LLMRateLimitedError() from e
             raise
 
-    async def _stream_gemini(self, prompt: str) -> AsyncIterator[str]:
+    async def _stream_gemini(self, prompt: str) -> AsyncGenerator[str, None]:
         response = await self._gemini.generate_content_async(prompt, stream=True)
         async for chunk in response:
             if chunk.text:
                 yield chunk.text
 
-    async def manual_ask(self, text: str, mode: str, context: dict, rag_chunks: list[str] = []) -> str:
+    async def manual_ask(self, text: str, mode: str, context: dict, rag_chunks: list[str] | None = None) -> str:
+        if rag_chunks is None:
+            rag_chunks = []
         rag_ctx = "\n".join(rag_chunks)
         system = self._build_system_prompt(context)
         if mode == "hints":
