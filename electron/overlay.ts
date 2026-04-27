@@ -36,7 +36,6 @@ export function createOverlayWindow(): BrowserWindow {
     skipTaskbar: true,
     focusable: false,
     hasShadow: false,
-    alwaysOnTop: true,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
