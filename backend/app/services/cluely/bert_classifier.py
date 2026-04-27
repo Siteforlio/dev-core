@@ -23,6 +23,7 @@ def _regex_is_question(text: str) -> bool:
 class BertClassifier:
     def __init__(self, model_path: str = _DEFAULT_MODEL_PATH):
         self._use_regex = False
+        self._pipe = None
         if not os.path.exists(model_path):
             logger.warning(
                 "Question-classifier model not found at %s — using regex heuristic. "
