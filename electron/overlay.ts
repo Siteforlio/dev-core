@@ -22,6 +22,8 @@ let overlayWin: BrowserWindow | null = null
 let currentPositionIndex = 0
 
 export function createOverlayWindow(): BrowserWindow {
+  if (overlayWin && !overlayWin.isDestroyed()) return overlayWin
+
   const savedPos = store.get('overlayPosition', 'top-center') as string
   currentPositionIndex = POSITION_ORDER.indexOf(savedPos) !== -1 ? POSITION_ORDER.indexOf(savedPos) : 0
   const pos = POSITIONS[POSITION_ORDER[currentPositionIndex]]
@@ -49,7 +51,8 @@ export function createOverlayWindow(): BrowserWindow {
   // Apply WDA_EXCLUDEFROMCAPTURE — invisible to all screen capture on Windows 11
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const hwnd = overlayWin.getNativeWindowHandle() as any
-  user32.SetWindowDisplayAffinity(hwnd, 0x00000011)
+  const WDA_EXCLUDEFROMCAPTURE = 0x00000011
+  user32.SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE)
 
   if (process.env.NODE_ENV === 'development') {
     overlayWin.loadURL('http://localhost:5173/overlay')
@@ -63,26 +66,39 @@ export function createOverlayWindow(): BrowserWindow {
 
 function registerHotkeys(win: BrowserWindow) {
   // Show/hide
-  globalShortcut.register('CommandOrControl+Shift+Space', () => {
+  const registeredSpace = globalShortcut.register('CommandOrControl+Shift+Space', () => {
     if (win.isVisible()) win.hide()
     else win.show()
   })
+  if (!registeredSpace) console.warn('[devcore-overlay] Failed to register hotkey: CommandOrControl+Shift+Space')
 
-  // Interact mode
-  globalShortcut.register('CommandOrControl+Shift+I', () => {
-    win.setIgnoreMouseEvents(false)
-    win.setFocusable(true)
-    win.focus()
+  // Interact mode toggle
+  let interactMode = false
+  const registeredI = globalShortcut.register('CommandOrControl+Shift+I', () => {
+    interactMode = !interactMode
+    if (interactMode) {
+      win.setIgnoreMouseEvents(false)
+      win.setFocusable(true)
+      win.focus()
+    } else {
+      win.setIgnoreMouseEvents(true, { forward: true })
+      win.setFocusable(false)
+    }
   })
+  if (!registeredI) console.warn('[devcore-overlay] Failed to register hotkey: CommandOrControl+Shift+I')
 
   // Move overlay
-  globalShortcut.register('CommandOrControl+Shift+Right', () => cyclePosition(win, 1))
-  globalShortcut.register('CommandOrControl+Shift+Left', () => cyclePosition(win, -1))
+  const registeredRight = globalShortcut.register('CommandOrControl+Shift+Right', () => cyclePosition(win, 1))
+  if (!registeredRight) console.warn('[devcore-overlay] Failed to register hotkey: CommandOrControl+Shift+Right')
+
+  const registeredLeft = globalShortcut.register('CommandOrControl+Shift+Left', () => cyclePosition(win, -1))
+  if (!registeredLeft) console.warn('[devcore-overlay] Failed to register hotkey: CommandOrControl+Shift+Left')
 
   // Force re-trigger
-  globalShortcut.register('CommandOrControl+Shift+R', () => {
+  const registeredR = globalShortcut.register('CommandOrControl+Shift+R', () => {
     win.webContents.send('devcore:status', { state: 'thinking', latencyMs: 0 })
   })
+  if (!registeredR) console.warn('[devcore-overlay] Failed to register hotkey: CommandOrControl+Shift+R')
 
   app.on('will-quit', () => globalShortcut.unregisterAll())
 }
