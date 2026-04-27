@@ -1,5 +1,6 @@
 import { app, BrowserWindow, Menu } from 'electron'
 import path from 'path'
+import { createOverlayWindow } from './overlay'
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -20,6 +21,7 @@ function createWindow() {
 
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null)
-  createWindow()
+  createWindow()          // existing main window
+  createOverlayWindow()   // new overlay window
 })
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
