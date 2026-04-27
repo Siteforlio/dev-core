@@ -482,6 +482,7 @@ In `.env.example`, add:
 JUDGE0_API_KEY=
 SERP_API_KEY=
 DEVCORE_FILE_INDEX_PATH=~/.devcore/file_index
+GEMINI_API_KEY=          # Required for real-time suggestions (Gemini Flash 2.0)
 ```
 
 - [ ] **Step 7: Create Pydantic schemas**
@@ -1704,12 +1705,19 @@ import { ipcMain } from 'electron'
 import { startAudioCapture, stopAudioCapture } from './audio'
 import { getOverlayWindow } from './overlay'
 
-const BACKEND_WS = process.env.NODE_ENV === 'development'
-  ? 'ws://localhost:8000/api/v1/cluely/ws'
-  : 'ws://localhost:8000/api/v1/cluely/ws'
+const BACKEND_WS = 'ws://localhost:8000/api/v1/cluely/ws'
+
+// Reads the stored JWT access token from wherever your existing auth module persists it.
+// If your auth module exports a `getStoredToken()` function, import and call it here.
+// Replace the import path below with the actual auth state module path.
+import { getStoredToken } from './auth'  // adjust import to match existing auth module
+
+// Expose the stored token to the renderer so SessionSetup can attach it to API requests
+ipcMain.handle('auth:get:token', async () => getStoredToken())
 
 ipcMain.handle('devcore:session:start', async (_e, payload) => {
-  const token = payload.token  // passed from renderer store
+  // Token comes from renderer: SessionSetup calls getAccessToken() and passes it in payload
+  const token: string = payload.token ?? getStoredToken() ?? ''
   startAudioCapture(BACKEND_WS, token, payload.audioSource ?? 'both')
 })
 
@@ -1738,7 +1746,7 @@ ipcMain.handle('devcore:manual:ask', async (_e, payload: { text: string; mode: s
   // Import the active WS from audio module and send a manual_ask frame
   const { getActiveWs } = await import('./audio')
   const ws = getActiveWs()
-  if (ws && ws.readyState === WebSocket.OPEN) {
+  if (ws && ws.readyState === 1 /* WebSocket.OPEN */) {
     ws.send(JSON.stringify({
       type: 'manual_ask',
       text: payload.text,
@@ -2155,10 +2163,12 @@ export function SessionSetup({ onClose }: { onClose: () => void }) {
       jdText: tab === 'job' ? selectedJobData?.jdText ?? '' : description,
       files,
     }
+    // Await the token Promise before passing it to session start
+    const token: string = await window.electronAPI?.getAccessToken?.() ?? ''
     const id = crypto.randomUUID()
     setSessionId(id)
     setState('listening')
-    await startSession({ sessionId: id, context: ctx, audioSource: 'both' })
+    await startSession({ sessionId: id, context: ctx, audioSource: 'both', token })
     onClose()
   }
 
