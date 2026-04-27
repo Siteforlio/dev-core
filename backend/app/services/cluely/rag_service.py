@@ -28,6 +28,10 @@ class RagService:
             if path.endswith(".pdf"):
                 import pdfminer.high_level
                 return pdfminer.high_level.extract_text(path)
+            elif path.endswith(".docx"):
+                import docx
+                doc = docx.Document(path)
+                return "\n".join(p.text for p in doc.paragraphs)
             with open(path, encoding="utf-8", errors="ignore") as f:
                 return f.read()
         except Exception as e:
@@ -61,7 +65,7 @@ class RagService:
 
         model = self._get_model()
         self._chunks = all_chunks
-        self._embeddings = model.encode(all_chunks, convert_to_numpy=True)
+        self._embeddings = model.encode(all_chunks, convert_to_numpy=True, normalize_embeddings=True)
         self._meta_path.write_text(json.dumps(new_meta))
         logger.info("RAG index built: %d chunks", len(all_chunks))
 
@@ -73,7 +77,7 @@ class RagService:
     def _retrieve_sync(self, query: str, k: int) -> list[str]:
         import numpy as np
         model = self._get_model()
-        q_emb = model.encode([query], convert_to_numpy=True)
+        q_emb = model.encode([query], convert_to_numpy=True, normalize_embeddings=True)
         scores = (self._embeddings @ q_emb.T).squeeze()
         top_k = int(min(k, len(self._chunks)))
         indices = scores.argsort()[-top_k:][::-1]
