@@ -1,18 +1,23 @@
 import asyncio
 import struct
 import math
+import threading
 from typing import Literal
 import whisper
+import numpy as np
 import logging
 
 logger = logging.getLogger(__name__)
 
 _whisper_model = None
+_whisper_lock = threading.Lock()
 
 def _get_model():
     global _whisper_model
     if _whisper_model is None:
-        _whisper_model = whisper.load_model("tiny")
+        with _whisper_lock:
+            if _whisper_model is None:
+                _whisper_model = whisper.load_model("tiny")
     return _whisper_model
 
 
@@ -38,7 +43,6 @@ def detect_silence(pcm: bytes, threshold: float = 0.01, sample_rate: int = 16000
 class AudioService:
     async def transcribe(self, pcm: bytes, speaker: Literal["interviewer", "user"]) -> dict:
         """Transcribe raw PCM16 mono 16kHz. Returns {speaker, text}. CPU-bound → thread."""
-        import numpy as np
         def _run():  # must be sync — asyncio.to_thread runs in a thread pool, not event loop
             model = _get_model()
             samples = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0

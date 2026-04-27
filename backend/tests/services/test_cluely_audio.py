@@ -1,6 +1,6 @@
 import pytest
 import struct
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 from app.services.cluely.audio_service import AudioService, parse_audio_frame, detect_silence
 
 def test_parse_audio_frame_mic():
@@ -18,6 +18,7 @@ def test_parse_audio_frame_system():
     stream_id, seq, data = parse_audio_frame(frame)
     assert stream_id == 'system'
     assert seq == 42
+    assert data == pcm
 
 def test_detect_silence_on_quiet_buffer():
     # Near-zero PCM → silence
