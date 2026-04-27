@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Literal
 
 
@@ -11,7 +11,7 @@ class SessionContext(BaseModel):
 
 
 class SessionStartRequest(BaseModel):
-    session_id: str
+    session_id: str = Field(..., min_length=1)
     context: SessionContext
 
 
