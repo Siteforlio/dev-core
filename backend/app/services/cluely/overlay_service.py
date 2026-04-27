@@ -1,5 +1,6 @@
 import asyncio, logging, json, time
 from fastapi import WebSocket
+from starlette.websockets import WebSocketDisconnect
 from app.core.security import decode_token
 from app.core.exceptions import BertClassifierError, LLMRateLimitedError, CodeRunnerError
 from app.services.cluely.audio_service import AudioService, parse_audio_frame
@@ -69,6 +70,8 @@ class OverlayService:
                         break
                     elif mtype == "manual_ask":
                         await self._handle_manual_ask(ws, data, session_ctx, rag)
+        except WebSocketDisconnect:
+            logger.debug("Client disconnected")
         except Exception as e:
             logger.exception("Overlay WS error: %s", e)
         finally:
@@ -86,7 +89,10 @@ class OverlayService:
         rag = RagService()
         files = ctx.get("files", [])
         if files:
-            asyncio.create_task(rag.build_index(files))
+            task = asyncio.create_task(rag.build_index(files))
+            task.add_done_callback(
+                lambda t: logger.error("RAG index build failed: %s", t.exception()) if t.exception() else None
+            )
         await ws.send_json({"type": "status", "state": "listening", "latency_ms": 0})
         return ctx_mgr, rag, ctx
 
@@ -97,29 +103,32 @@ class OverlayService:
             stream, seq, pcm = parse_audio_frame(raw)
         except ValueError:
             return
-        speaker = "interviewer" if stream == "system" else "user"
-        result = await self._audio.transcribe(pcm, speaker=speaker)
-        if not result["text"]:
-            return
-        entry = TranscriptEntry(speaker=speaker, text=result["text"], seq=seq)
-        await ctx_mgr.push_transcript(entry)
-        await ws.send_json({"type": "transcript", "speaker": speaker, "text": result["text"], "seq": seq})
+        try:
+            speaker = "interviewer" if stream == "system" else "user"
+            result = await self._audio.transcribe(pcm, speaker=speaker)
+            if not result["text"]:
+                return
+            entry = TranscriptEntry(speaker=speaker, text=result["text"], seq=seq)
+            await ctx_mgr.push_transcript(entry)
+            await ws.send_json({"type": "transcript", "speaker": speaker, "text": result["text"], "seq": seq})
 
-        if speaker != "interviewer":
-            return
+            if speaker != "interviewer":
+                return
 
-        now = time.monotonic()
-        triggered = False
-        if self._use_bert and self._bert is not None:
-            if now - self._last_trigger > BERT_COOLDOWN:
-                is_q = await self._bert.is_question(result["text"])
-                if is_q:
-                    triggered = True
-        # If BERT unavailable, never auto-trigger (rely on manual_ask)
+            now = time.monotonic()
+            triggered = False
+            if self._use_bert and self._bert is not None:
+                if now - self._last_trigger > BERT_COOLDOWN:
+                    is_q = await self._bert.is_question(result["text"])
+                    if is_q:
+                        triggered = True
 
-        if triggered:
-            self._last_trigger = now
-            await self._stream_suggestion(ws, ctx_mgr, rag, session_ctx)
+            if triggered:
+                self._last_trigger = now
+                await self._stream_suggestion(ws, ctx_mgr, rag, session_ctx)
+        except Exception:
+            logger.exception("Audio frame processing error")
+            await ws.send_json({"type": "error", "code": "AUDIO_ERROR", "message": "Audio processing failed"})
 
     async def _stream_suggestion(self, ws: WebSocket, ctx_mgr: ContextManager, rag, session_ctx: dict):
         await ws.send_json({"type": "status", "state": "thinking", "latency_ms": 0})
@@ -137,12 +146,21 @@ class OverlayService:
             await ws.send_json({"type": "suggestion_end"})
         except LLMRateLimitedError:
             await ws.send_json({"type": "error", "code": "LLM_RATE_LIMITED", "message": "Rate limited"})
+            await ws.send_json({"type": "status", "state": "listening", "latency_ms": 0})
+        except Exception:
+            logger.exception("Suggestion streaming error")
+            await ws.send_json({"type": "error", "code": "LLM_ERROR", "message": "Suggestion failed"})
+            await ws.send_json({"type": "status", "state": "listening", "latency_ms": 0})
 
     async def _handle_manual_ask(self, ws: WebSocket, data: dict, session_ctx: dict, rag):
-        rag_chunks = await rag.retrieve(data["text"], k=3) if rag else []
+        text = data.get("text", "")
+        if not text:
+            await ws.send_json({"type": "error", "code": "INVALID_REQUEST", "message": "text is required"})
+            return
+        rag_chunks = await rag.retrieve(text, k=3) if rag else []
         try:
             result = await self._llm.manual_ask(
-                data["text"],
+                text,
                 mode=data.get("mode", "hints"),
                 context=session_ctx,
                 rag_chunks=rag_chunks,
