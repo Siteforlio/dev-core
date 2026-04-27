@@ -12,6 +12,11 @@ LANGUAGE_IDS = {
 
 class CodeRunner:
     async def execute(self, code: str, language: str) -> dict:
+        if not settings.judge0_api_key:
+            raise CodeRunnerError(
+                code="CODE_RUNNER_UNAVAILABLE",
+                message="Code execution unavailable — no JUDGE0_API_KEY configured."
+            )
         lang_id = LANGUAGE_IDS.get(language.lower())
         if lang_id is None:
             raise CodeRunnerError(message=f"Unsupported language: {language}")
@@ -23,8 +28,8 @@ class CodeRunner:
         try:
             async with httpx.AsyncClient(timeout=15) as client:
                 resp = await client.post(f"{JUDGE0_URL}?wait=true", json=payload, headers=headers)
-                await resp.raise_for_status()
-                data = await resp.json()
+                resp.raise_for_status()
+                data = resp.json()
             return {
                 "output": data.get("stdout") or data.get("stderr") or "",
                 "language": language,
