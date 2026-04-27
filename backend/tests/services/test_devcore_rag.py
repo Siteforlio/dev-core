@@ -22,3 +22,6 @@ async def test_incremental_skips_unchanged(tmp_path):
     await svc.build_index([str(tmp_path)])
     mtime_after = os.path.getmtime(str(tmp_path / "index" / "index_meta.json"))
     assert mtime_before == mtime_after
+    # Verify index is still functional after no-op rebuild
+    chunks = await svc.retrieve("programming language", k=1)
+    assert "Python" in chunks[0]

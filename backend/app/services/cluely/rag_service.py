@@ -42,10 +42,13 @@ class RagService:
         await asyncio.to_thread(self._build_sync, directories)
 
     def _build_sync(self, directories: list[str]) -> None:
-        import numpy as np
+        chunks_path = self._index_dir / "index_chunks.json"
         meta = json.loads(self._meta_path.read_text()) if self._meta_path.exists() else {}
-        new_meta = {}
-        all_chunks: list[str] = []
+        chunk_cache: dict[str, list[str]] = json.loads(chunks_path.read_text()) if chunks_path.exists() else {}
+
+        new_meta: dict[str, float] = {}
+        new_chunk_cache: dict[str, list[str]] = {}
+        changed = False
 
         for d in directories:
             for root, _, files in os.walk(os.path.expanduser(d)):
@@ -55,18 +58,27 @@ class RagService:
                     fpath = os.path.join(root, fname)
                     mtime = os.path.getmtime(fpath)
                     new_meta[fpath] = mtime
-                    if meta.get(fpath) == mtime:
-                        continue  # unchanged — skip
-                    text = self._read_file(fpath)
-                    all_chunks.extend(self._chunk_text(text))
+                    if meta.get(fpath) == mtime and fpath in chunk_cache:
+                        new_chunk_cache[fpath] = chunk_cache[fpath]  # carry forward
+                    else:
+                        text = self._read_file(fpath)
+                        new_chunk_cache[fpath] = self._chunk_text(text)
+                        changed = True
 
-        if not all_chunks and meta == new_meta:
-            return  # nothing changed
+        # Check for removed files
+        if set(new_meta.keys()) != set(meta.keys()):
+            changed = True
+
+        all_chunks = [c for chunks in new_chunk_cache.values() for c in chunks]
+
+        if not changed and self._embeddings is not None:
+            return  # nothing changed, embeddings still valid
 
         model = self._get_model()
         self._chunks = all_chunks
-        self._embeddings = model.encode(all_chunks, convert_to_numpy=True, normalize_embeddings=True)
+        self._embeddings = model.encode(all_chunks, convert_to_numpy=True, normalize_embeddings=True) if all_chunks else None
         self._meta_path.write_text(json.dumps(new_meta))
+        chunks_path.write_text(json.dumps(new_chunk_cache))
         logger.info("RAG index built: %d chunks", len(all_chunks))
 
     async def retrieve(self, query: str, k: int = 3) -> list[str]:
@@ -75,7 +87,6 @@ class RagService:
         return await asyncio.to_thread(self._retrieve_sync, query, k)
 
     def _retrieve_sync(self, query: str, k: int) -> list[str]:
-        import numpy as np
         model = self._get_model()
         q_emb = model.encode([query], convert_to_numpy=True, normalize_embeddings=True)
         scores = (self._embeddings @ q_emb.T).squeeze()
