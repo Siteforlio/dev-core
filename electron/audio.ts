@@ -7,9 +7,18 @@ let ws: WebSocket | null = null
 let chunkSeq = 0
 
 export function startAudioCapture(wsUrl: string, token: string, audioSource: 'mic' | 'system' | 'both') {
+  stopAudioCapture()   // no-op if nothing running; prevents orphaned streams on double-start
   ws = new WebSocket(wsUrl)
   ws.on('open', () => {
     ws!.send(JSON.stringify({ type: 'auth', token }))
+  })
+  ws.on('error', (err: Error) => {
+    console.error('[audio] WS error:', err.message)
+    stopAudioCapture()
+  })
+  ws.on('close', () => {
+    micInput = sysInput = null   // streams already stopped by device; don't double-quit
+    ws = null
   })
 
   const devices = naudiodon.getDevices()
@@ -43,11 +52,19 @@ export function startAudioCapture(wsUrl: string, token: string, audioSource: 'mi
       }
     })
     input.on('data', (chunk: Buffer) => {
+      if (!ws || ws.readyState !== 1) {
+        buf = Buffer.alloc(0)   // discard; WS not open
+        return
+      }
       buf = Buffer.concat([buf, chunk])
       while (buf.length >= CHUNK_BYTES) {
-        sendChunk(buf.slice(0, CHUNK_BYTES), streamId)
-        buf = buf.slice(CHUNK_BYTES)
+        sendChunk(buf.subarray(0, CHUNK_BYTES), streamId)
+        buf = buf.subarray(CHUNK_BYTES)
       }
+    })
+    input.on('error', (err: Error) => {
+      console.error('[audio] stream error:', err.message)
+      stopAudioCapture()
     })
     input.start()
     return input
@@ -66,6 +83,7 @@ export function stopAudioCapture() {
   sysInput?.quit()
   ws?.close()
   micInput = sysInput = ws = null
+  chunkSeq = 0
 }
 
 export function getActiveWs() { return ws }

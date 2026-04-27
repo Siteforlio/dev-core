@@ -23,7 +23,7 @@ function createWindow() {
 }
 
 ipcMain.handle('devcore:session:start', async (_e, payload) => {
-  const token: string = payload.token ?? ''
+  const token: string = payload.token ?? ''  // TODO: fallback to stored token when auth module exports getStoredToken
   startAudioCapture(BACKEND_WS, token, payload.audioSource ?? 'both')
 })
 
