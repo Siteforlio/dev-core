@@ -14,14 +14,26 @@ contextBridge.exposeInMainWorld('electronAPI', {
     enableInteract:   ()                 => ipcRenderer.invoke('devcore:interact:enable'),
     disableInteract:  ()                 => ipcRenderer.invoke('devcore:interact:disable'),
     manualAsk:        (payload: unknown) => ipcRenderer.invoke('devcore:manual:ask', payload),
-    onSuggestion:     (cb: (p: { delta: string; done: boolean }) => void) =>
-                        ipcRenderer.on('devcore:suggestion', (_e, p) => cb(p)),
-    onTranscript:     (cb: (p: { speaker: string; text: string }) => void) =>
-                        ipcRenderer.on('devcore:transcript', (_e, p) => cb(p)),
-    onStatus:         (cb: (p: { state: string; latencyMs: number }) => void) =>
-                        ipcRenderer.on('devcore:status', (_e, p) => cb(p)),
-    onError:          (cb: (p: { code: string; message: string }) => void) =>
-                        ipcRenderer.on('devcore:error', (_e, p) => cb(p)),
+    onSuggestion: (cb: (p: { delta: string; done: boolean }) => void): (() => void) => {
+      const handler = (_e: unknown, p: { delta: string; done: boolean }) => cb(p)
+      ipcRenderer.on('devcore:suggestion', handler)
+      return () => ipcRenderer.removeListener('devcore:suggestion', handler)
+    },
+    onTranscript: (cb: (p: { speaker: 'interviewer' | 'user'; text: string; seq: number }) => void): (() => void) => {
+      const handler = (_e: unknown, p: { speaker: 'interviewer' | 'user'; text: string; seq: number }) => cb(p)
+      ipcRenderer.on('devcore:transcript', handler)
+      return () => ipcRenderer.removeListener('devcore:transcript', handler)
+    },
+    onStatus: (cb: (p: { state: 'listening' | 'thinking' | 'paused' | 'idle'; latencyMs: number }) => void): (() => void) => {
+      const handler = (_e: unknown, p: { state: 'listening' | 'thinking' | 'paused' | 'idle'; latencyMs: number }) => cb(p)
+      ipcRenderer.on('devcore:status', handler)
+      return () => ipcRenderer.removeListener('devcore:status', handler)
+    },
+    onError: (cb: (p: { code: string; message: string }) => void): (() => void) => {
+      const handler = (_e: unknown, p: { code: string; message: string }) => cb(p)
+      ipcRenderer.on('devcore:error', handler)
+      return () => ipcRenderer.removeListener('devcore:error', handler)
+    },
     removeAllListeners: () => {
       ;['devcore:suggestion','devcore:transcript','devcore:status','devcore:error']
         .forEach(ch => ipcRenderer.removeAllListeners(ch))
