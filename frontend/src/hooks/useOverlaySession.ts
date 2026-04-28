@@ -44,7 +44,7 @@ export function useOverlaySession() {
     pauseSession:   () => window.electronAPI?.devcore.pauseSession(),
     endSession:     () => window.electronAPI?.devcore.endSession(),
     enableInteract: () => window.electronAPI?.devcore.enableInteract(),
-    manualAsk: (text: string, mode: 'hints' | 'solve', language?: string) =>
+    manualAsk: (text: string, mode: 'hints' | 'solve' | 'ultra', language?: string) =>
       window.electronAPI?.devcore.manualAsk({ text, mode, language }),
   }
 }
