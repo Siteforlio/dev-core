@@ -10,6 +10,7 @@ import CampaignForm from '../components/job-hunter/CampaignForm'
 import CampaignProfileBuilder from '../components/job-hunter/CampaignProfileBuilder'
 import CampaignDashboard from '../components/job-hunter/CampaignDashboard'
 import GlobalIntegrationsPanel from '../components/job-hunter/GlobalIntegrationsPanel'
+import { SessionSetup } from '../components/devcore/SessionSetup'
 import type { Campaign } from '../types/jobHunter'
 
 type Module = 'interview' | 'job-hunter' | 'settings'
@@ -22,6 +23,7 @@ export default function Dashboard() {
   const [activeModule, setActiveModule] = useState<Module>('interview')
   const [interviewStarting, setInterviewStarting] = useState(false)
   const [interviewError, setInterviewError] = useState('')
+  const [showSessionSetup, setShowSessionSetup] = useState(false)
 
   const {
     activeView,
@@ -134,9 +136,21 @@ export default function Dashboard() {
                   <span className="text-sm">Generating your interview session…</span>
                 </div>
               ) : (
-                <div className="flex flex-col items-center gap-2">
+                <div className="flex flex-col items-center gap-6">
                   {interviewError && <p className="text-red-400 text-sm">{interviewError}</p>}
                   <CompanySelector onSelect={handleInterviewSelect} />
+                  <div className="flex items-center gap-3 w-full max-w-sm">
+                    <div className="flex-1 h-px bg-gray-800" />
+                    <span className="text-xs text-gray-600 font-mono uppercase tracking-widest">or</span>
+                    <div className="flex-1 h-px bg-gray-800" />
+                  </div>
+                  <button
+                    onClick={() => setShowSessionSetup(true)}
+                    className="flex items-center gap-2 px-6 py-2.5 rounded-lg bg-violet-500/10 border border-violet-400/20 text-violet-400 text-sm font-semibold tracking-wide hover:bg-violet-500/20 hover:border-violet-400/40 transition-all"
+                  >
+                    <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+                    Start DevCore Session
+                  </button>
                 </div>
               )}
             </div>
@@ -179,6 +193,7 @@ export default function Dashboard() {
           )}
         </main>
       </div>
+      {showSessionSetup && <SessionSetup onClose={() => setShowSessionSetup(false)} />}
     </div>
   )
 }

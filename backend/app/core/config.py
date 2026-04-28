@@ -23,5 +23,8 @@ class Settings(BaseSettings):
     celery_broker_url: str = "redis://localhost:6379/1"
     celery_result_backend: str = "redis://localhost:6379/2"
     playwright_max_concurrency: int = 4
+    judge0_api_key: str = ""
+    serp_api_key: str = ""
+    devcore_file_index_path: str = "~/.devcore/file_index"
 
 settings = Settings()
