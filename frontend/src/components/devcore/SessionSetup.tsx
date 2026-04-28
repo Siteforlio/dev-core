@@ -20,6 +20,7 @@ export function SessionSetup({ onClose }: { onClose: () => void }) {
   const [description, setDescription] = useState('')
   const [files, setFiles] = useState<string[]>([])
   const [jobs, setJobs] = useState<AppliedJob[]>([])
+  const [starting, setStarting] = useState(false)
   const { startSession } = useOverlaySession()
   const { setSessionId, setState } = useOverlayStore()
 
@@ -31,7 +32,10 @@ export function SessionSetup({ onClose }: { onClose: () => void }) {
       })
     }
     load()
-      .then(r => r.json())
+      .then(r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        return r.json()
+      })
       .then(json => setJobs((json.data ?? []).map((a: any) => ({
         id: a.id,
         title: a.job_title,
@@ -46,19 +50,25 @@ export function SessionSetup({ onClose }: { onClose: () => void }) {
   const selectedJobData = jobs.find(j => j.id === selectedJob)
 
   const handleStart = async () => {
-    const ctx: SessionContext = {
-      jobTitle:   tab === 'job' ? selectedJobData?.title ?? '' : '',
-      company:    tab === 'job' ? selectedJobData?.company ?? '' : '',
-      resumeText: tab === 'job' ? selectedJobData?.resumeText ?? '' : '',
-      jdText:     tab === 'job' ? selectedJobData?.jdText ?? '' : description,
-      files,
+    if (starting) return
+    setStarting(true)
+    try {
+      const ctx: SessionContext = {
+        jobTitle:   tab === 'job' ? selectedJobData?.title ?? '' : '',
+        company:    tab === 'job' ? selectedJobData?.company ?? '' : '',
+        resumeText: tab === 'job' ? selectedJobData?.resumeText ?? '' : '',
+        jdText:     tab === 'job' ? selectedJobData?.jdText ?? '' : description,
+        files,
+      }
+      const token: string = await window.electronAPI?.getAccessToken?.() ?? ''
+      const id = crypto.randomUUID()
+      setSessionId(id)
+      setState('listening')
+      await startSession({ sessionId: id, context: ctx, audioSource: 'both', token })
+      onClose()
+    } finally {
+      setStarting(false)
     }
-    const token: string = await window.electronAPI?.getAccessToken?.() ?? ''
-    const id = crypto.randomUUID()
-    setSessionId(id)
-    setState('listening')
-    await startSession({ sessionId: id, context: ctx, audioSource: 'both', token })
-    onClose()
   }
 
   return (
@@ -146,10 +156,11 @@ export function SessionSetup({ onClose }: { onClose: () => void }) {
           <span className="font-mono text-[9px] text-white/20">Ctrl+Shift+Space to toggle overlay</span>
           <button
             onClick={handleStart}
-            className="flex items-center gap-2 px-5 py-2 rounded-lg bg-violet-400 text-[#0a0014] font-display text-[11px] font-bold tracking-[0.1em] shadow-[0_0_20px_rgba(167,139,250,0.2)] hover:brightness-110 transition-all"
+            disabled={starting}
+            className="flex items-center gap-2 px-5 py-2 rounded-lg bg-violet-400 text-[#0a0014] font-display text-[11px] font-bold tracking-[0.1em] shadow-[0_0_20px_rgba(167,139,250,0.2)] hover:brightness-110 disabled:opacity-60 disabled:cursor-not-allowed transition-all"
           >
             <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
-            Start Session
+            {starting ? 'Starting…' : 'Start Session'}
           </button>
         </div>
       </div>
