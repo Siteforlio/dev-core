@@ -11,8 +11,9 @@ TRANSCRIPT_TTL = 4 * 3600  # 14400 seconds
 
 @pytest.mark.asyncio
 async def test_push_transcript_stores_in_redis():
+    """TTL is set only when the key is new (rpush returns 1) — not on every push."""
     redis = AsyncMock()
-    redis.rpush = AsyncMock()
+    redis.rpush = AsyncMock(return_value=1)  # new key — length 1
     redis.ltrim = AsyncMock()
     redis.expire = AsyncMock()
     cm = ContextManager(redis=redis, session_id=SESSION_ID)
@@ -21,6 +22,19 @@ async def test_push_transcript_stores_in_redis():
     redis.rpush.assert_called_once_with(TRANSCRIPT_KEY, entry.model_dump_json())
     redis.ltrim.assert_called_once_with(TRANSCRIPT_KEY, -20, -1)
     redis.expire.assert_called_once_with(TRANSCRIPT_KEY, TRANSCRIPT_TTL)
+
+
+@pytest.mark.asyncio
+async def test_push_transcript_does_not_reset_ttl_on_subsequent_pushes():
+    """TTL must NOT be reset on every push — only on key creation."""
+    redis = AsyncMock()
+    redis.rpush = AsyncMock(return_value=5)  # existing key — length > 1
+    redis.ltrim = AsyncMock()
+    redis.expire = AsyncMock()
+    cm = ContextManager(redis=redis, session_id=SESSION_ID)
+    entry = TranscriptEntry(speaker="user", text="Second push.", seq=2)
+    await cm.push_transcript(entry)
+    redis.expire.assert_not_called()
 
 
 @pytest.mark.asyncio

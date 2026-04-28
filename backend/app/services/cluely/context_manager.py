@@ -14,9 +14,11 @@ class ContextManager:
         self._state_key = f"cluely:session:{session_id}:state"
 
     async def push_transcript(self, entry: TranscriptEntry) -> None:
-        await self._r.rpush(self._transcript_key, entry.model_dump_json())
+        length = await self._r.rpush(self._transcript_key, entry.model_dump_json())
         await self._r.ltrim(self._transcript_key, -20, -1)  # keep last 20
-        await self._r.expire(self._transcript_key, TRANSCRIPT_TTL)
+        if length == 1:
+            # Set TTL once on key creation; don't reset on every push.
+            await self._r.expire(self._transcript_key, TRANSCRIPT_TTL)
 
     async def get_window(self, n: int = 10) -> list[TranscriptEntry]:
         raw = await self._r.lrange(self._transcript_key, -n, -1)

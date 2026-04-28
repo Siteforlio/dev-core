@@ -1,8 +1,28 @@
-import asyncio, json, os, logging
+import asyncio, json, os, logging, threading
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
-CHUNK_SIZE = 400  # characters
+CHUNK_SIZE = 400          # characters per chunk
+SIMILARITY_THRESHOLD = 0.7  # minimum cosine similarity to include a chunk
+MAX_CHUNKS = 2            # never return more than 2 chunks — keeps prompt tokens lean
+
+# ---------------------------------------------------------------------------
+# Global singleton for the embedding model — same pattern as Whisper in
+# audio_service.py (ARCHITECTURE.md §4.5).  Prevents 500ms+ reload penalty
+# when RagService is re-instantiated across sessions.
+# ---------------------------------------------------------------------------
+_embedding_model = None
+_embedding_lock = threading.Lock()
+
+
+def _get_model():
+    global _embedding_model
+    if _embedding_model is None:
+        with _embedding_lock:
+            if _embedding_model is None:
+                from sentence_transformers import SentenceTransformer
+                _embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+    return _embedding_model
 
 
 class RagService:
@@ -12,13 +32,6 @@ class RagService:
         self._meta_path = self._index_dir / "index_meta.json"
         self._chunks: list[str] = []
         self._embeddings = None
-        self._model = None
-
-    def _get_model(self):
-        if self._model is None:
-            from sentence_transformers import SentenceTransformer
-            self._model = SentenceTransformer("all-MiniLM-L6-v2")
-        return self._model
 
     def _chunk_text(self, text: str) -> list[str]:
         return [text[i:i+CHUNK_SIZE] for i in range(0, len(text), CHUNK_SIZE) if text[i:i+CHUNK_SIZE].strip()]
@@ -59,22 +72,21 @@ class RagService:
                     mtime = os.path.getmtime(fpath)
                     new_meta[fpath] = mtime
                     if meta.get(fpath) == mtime and fpath in chunk_cache:
-                        new_chunk_cache[fpath] = chunk_cache[fpath]  # carry forward
+                        new_chunk_cache[fpath] = chunk_cache[fpath]
                     else:
                         text = self._read_file(fpath)
                         new_chunk_cache[fpath] = self._chunk_text(text)
                         changed = True
 
-        # Check for removed files
         if set(new_meta.keys()) != set(meta.keys()):
             changed = True
 
         all_chunks = [c for chunks in new_chunk_cache.values() for c in chunks]
 
         if not changed and self._embeddings is not None:
-            return  # nothing changed, embeddings still valid
+            return
 
-        model = self._get_model()
+        model = _get_model()
         self._chunks = all_chunks
         self._embeddings = model.encode(all_chunks, convert_to_numpy=True, normalize_embeddings=True) if all_chunks else None
         self._meta_path.write_text(json.dumps(new_meta))
@@ -87,9 +99,11 @@ class RagService:
         return await asyncio.to_thread(self._retrieve_sync, query, k)
 
     def _retrieve_sync(self, query: str, k: int) -> list[str]:
-        model = self._get_model()
+        model = _get_model()
         q_emb = model.encode([query], convert_to_numpy=True, normalize_embeddings=True)
         scores = (self._embeddings @ q_emb.T).squeeze()
-        top_k = int(min(k, len(self._chunks)))
-        indices = scores.argsort()[-top_k:][::-1]
-        return [self._chunks[i] for i in indices]
+        # Apply similarity threshold and cap at MAX_CHUNKS — keeps prompt lean
+        # and avoids injecting low-relevance noise into the LLM context.
+        cap = min(k, MAX_CHUNKS, len(self._chunks))
+        indices = scores.argsort()[-cap:][::-1]
+        return [self._chunks[i] for i in indices if scores[i] >= SIMILARITY_THRESHOLD]

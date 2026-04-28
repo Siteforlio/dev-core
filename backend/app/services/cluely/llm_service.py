@@ -49,17 +49,61 @@ class LLMService:
             if chunk.text:
                 yield chunk.text
 
-    async def manual_ask(self, text: str, mode: str, context: dict, rag_chunks: list[str] | None = None) -> str:
+    async def stream_manual_ask(
+        self,
+        text: str,
+        mode: str,
+        context: dict,
+        rag_chunks: list[str] | None = None,
+    ) -> AsyncGenerator[str, None]:
+        """Stream a manual ask response token-by-token.
+
+        Yields string deltas so the caller can forward them to the WebSocket
+        without waiting for the full response.  Ultra mode falls back to
+        _ask_claude which is non-streaming (Claude SDK doesn't change here).
+        """
         if rag_chunks is None:
             rag_chunks = []
         rag_ctx = "\n".join(rag_chunks)
         system = self._build_system_prompt(context)
 
         if mode == "ultra":
-            # Ultra mode: Claude Sonnet with web search enrichment
+            # Ultra mode: Claude Sonnet with optional web search enrichment.
+            # Non-streaming — yield the full response as one chunk.
+            result = await self._ask_claude(system=system, user=text, rag_ctx=rag_ctx)
+            yield result
+            return
+
+        if mode == "hints":
+            prompt = (
+                f"{system}\n\nProvide hints and approach only (no full solution) for: {text}"
+                f"\n\nRelevant context:\n{rag_ctx}"
+            )
+        else:  # solve
+            prompt = (
+                f"{system}\n\nWrite a complete, clean solution for: {text}"
+                f"\n\nRelevant context:\n{rag_ctx}"
+            )
+
+        try:
+            async for delta in self._stream_gemini(prompt):
+                yield delta
+        except Exception as e:
+            if "429" in str(e) or "quota" in str(e).lower():
+                raise LLMRateLimitedError() from e
+            raise
+
+    async def manual_ask(self, text: str, mode: str, context: dict, rag_chunks: list[str] | None = None) -> str:
+        """Non-streaming manual ask — kept for code_runner integration which needs
+        the full solution text before Judge0 submission."""
+        if rag_chunks is None:
+            rag_chunks = []
+        rag_ctx = "\n".join(rag_chunks)
+        system = self._build_system_prompt(context)
+
+        if mode == "ultra":
             return await self._ask_claude(system=system, user=text, rag_ctx=rag_ctx)
 
-        # Default (hints / solve): Gemini with RAG context
         if mode == "hints":
             prompt = f"{system}\n\nProvide hints and approach only (no full solution) for: {text}\n\nRelevant context:\n{rag_ctx}"
         else:
@@ -72,7 +116,6 @@ class LLMService:
         if self._claude is None:
             self._claude = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
 
-        # Enrich with web search when query looks like it needs current info
         search_results = []
         if any(kw in user.lower() for kw in ["latest", "current", "docs", "documentation", "api"]):
             search_results = await self._search.search(user[:200])
@@ -81,7 +124,7 @@ class LLMService:
         if rag_ctx:
             full_user += f"\n\nRelevant context:\n{rag_ctx}"
         if search_results:
-            full_user += f"\n\nWeb search results:\n" + "\n".join(search_results)
+            full_user += "\n\nWeb search results:\n" + "\n".join(search_results)
 
         msg = await self._claude.messages.create(
             model="claude-sonnet-4-6",
