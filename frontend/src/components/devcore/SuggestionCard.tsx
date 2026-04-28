@@ -1,11 +1,13 @@
 import React, { useState } from 'react'
 import { useOverlayStore } from '../../store/overlayStore'
 import { AudioSourcePicker } from './AudioSourcePicker'
-import { useOverlaySession } from '../../hooks/useOverlaySession'
 
 export function SuggestionCard() {
   const { suggestion, latencyMs, transcriptOpen, setTranscriptOpen } = useOverlayStore()
-  const { pauseSession, endSession, manualAsk } = useOverlaySession()
+  const pauseSession = () => window.electronAPI?.devcore?.pauseSession?.()
+  const endSession   = () => window.electronAPI?.devcore?.endSession?.()
+  const manualAsk    = (text: string, mode: 'hints' | 'solve', language?: string) =>
+    window.electronAPI?.devcore?.manualAsk?.({ text, mode, language })
   const [ask, setAsk] = useState('')
 
   const handleAsk = (e: React.KeyboardEvent) => {

@@ -1,5 +1,6 @@
-import { useEffect, useRef } from 'react'
+import { useEffect } from 'react'
 import { useOverlayStore } from '../store/overlayStore'
+import type { OverlayState, SessionContext } from '../types/devcore'
 
 declare global {
   interface Window {
@@ -9,11 +10,8 @@ declare global {
 
 export function useOverlaySession() {
   const store = useOverlayStore()
-  const mounted = useRef(false)
 
   useEffect(() => {
-    if (mounted.current) return
-    mounted.current = true
     const api = window.electronAPI?.devcore
     if (!api) return
 
@@ -23,7 +21,7 @@ export function useOverlaySession() {
     const removeTranscript = api.onTranscript(({ speaker, text, seq }: { speaker: 'interviewer' | 'user'; text: string; seq: number }) => {
       store.addTranscript({ speaker, text, seq })
     })
-    const removeStatus = api.onStatus(({ state, latencyMs }: { state: any; latencyMs: number }) => {
+    const removeStatus = api.onStatus(({ state, latencyMs }: { state: OverlayState; latencyMs: number }) => {
       store.setState(state)
       store.setLatency(latencyMs)
       if (state === 'thinking') store.clearSuggestion()
@@ -41,7 +39,8 @@ export function useOverlaySession() {
   }, [])
 
   return {
-    startSession:   (payload: object) => window.electronAPI?.devcore.startSession(payload),
+    startSession:   (payload: { sessionId: string; context: SessionContext; audioSource: string; token: string }) =>
+      window.electronAPI?.devcore.startSession(payload),
     pauseSession:   () => window.electronAPI?.devcore.pauseSession(),
     endSession:     () => window.electronAPI?.devcore.endSession(),
     enableInteract: () => window.electronAPI?.devcore.enableInteract(),

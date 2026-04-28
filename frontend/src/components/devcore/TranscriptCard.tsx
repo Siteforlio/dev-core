@@ -12,8 +12,8 @@ export function TranscriptCard() {
         </button>
       </div>
       <div className="px-3 py-2.5 flex flex-col gap-2 max-h-[280px] overflow-y-auto">
-        {transcript.map((e, i) => (
-          <div key={i} className="flex gap-2 items-start">
+        {transcript.map((e) => (
+          <div key={e.seq} className="flex gap-2 items-start">
             <span className={`font-mono text-[8px] w-[26px] flex-shrink-0 pt-0.5 ${e.speaker === 'user' ? 'text-violet-400' : 'text-white/30'}`}>
               {e.speaker === 'user' ? 'you' : 'them'}
             </span>
