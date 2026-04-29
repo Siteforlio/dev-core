@@ -25,6 +25,25 @@ async function attemptRefresh(): Promise<string | null> {
   }
 }
 
+/** Returns a valid access token, refreshing if the stored one is expired. */
+export async function getFreshToken(): Promise<string | null> {
+  const { accessToken, refreshToken } = useAuthStore.getState()
+  if (!accessToken) return null
+
+  // Check expiry without calling the backend — decode the JWT payload locally.
+  try {
+    const payload = JSON.parse(atob(accessToken.split('.')[1]))
+    const expiresAt = payload.exp * 1000  // ms
+    if (Date.now() < expiresAt - 30_000) return accessToken  // still valid (30s buffer)
+  } catch {
+    // malformed token — fall through to refresh
+  }
+
+  if (!refreshToken) { useAuthStore.getState().clearAuth(); return null }
+  if (!refreshing) refreshing = attemptRefresh().finally(() => { refreshing = null })
+  return refreshing
+}
+
 export async function apiFetch(input: string, init: RequestInit = {}): Promise<Response> {
   const { accessToken } = useAuthStore.getState()
 

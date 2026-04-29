@@ -16,6 +16,7 @@ from app.api.v1.emotion import router as emotion_router
 from app.api.v1.integrations import router as integrations_router
 from app.api.v1.job_hunter.campaigns import router as jh_campaigns_router
 from app.api.v1.job_hunter.applications import router as jh_applications_router
+from app.api.v1.job_hunter.overlay import router as jh_overlay_router
 from app.api.v1.job_hunter.ws import router as jh_ws_router
 from app.api.v1.cluely.ws import router as cluely_ws_router
 from app.graph.seed import run_seed
@@ -52,6 +53,7 @@ app.include_router(emotion_router, prefix="/api/v1")
 app.include_router(integrations_router, prefix="/api/v1")
 app.include_router(jh_campaigns_router, prefix="/api/v1")
 app.include_router(jh_applications_router, prefix="/api/v1")
+app.include_router(jh_overlay_router, prefix="/api/v1")
 app.include_router(jh_ws_router, prefix="/api/v1")
 app.include_router(cluely_ws_router, prefix="/api/v1")
 

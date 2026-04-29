@@ -5,7 +5,6 @@ import Login from './pages/Login'
 import Onboarding from './pages/Onboarding'
 import Dashboard from './pages/Dashboard'
 import InterviewSession from './components/interview/InterviewSession'
-
 export default function App() {
   const [showRegister, setShowRegister] = useState(false)
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated)

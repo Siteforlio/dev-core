@@ -14,4 +14,4 @@ export interface SessionContext {
   files: string[]
 }
 
-export type OverlayState = 'idle' | 'listening' | 'thinking' | 'paused'
+export type OverlayState = 'idle' | 'listening' | 'thinking' | 'paused' | 'reconnecting'

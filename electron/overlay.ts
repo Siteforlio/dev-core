@@ -1,25 +1,32 @@
 import { BrowserWindow, globalShortcut, app, screen } from 'electron'
 import path from 'path'
-import ffi = require('ffi-napi')
+import koffi from 'koffi'
 import Store = require('electron-store')
 
 const store = new Store<{ overlayPosition: string }>()
 
-const user32 = new ffi.Library('user32', {
-  SetWindowDisplayAffinity: ['bool', ['pointer', 'uint32']]
-})
+const user32 = koffi.load('user32.dll')
+// HWND is an opaque pointer-sized integer; declare as intptr_t so we can pass the numeric value
+const SetWindowDisplayAffinity = user32.func('bool SetWindowDisplayAffinity(intptr_t hWnd, uint32 dwAffinity)')
 
 const POSITIONS: Record<string, { x: () => number; y: () => number }> = {
-  'top-center':    { x: () => Math.round((screen.getPrimaryDisplay().workAreaSize.width - 500) / 2), y: () => 8 },
-  'top-left':      { x: () => 8,  y: () => 8 },
-  'top-right':     { x: () => screen.getPrimaryDisplay().workAreaSize.width - 508, y: () => 8 },
-  'bottom-center': { x: () => Math.round((screen.getPrimaryDisplay().workAreaSize.width - 500) / 2), y: () => screen.getPrimaryDisplay().workAreaSize.height - 120 },
-  'bottom-right':  { x: () => screen.getPrimaryDisplay().workAreaSize.width - 508, y: () => screen.getPrimaryDisplay().workAreaSize.height - 120 },
+  'top-center':    { x: () => Math.round(screen.getPrimaryDisplay().workAreaSize.width * 0.075), y: () => 0 },
+  'top-left':      { x: () => 0, y: () => 0 },
+  'top-right':     { x: () => Math.round(screen.getPrimaryDisplay().workAreaSize.width * 0.15), y: () => 0 },
+  'bottom-center': { x: () => Math.round(screen.getPrimaryDisplay().workAreaSize.width * 0.075), y: () => Math.round(screen.getPrimaryDisplay().workAreaSize.height * 0.15) },
+  'bottom-right':  { x: () => Math.round(screen.getPrimaryDisplay().workAreaSize.width * 0.15), y: () => Math.round(screen.getPrimaryDisplay().workAreaSize.height * 0.15) },
 }
 const POSITION_ORDER = ['top-center', 'top-left', 'top-right', 'bottom-center', 'bottom-right']
 
 let overlayWin: BrowserWindow | null = null
 let currentPositionIndex = 0
+
+// Content bounds sent from the renderer — used by the polling loop
+// to decide whether the cursor is over the actual UI (not just the transparent window).
+let _contentBounds = { x: 0, y: 0, width: 0, height: 0 }
+const HOVER_PADDING = 8   // px extra hit-area so near-edge clicks aren't missed
+let _pollTimer: ReturnType<typeof setInterval> | null = null
+let _isInteractMode = false
 
 export function createOverlayWindow(): BrowserWindow {
   if (overlayWin && !overlayWin.isDestroyed()) return overlayWin
@@ -28,9 +35,10 @@ export function createOverlayWindow(): BrowserWindow {
   currentPositionIndex = POSITION_ORDER.indexOf(savedPos) !== -1 ? POSITION_ORDER.indexOf(savedPos) : 0
   const pos = POSITIONS[POSITION_ORDER[currentPositionIndex]]
 
+  const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize
   overlayWin = new BrowserWindow({
-    width: 500,
-    height: 200,
+    width: Math.round(sw * 0.85),
+    height: Math.round(sh * 0.85),
     x: pos.x(),
     y: pos.y(),
     transparent: true,
@@ -41,27 +49,67 @@ export function createOverlayWindow(): BrowserWindow {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: false,
       preload: path.join(__dirname, 'preload.js'),
     },
   })
 
   overlayWin.setAlwaysOnTop(true, 'screen-saver')
   overlayWin.setIgnoreMouseEvents(true, { forward: true })
+  _startCursorPoll(overlayWin)
 
   // Apply WDA_EXCLUDEFROMCAPTURE — invisible to all screen capture on Windows 11
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const hwnd = overlayWin.getNativeWindowHandle() as any
-  const WDA_EXCLUDEFROMCAPTURE = 0x00000011
-  user32.SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE)
-
-  if (process.env.NODE_ENV === 'development') {
-    overlayWin.loadURL('http://localhost:5173/overlay')
-  } else {
-    overlayWin.loadFile(path.join(__dirname, '../frontend/dist/index.html'), { hash: '/overlay' })
+  try {
+    const hwndBuf = overlayWin.getNativeWindowHandle()
+    // getNativeWindowHandle() returns a Buffer containing the HWND bytes; read it as a pointer-sized integer
+    const hwnd = process.arch === 'x64' ? Number(hwndBuf.readBigInt64LE(0)) : hwndBuf.readInt32LE(0)
+    const WDA_EXCLUDEFROMCAPTURE = 0x00000011
+    SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE)
+  } catch (e) {
+    console.warn('[devcore-overlay] SetWindowDisplayAffinity failed (non-fatal):', e)
   }
 
+  if (process.env.NODE_ENV === 'development') {
+    overlayWin.loadURL('http://localhost:5173/overlay.html')
+  } else {
+    overlayWin.loadFile(path.join(__dirname, '../frontend/dist/overlay.html'))
+  }
+
+  overlayWin.webContents.openDevTools({ mode: 'detach' })
   registerHotkeys(overlayWin)
   return overlayWin
+}
+
+function _startCursorPoll(win: BrowserWindow) {
+  if (_pollTimer) clearInterval(_pollTimer)
+  _pollTimer = setInterval(() => {
+    if (!win || win.isDestroyed() || !win.isVisible()) return
+    const cursor   = screen.getCursorScreenPoint()
+    const [wx, wy] = win.getPosition()
+    // Convert screen coords → window-local coords
+    const lx = cursor.x - wx
+    const ly = cursor.y - wy
+    const b  = _contentBounds
+    const isOver = b.width > 0 && (
+      lx >= b.x - HOVER_PADDING && lx <= b.x + b.width  + HOVER_PADDING &&
+      ly >= b.y - HOVER_PADDING && ly <= b.y + b.height + HOVER_PADDING
+    )
+    if (isOver && !_isInteractMode) {
+      _isInteractMode = true
+      win.setIgnoreMouseEvents(false)
+      win.setFocusable(true)
+      win.focus()
+    } else if (!isOver && _isInteractMode) {
+      _isInteractMode = false
+      win.setIgnoreMouseEvents(true, { forward: true })
+      win.setFocusable(false)
+    }
+  }, 30)  // 30 ms ≈ 33 fps — imperceptible lag, < 1% CPU
+}
+
+// Called from main.ts IPC when the renderer sends updated content bounds.
+export function setOverlayContentBounds(bounds: { x: number; y: number; width: number; height: number }) {
+  _contentBounds = bounds
 }
 
 function registerHotkeys(win: BrowserWindow) {
@@ -99,6 +147,21 @@ function registerHotkeys(win: BrowserWindow) {
     win.webContents.send('devcore:status', { state: 'thinking', latencyMs: 0 })
   })
   if (!registeredR) console.warn('[devcore-overlay] Failed to register hotkey: CommandOrControl+Shift+R')
+
+  // Start session (Ctrl+Shift+Enter)
+  const registeredStart = globalShortcut.register('CommandOrControl+Shift+Return', () => {
+    win.webContents.send('devcore:hotkey', { action: 'start' })
+  })
+  if (!registeredStart) console.warn('[devcore-overlay] Failed to register hotkey: CommandOrControl+Shift+Return')
+
+  // Focus ask input (Ctrl+Shift+/)
+  const registeredAsk = globalShortcut.register('CommandOrControl+Shift+/', () => {
+    win.setIgnoreMouseEvents(false)
+    win.setFocusable(true)
+    win.focus()
+    win.webContents.send('devcore:hotkey', { action: 'ask' })
+  })
+  if (!registeredAsk) console.warn('[devcore-overlay] Failed to register hotkey: CommandOrControl+Shift+/')
 
   app.on('will-quit', () => globalShortcut.unregisterAll())
 }

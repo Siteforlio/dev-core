@@ -26,5 +26,6 @@ class Settings(BaseSettings):
     judge0_api_key: str = ""
     serp_api_key: str = ""
     devcore_file_index_path: str = "~/.devcore/file_index"
+    groq_api_key: str = ""
 
 settings = Settings()

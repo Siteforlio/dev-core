@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { useOverlaySession } from '../../hooks/useOverlaySession'
 import { useOverlayStore } from '../../store/overlayStore'
+import { useAuthStore } from '../../store/authStore'
 import type { SessionContext } from '../../types/devcore'
 
 type SourceTab = 'job' | 'calendar' | 'describe'
@@ -21,31 +22,52 @@ export function SessionSetup({ onClose }: { onClose: () => void }) {
   const [files, setFiles] = useState<string[]>([])
   const [jobs, setJobs] = useState<AppliedJob[]>([])
   const [starting, setStarting] = useState(false)
+  const [loadingContext, setLoadingContext] = useState(false)
   const { startSession } = useOverlaySession()
-  const { setSessionId, setState } = useOverlayStore()
+  const token = useAuthStore((s) => s.accessToken)
+  const audioSource  = useOverlayStore((s) => s.audioSource)
+  const micDeviceId  = useOverlayStore((s) => s.micDeviceId)
+  const sysDeviceId  = useOverlayStore((s) => s.sysDeviceId)
 
   useEffect(() => {
-    const load = async () => {
-      const token: string = await window.electronAPI?.getAccessToken?.() ?? ''
-      return fetch('/api/v1/job-hunter/applications?status=interview,screening&limit=20', {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-    }
-    load()
+    if (!token) return
+    fetch('/api/v1/job-hunter/applications?status=interview,screening&limit=20', {
+      headers: { Authorization: `Bearer ${token}` },
+    })
       .then(r => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`)
         return r.json()
       })
       .then(json => setJobs((json.data ?? []).map((a: any) => ({
-        id: a.id,
+        id: a.application_id,
         title: a.job_title,
-        company: a.company_name,
+        company: a.company,
         status: a.status,
-        resumeText: a.resume_text ?? '',
-        jdText: a.jd_text ?? '',
+        resumeText: '',
+        jdText: '',
       }))))
       .catch(() => setJobs([]))
-  }, [])
+  }, [token])
+
+  const selectJob = async (id: string) => {
+    setSelectedJob(id)
+    if (!token) return
+    setLoadingContext(true)
+    try {
+      const r = await fetch(`/api/v1/job-hunter/applications/${id}/context`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!r.ok) return
+      const json = await r.json()
+      setJobs(prev => prev.map(j =>
+        j.id === id ? { ...j, resumeText: json.resume_text ?? '', jdText: json.jd_text ?? '' } : j
+      ))
+    } catch {
+      // context fetch failure is non-fatal — session will run without resume/JD text
+    } finally {
+      setLoadingContext(false)
+    }
+  }
 
   const selectedJobData = jobs.find(j => j.id === selectedJob)
 
@@ -60,12 +82,13 @@ export function SessionSetup({ onClose }: { onClose: () => void }) {
         jdText:     tab === 'job' ? selectedJobData?.jdText ?? '' : description,
         files,
       }
-      const token: string = await window.electronAPI?.getAccessToken?.() ?? ''
       const id = crypto.randomUUID()
-      setSessionId(id)
-      setState('listening')
-      await startSession({ sessionId: id, context: ctx, audioSource: 'both', token })
+      await startSession({ sessionId: id, context: ctx, audioSource, micDeviceId, sysDeviceId, token: token ?? '' })
+      // State + sessionId are driven by the backend's status frame via IPC,
+      // not set optimistically here — the overlay store lives in the overlay window.
       onClose()
+    } catch (err) {
+      console.error('[devcore] startSession failed:', err)
     } finally {
       setStarting(false)
     }
@@ -110,7 +133,7 @@ export function SessionSetup({ onClose }: { onClose: () => void }) {
               {jobs.map(job => (
                 <button
                   key={job.id}
-                  onClick={() => setSelectedJob(job.id)}
+                  onClick={() => selectJob(job.id)}
                   className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border text-left transition-all ${selectedJob === job.id ? 'border-violet-400/25 bg-violet-400/10' : 'border-white/[0.07] bg-white/[0.02] hover:bg-white/[0.04]'}`}
                 >
                   <div className="w-8 h-8 rounded-md bg-white/[0.06] border border-white/[0.07] flex items-center justify-center font-display text-[11px] font-bold text-white/50 flex-shrink-0">{job.company[0]}</div>
@@ -146,7 +169,9 @@ export function SessionSetup({ onClose }: { onClose: () => void }) {
             <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24" className="text-emerald-400 flex-shrink-0"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
             <p className="text-[11px] text-white/50">
               {selectedJobData
-                ? <><strong className="text-white/80">{selectedJobData.company} · {selectedJobData.title}</strong> — ready.</>
+                ? loadingContext
+                  ? <><strong className="text-white/80">{selectedJobData.company} · {selectedJobData.title}</strong> — loading context…</>
+                  : <><strong className="text-white/80">{selectedJobData.company} · {selectedJobData.title}</strong>{selectedJobData.jdText ? ' — JD + resume loaded.' : ' — ready.'}</>
                 : 'Select a context source to load session context.'}
             </p>
           </div>

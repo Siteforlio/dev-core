@@ -1,3 +1,4 @@
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&display=swap');
 @import "tailwindcss";
 
 *, *::before, *::after {
@@ -22,3 +23,7 @@ body {
   0%, 100% { transform: scaleY(1); }
   50%       { transform: scaleY(0.3); }
 }
+
+/* Hide all scrollbars across the overlay — content still scrolls */
+*::-webkit-scrollbar { display: none; }
+* { scrollbar-width: none; }

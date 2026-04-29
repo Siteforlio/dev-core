@@ -34,7 +34,7 @@
   "dependencies": {
     "@types/ws": "^8.18.1",
     "electron-store": "^8.2.0",
-    "ffi-napi": "^4.0.3",
+    "koffi": "^2.16.1",
     "naudiodon": "^2.3.6",
     "ws": "^8.20.0"
   }

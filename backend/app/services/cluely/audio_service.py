@@ -1,28 +1,29 @@
-import asyncio
+import io
 import struct
-import math
-import threading
-from typing import Literal
-import whisper
-import numpy as np
+import time
+import wave
 import logging
+from typing import Literal
+
+import numpy as np
+from groq import AsyncGroq
+
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-_whisper_model = None
-_whisper_lock = threading.Lock()
+MIN_SAMPLES = 1600    # 100 ms at 16 kHz — drop frames shorter than this
+SILENCE_RMS = 0.003   # below this → silent, skip API call (mic arrays produce low RMS)
 
-def _get_model():
-    global _whisper_model
-    if _whisper_model is None:
-        with _whisper_lock:
-            if _whisper_model is None:
-                _whisper_model = whisper.load_model("tiny")
-    return _whisper_model
+_HALLUCINATIONS = {
+    "", ".", "..", "...", " ", "you", "you.", "thank you", "thank you.",
+    "thanks.", "thanks for watching.", "bye.", "bye bye.", "goodbye.",
+    "ok.", "okay.", "and", "and.", "um", "um.", "uh", "uh.", "so", "so.",
+    "i", "i.", "the", "the.",
+}
 
 
 def parse_audio_frame(data: bytes) -> tuple[Literal["mic", "system"], int, bytes]:
-    """Parse 3-byte header: uint8 stream_id + uint16 big-endian seq. Returns (stream, seq, pcm)."""
     if len(data) < 3:
         raise ValueError("Frame too short")
     stream_id_byte, seq = struct.unpack_from('!BH', data, 0)
@@ -31,21 +32,85 @@ def parse_audio_frame(data: bytes) -> tuple[Literal["mic", "system"], int, bytes
     return stream, seq, pcm
 
 
-def detect_silence(pcm: bytes, threshold: float = 0.01, sample_rate: int = 16000) -> bool:
-    """True if the RMS of the PCM buffer is below threshold (normalized -1..1)."""
-    samples = struct.unpack('<' + 'h' * (len(pcm) // 2), pcm)
-    if not samples:
-        return True
-    rms = math.sqrt(sum(s * s for s in samples) / len(samples)) / 32768.0
-    return rms < threshold
+def _rms(pcm: bytes) -> float:
+    if len(pcm) < 2:
+        return 0.0
+    samples = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
+    return float(np.sqrt(np.mean(samples ** 2))) / 32768.0
+
+
+def detect_silence(pcm: bytes) -> bool:
+    """Return True if the PCM buffer is below the silence threshold."""
+    return _rms(pcm) < SILENCE_RMS
+
+
+def _pcm_to_wav(pcm: bytes, sample_rate: int = 16000) -> bytes:
+    """Wrap raw 16-bit mono PCM in a WAV container (in memory)."""
+    buf = io.BytesIO()
+    with wave.open(buf, 'wb') as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        wf.writeframes(pcm)
+    return buf.getvalue()
 
 
 class AudioService:
+    def __init__(self):
+        api_key = settings.groq_api_key
+        if not api_key:
+            logger.warning("[audio] GROQ_API_KEY not set — transcription disabled")
+            self._client = None
+        else:
+            self._client = AsyncGroq(api_key=api_key)
+
     async def transcribe(self, pcm: bytes, speaker: Literal["interviewer", "user"]) -> dict:
-        """Transcribe raw PCM16 mono 16kHz. Returns {speaker, text}. CPU-bound → thread."""
-        def _run():  # must be sync — asyncio.to_thread runs in a thread pool, not event loop
-            model = _get_model()
-            samples = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
-            result = model.transcribe(samples, language=None)
-            return {"speaker": speaker, "text": result["text"].strip()}
-        return await asyncio.to_thread(_run)
+        t_total = time.perf_counter()
+
+        if len(pcm) < MIN_SAMPLES * 2:
+            logger.debug("[audio] DROP short frame %d bytes | %s", len(pcm), speaker)
+            return {"speaker": speaker, "text": "", "timings": {}}
+
+        rms = _rms(pcm)
+        logger.info("[audio] frame %d bytes | rms=%.4f | %s", len(pcm), rms, speaker)
+        if rms < SILENCE_RMS:
+            return {"speaker": speaker, "text": "", "timings": {}}
+
+        if self._client is None:
+            return {"speaker": speaker, "text": "", "timings": {}}
+
+        try:
+            wav_bytes = _pcm_to_wav(pcm)
+            t_infer = time.perf_counter()
+            # Retry once on 429 — wait the suggested retry-after (default 3s)
+            for attempt in range(2):
+                try:
+                    result = await self._client.audio.transcriptions.create(
+                        file=("audio.wav", wav_bytes, "audio/wav"),
+                        model="whisper-large-v3-turbo",
+                        language="en",
+                        response_format="text",
+                    )
+                    break
+                except Exception as e:
+                    if attempt == 0 and "429" in str(e):
+                        import asyncio as _aio
+                        logger.warning("[audio] 429 rate limit — waiting 4s then retrying")
+                        await _aio.sleep(4)
+                    else:
+                        raise
+            infer_ms = round((time.perf_counter() - t_infer) * 1000, 1)
+            text = result.strip() if isinstance(result, str) else ""
+        except Exception as e:
+            logger.error("[audio] Groq transcription error: %s", e)
+            return {"speaker": speaker, "text": "", "timings": {}}
+
+        if text.lower() in _HALLUCINATIONS:
+            logger.debug("[audio] hallucination filtered: %r", text)
+            text = ""
+
+        total_ms = round((time.perf_counter() - t_total) * 1000, 1)
+        logger.info("[audio] %s | rms=%.4f | infer=%.0fms | total=%.0fms | %r",
+                    speaker, rms, infer_ms, total_ms, text[:80])
+
+        return {"speaker": speaker, "text": text, "timings": {"infer_ms": infer_ms, "total_ms": total_ms}}
