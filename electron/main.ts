@@ -174,6 +174,7 @@ ipcMain.handle('devcore:mic:test', async (_e, payload: { deviceId?: number | nul
 
 ipcMain.handle('devcore:manual:ask', async (_e, payload: { text: string; mode: string; language?: string }) => {
   const activeWs = getActiveWs()
+  console.log(`[devcore] manual:ask received | text="${payload.text.slice(0, 40)}" | ws=${activeWs ? `readyState=${activeWs.readyState}` : 'null'}`)
   if (activeWs && activeWs.readyState === 1 /* WebSocket.OPEN */) {
     activeWs.send(JSON.stringify({
       type: 'manual_ask',
@@ -181,6 +182,9 @@ ipcMain.handle('devcore:manual:ask', async (_e, payload: { text: string; mode: s
       mode: payload.mode,
       language: payload.language ?? 'python',
     }))
+    console.log('[devcore] manual_ask sent to backend')
+  } else {
+    console.warn('[devcore] manual:ask — no active WS, message dropped')
   }
 })
 

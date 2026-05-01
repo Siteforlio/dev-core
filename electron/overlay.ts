@@ -50,6 +50,7 @@ export function createOverlayWindow(): BrowserWindow {
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: false,
+      backgroundThrottling: false,
       preload: path.join(__dirname, 'preload.js'),
     },
   })
@@ -162,6 +163,12 @@ function registerHotkeys(win: BrowserWindow) {
     win.webContents.send('devcore:hotkey', { action: 'ask' })
   })
   if (!registeredAsk) console.warn('[devcore-overlay] Failed to register hotkey: CommandOrControl+Shift+/')
+
+  // Trigger AI suggestion from recent transcript (Ctrl+Shift+G)
+  const registeredSuggest = globalShortcut.register('CommandOrControl+Shift+G', () => {
+    win.webContents.send('devcore:hotkey', { action: 'suggest' })
+  })
+  if (!registeredSuggest) console.warn('[devcore-overlay] Failed to register hotkey: CommandOrControl+Shift+G')
 
   app.on('will-quit', () => globalShortcut.unregisterAll())
 }

@@ -24,24 +24,15 @@ export function useOverlaySession() {
       }
     })
 
-    const removeSuggestion = api.onSuggestion(({ delta, done }: { delta: string; done: boolean }) => {
-      store.appendSuggestion(delta)
-    })
+    // onSuggestion and onStatus are handled in SuggestionCard to drive the chat UI
     const removeTranscript = api.onTranscript(({ speaker, text, seq }: { speaker: 'interviewer' | 'user'; text: string; seq: number }) => {
       store.addTranscript({ speaker, text, seq })
-    })
-    const removeStatus = api.onStatus(({ state, latencyMs }: { state: OverlayState; latencyMs: number }) => {
-      store.setState(state)
-      store.setLatency(latencyMs)
-      if (state === 'thinking') store.clearSuggestion()
     })
     const removeError = api.onError?.((p: { code: string; message: string }) => {
       store.setError(p)
     })
     return () => {
-      removeSuggestion?.()
       removeTranscript?.()
-      removeStatus?.()
       removeError?.()
     }
   }, [])
