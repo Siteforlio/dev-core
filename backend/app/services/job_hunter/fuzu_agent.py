@@ -1,12 +1,12 @@
 # backend/app/services/job_hunter/fuzu_agent.py
 """
-Fuzu Kenya job scraper using browser-use autonomous agent + Vertex Gemini.
+Fuzu Kenya job scraper using browser-use autonomous agent + DeepSeek.
 
 Gives the agent a plain-English objective and lets it navigate, dismiss
 popups, and extract job listings itself — no brittle CSS selectors.
 
 Requires:
-    VERTEX_API_KEY in environment (loaded from backend/.env)
+    DEEPSEEK_API_KEY in environment (loaded from backend/.env)
 """
 from __future__ import annotations
 
@@ -27,11 +27,9 @@ if _ENV_PATH.exists():
             _k, _, _v = _line.partition("=")
             os.environ.setdefault(_k.strip(), _v.strip())
 
-VERTEX_API_KEY = os.environ.get("VERTEX_API_KEY", "")
-_VERTEX_ENDPOINT = (
-    "https://aiplatform.googleapis.com/v1/publishers/google/models"
-    "/gemini-2.5-flash-lite:generateContent"
-)
+DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
+_DEEPSEEK_ENDPOINT = "https://api.deepseek.com/chat/completions"
+_DEEPSEEK_MODEL = "deepseek-chat"
 
 # ── Category map ──────────────────────────────────────────────────────────────
 _CATEGORY_MAP: dict[str, str] = {
@@ -61,14 +59,14 @@ _BASE_URL = "https://www.fuzu.com"
 T = TypeVar("T")
 
 
-# ── VertexGemini — browser-use BaseChatModel Protocol ────────────────────────
+# ── DeepSeekChat — browser-use BaseChatModel Protocol ────────────────────────
 @dataclass
-class VertexGemini:
+class DeepSeekChat:
     """
-    Calls the Vertex AI REST endpoint directly with an API key.
-    Implements the browser-use BaseChatModel Protocol (not LangChain's).
+    Calls the DeepSeek chat API (OpenAI-compatible).
+    Implements the browser-use BaseChatModel Protocol.
     """
-    model: str = "gemini-2.5-flash-lite"
+    model: str = _DEEPSEEK_MODEL
     api_key: str = ""
     temperature: float = 0.0
 
@@ -76,7 +74,7 @@ class VertexGemini:
 
     @property
     def provider(self) -> str:
-        return "google"
+        return "deepseek"
 
     @property
     def name(self) -> str:
@@ -86,36 +84,26 @@ class VertexGemini:
     def model_name(self) -> str:
         return self.model
 
-    def _convert_messages(self, messages: list) -> tuple[list[dict], str | None]:
+    def _convert_messages(self, messages: list) -> list[dict]:
         from browser_use.llm.messages import UserMessage, SystemMessage, AssistantMessage
 
-        contents: list[dict] = []
-        system_instruction: str | None = None
-
+        result: list[dict] = []
         for m in messages:
             if isinstance(m, SystemMessage):
-                system_instruction = m.text
+                result.append({"role": "system", "content": m.text})
             elif isinstance(m, UserMessage):
                 if isinstance(m.content, list):
-                    parts = []
-                    for part in m.content:
-                        if part.type == "text":
-                            parts.append({"text": part.text})
-                        elif part.type == "image_url":
-                            url = part.image_url.url
-                            if url.startswith("data:"):
-                                header, b64 = url.split(",", 1)
-                                mime = header.split(":")[1].split(";")[0]
-                                parts.append({
-                                    "inline_data": {"mime_type": mime, "data": b64}
-                                })
-                    contents.append({"role": "user", "parts": parts or [{"text": m.text}]})
+                    # Flatten multi-part — DeepSeek only supports text
+                    text = " ".join(
+                        part.text for part in m.content
+                        if hasattr(part, "text") and part.type == "text"
+                    )
+                    result.append({"role": "user", "content": text or m.text})
                 else:
-                    contents.append({"role": "user", "parts": [{"text": m.text}]})
+                    result.append({"role": "user", "content": m.text})
             elif isinstance(m, AssistantMessage):
-                contents.append({"role": "model", "parts": [{"text": m.text}]})
-
-        return contents, system_instruction
+                result.append({"role": "assistant", "content": m.text})
+        return result
 
     @overload
     async def ainvoke(self, messages: list, output_format: None = None, **kwargs: Any) -> Any: ...
@@ -126,39 +114,30 @@ class VertexGemini:
         import httpx
         from browser_use.llm.views import ChatInvokeCompletion
 
-        contents, system_instruction = self._convert_messages(messages)
-
-        payload: dict[str, Any] = {
-            "contents": contents,
-            "generationConfig": {
-                "temperature": self.temperature,
-                "thinkingConfig": {"thinkingBudget": 0},
-            },
+        msgs = self._convert_messages(messages)
+        body: dict[str, Any] = {
+            "model": self.model,
+            "messages": msgs,
+            "temperature": self.temperature,
+            "max_tokens": 4096,
+            "stream": False,
         }
-        if system_instruction:
-            payload["systemInstruction"] = {"parts": [{"text": system_instruction}]}
-
         if output_format is not None:
-            from browser_use.llm.schema import SchemaOptimizer
-            schema = SchemaOptimizer.create_optimized_json_schema(output_format)
-            payload["generationConfig"]["responseMimeType"] = "application/json"
-            payload["generationConfig"]["responseSchema"] = schema
+            body["response_format"] = {"type": "json_object"}
 
         async with httpx.AsyncClient(timeout=120.0) as client:
             response = await client.post(
-                _VERTEX_ENDPOINT,
-                params={"key": self.api_key},
-                json=payload,
+                _DEEPSEEK_ENDPOINT,
+                json=body,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
             )
         response.raise_for_status()
         data = response.json()
 
-        text = (
-            data.get("candidates", [{}])[0]
-            .get("content", {})
-            .get("parts", [{}])[0]
-            .get("text", "")
-        )
+        text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
 
         if output_format is not None:
             clean = text.strip()
@@ -205,8 +184,8 @@ async def scrape_fuzu_agent(search_term: str) -> list[dict]:
     Use browser-use + Vertex Gemini to autonomously scrape Fuzu Kenya.
     Falls back to [] on any error so callers are never broken.
     """
-    if not VERTEX_API_KEY:
-        print("[fuzu_agent] VERTEX_API_KEY not set", flush=True)
+    if not DEEPSEEK_API_KEY:
+        print("[fuzu_agent] DEEPSEEK_API_KEY not set", flush=True)
         return []
 
     try:
@@ -215,7 +194,7 @@ async def scrape_fuzu_agent(search_term: str) -> list[dict]:
         from browser_use.browser.profile import BrowserProfile
 
         target_url = _category_url(search_term)
-        llm = VertexGemini(api_key=VERTEX_API_KEY, temperature=0.0)
+        llm = DeepSeekChat(api_key=DEEPSEEK_API_KEY, temperature=0.0)
 
         task = (
             f"Go to {target_url} and find at least 10 tech job listings "

@@ -13,7 +13,8 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 MIN_SAMPLES = 1600    # 100 ms at 16 kHz — drop frames shorter than this
-SILENCE_RMS = 0.003   # below this → silent, skip API call (mic arrays produce low RMS)
+SILENCE_RMS = 0.002   # below this → silent, skip API call
+MIC_GAIN    = 4.0     # software boost for quiet mic devices (applied to mic stream only)
 
 _HALLUCINATIONS = {
     "", ".", "..", "...", " ", "you", "you.", "thank you", "thank you.",
@@ -37,6 +38,12 @@ def _rms(pcm: bytes) -> float:
         return 0.0
     samples = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
     return float(np.sqrt(np.mean(samples ** 2))) / 32768.0
+
+
+def _boost(pcm: bytes, gain: float) -> bytes:
+    arr = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
+    arr = np.clip(arr * gain, -32768, 32767).astype(np.int16)
+    return arr.tobytes()
 
 
 def detect_silence(pcm: bytes) -> bool:
@@ -70,6 +77,10 @@ class AudioService:
         if len(pcm) < MIN_SAMPLES * 2:
             logger.debug("[audio] DROP short frame %d bytes | %s", len(pcm), speaker)
             return {"speaker": speaker, "text": "", "timings": {}}
+
+        # Boost mic (user) frames — headset mics are typically quiet
+        if speaker == "user":
+            pcm = _boost(pcm, MIC_GAIN)
 
         rms = _rms(pcm)
         logger.info("[audio] frame %d bytes | rms=%.4f | %s", len(pcm), rms, speaker)

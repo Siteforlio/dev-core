@@ -74,7 +74,7 @@ ipcMain.handle('devcore:devices:list', async () => {
     const wasapi = all.filter((d: any) => d.hostAPIName === 'Windows WASAPI')
     const isLoopback = (d: any) =>
       d.isLoopbackDevice === true ||
-      (d.maxInputChannels > 0 && /loopback|stereo mix|what u hear|wave out/i.test(d.name))
+      (d.maxInputChannels > 0 && /loopback|stereo mix|what u hear|wave out|\[loopback\]/i.test(d.name))
     return {
       mics: wasapi
         .filter((d: any) => d.maxInputChannels > 0 && !isLoopback(d))
@@ -188,9 +188,57 @@ ipcMain.handle('devcore:manual:ask', async (_e, payload: { text: string; mode: s
   }
 })
 
+ipcMain.handle('devcore:outcome:ask', async (_e, payload: { outcome: string }) => {
+  const activeWs = getActiveWs()
+  if (activeWs && activeWs.readyState === 1) {
+    activeWs.send(JSON.stringify({ type: 'outcome_pill_ask', outcome: payload.outcome }))
+  } else {
+    console.warn('[devcore] outcome:ask — no active WS, message dropped')
+  }
+})
+
+// ── Device hot-plug detection ──────────────────────────────────────────────
+// naudiodon has no push event for device changes, so poll every 2 seconds.
+// When the mic list changes, push the new list to the overlay renderer.
+function _getDeviceList() {
+  try {
+    const all = naudiodon.getDevices() as any[]
+    const wasapi = all.filter((d: any) => d.hostAPIName === 'Windows WASAPI')
+    const isLoopback = (d: any) =>
+      d.isLoopbackDevice === true ||
+      (d.maxInputChannels > 0 && /loopback|stereo mix|what u hear|wave out|\[loopback\]/i.test(d.name))
+    return {
+      mics: wasapi
+        .filter((d: any) => d.maxInputChannels > 0 && !isLoopback(d))
+        .map((d: any) => ({ id: d.id, name: d.name })),
+      systems: wasapi
+        .filter((d: any) => isLoopback(d))
+        .map((d: any) => ({ id: d.id, name: d.name })),
+    }
+  } catch {
+    return { mics: [], systems: [] }
+  }
+}
+
+let _lastDeviceSnapshot = ''
+
+function _startDeviceWatcher() {
+  setInterval(() => {
+    const devices = _getDeviceList()
+    const snapshot = JSON.stringify(devices.mics.map((m: any) => m.id))
+    if (snapshot === _lastDeviceSnapshot) return
+    _lastDeviceSnapshot = snapshot
+    const win = getOverlayWindow()
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('devcore:devices:changed', devices)
+    }
+  }, 2000)
+}
+
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null)
   createWindow()          // existing main window
   createOverlayWindow()   // new overlay window
+  _startDeviceWatcher()   // hot-plug detection
 })
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })

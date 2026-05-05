@@ -8,26 +8,25 @@ from app.services.cluely.context_manager import ContextManager
 from app.services.cluely.bert_classifier import BertClassifier
 from app.services.cluely.rag_service import RagService
 from app.services.cluely.llm_service import LLMService
+from app.services.cluely.outcome_service import OutcomeService
 from app.services.cluely.code_runner import CodeRunner
 from app.services.cluely.summarizer import run_summarizer
 from app.schemas.cluely import TranscriptEntry
 
 logger = logging.getLogger(__name__)
 
-BERT_COOLDOWN = 0.5          # seconds between BERT triggers
+BERT_COOLDOWN       = 0.5    # seconds between BERT triggers
 SUGGESTION_CACHE_TTL = 300   # 5 minutes — skip LLM for identical questions
-ASK_RATE_LIMIT = 10          # max manual asks per window
-ASK_RATE_WINDOW = 60         # seconds
-WS_BATCH_CHARS = 12          # buffer this many chars before flushing to WebSocket
+ASK_RATE_LIMIT      = 10     # max manual asks per window
+ASK_RATE_WINDOW     = 60     # seconds
+WS_BATCH_CHARS      = 12     # buffer chars before flushing to WebSocket
 
 
 async def _empty_list() -> list:
-    """Async no-op returning an empty list — used as a parallel placeholder."""
     return []
 
 
 async def _safe_send(ws: WebSocket, data: dict) -> bool:
-    """Send JSON, returning False silently if the client already disconnected."""
     try:
         if ws.client_state != WebSocketState.CONNECTED:
             return False
@@ -39,19 +38,16 @@ async def _safe_send(ws: WebSocket, data: dict) -> bool:
 
 class OverlayService:
     def __init__(self):
-        self._audio = AudioService()
-        self._llm = LLMService()
-        self._runner = CodeRunner()
+        self._audio   = AudioService()
+        self._llm     = LLMService()
+        self._runner  = CodeRunner()
         self._last_trigger = 0.0
-        # suggestion_cache: {session_id: {question_hash: (timestamp, full_response)}}
-        # Keyed by session so the singleton doesn't bleed state across users.
-        self._suggestion_cache: dict[str, dict[str, tuple[float, str]]] = {}
         # ask_rate: {session_id: (count, window_start_timestamp)}
         self._ask_rate: dict[str, tuple[int, float]] = {}
         # recent transcripts for dedup: {session_id: [(timestamp, text), ...]}
         self._recent_texts: dict[str, list[tuple[float, str]]] = {}
-        self._DEDUP_WINDOW = 4.0   # seconds — suppress identical text within this window
-        self._DEDUP_RATIO  = 0.75  # Jaccard similarity above this → duplicate
+        self._DEDUP_WINDOW = 4.0
+        self._DEDUP_RATIO  = 0.75
         try:
             self._bert = BertClassifier()
             self._use_bert = True
@@ -60,38 +56,44 @@ class OverlayService:
             self._use_bert = False
             self._bert = None
 
+    # ------------------------------------------------------------------
+    # WebSocket entry point
+    # ------------------------------------------------------------------
+
     async def handle(self, ws: WebSocket) -> None:
         await ws.accept()
         ctx_mgr: ContextManager | None = None
         rag: RagService | None = None
         session_ctx: dict = {}
+        repo = None
 
-        # Auth gate — first frame must be auth
+        # Auth gate
         try:
             first = await asyncio.wait_for(ws.receive_json(), timeout=3.0)
         except asyncio.TimeoutError:
             await ws.close(code=4001)
             return
         except WebSocketDisconnect:
-            logger.info("WS client disconnected before auth")
             return
         except Exception as e:
             logger.warning("WS auth receive error: %s", e)
             return
+
         if first.get("type") != "auth":
-            await _safe_send(ws,{"type": "error", "code": "AUTH_REQUIRED", "message": "First frame must be auth"})
-            await ws.close(code=4001)
-            return
-        try:
-            decode_token(first["token"])
-        except Exception as auth_err:
-            import traceback
-            logger.warning("WS auth failed: %s\n%s", auth_err, traceback.format_exc())
-            await _safe_send(ws,{"type": "error", "code": "AUTH_FAILED", "message": "Invalid token"})
+            await _safe_send(ws, {"type": "error", "code": "AUTH_REQUIRED", "message": "First frame must be auth"})
             await ws.close(code=4001)
             return
 
-        logger.info("WS auth OK — waiting for session_start")
+        try:
+            user_id = decode_token(first["token"])
+        except Exception as auth_err:
+            import traceback
+            logger.warning("WS auth failed: %s\n%s", auth_err, traceback.format_exc())
+            await _safe_send(ws, {"type": "error", "code": "AUTH_FAILED", "message": "Invalid token"})
+            await ws.close(code=4001)
+            return
+
+        logger.info("WS auth OK — waiting for session_start | user_id=%s", user_id)
         try:
             while True:
                 msg = await ws.receive()
@@ -101,75 +103,110 @@ class OverlayService:
                     data = json.loads(msg["text"])
                     mtype = data.get("type")
                     if mtype == "session_start":
-                        logger.info("session_start received: %s", data.get("session_id"))
-                        ctx_mgr, rag, session_ctx = await self._start_session(ws, data)
+                        logger.info("session_start | sid=%s", data.get("session_id"))
+                        ctx_mgr, rag, session_ctx, repo = await self._start_session(
+                            ws, data, user_id
+                        )
                     elif mtype == "session_pause":
                         if ctx_mgr:
                             await ctx_mgr.set_state("paused")
-                        await _safe_send(ws,{"type": "status", "state": "paused", "latency_ms": 0})
+                        await _safe_send(ws, {"type": "status", "state": "paused", "latency_ms": 0})
                     elif mtype == "session_end":
                         break
                     elif mtype == "manual_ask":
-                        await self._handle_manual_ask(ws, data, session_ctx, rag, ctx_mgr)
+                        await self._handle_manual_ask(ws, data, session_ctx, rag, ctx_mgr, repo)
+                    elif mtype == "outcome_pill_ask":
+                        await self._handle_outcome_pill_ask(ws, data, session_ctx, rag, ctx_mgr, repo)
         except WebSocketDisconnect as e:
-            logger.info("Client disconnected (code=%s)", getattr(e, 'code', '?'))
+            logger.info("Client disconnected (code=%s)", getattr(e, "code", "?"))
         except RuntimeError as e:
-            # Starlette raises RuntimeError (not WebSocketDisconnect) when receive()
-            # is called after the disconnect message has already been consumed.
             if "disconnect" in str(e).lower():
-                logger.info("WS already disconnected — exiting loop cleanly")
+                logger.info("WS already disconnected — exiting cleanly")
             else:
                 logger.exception("Overlay WS runtime error: %s", e)
         except Exception as e:
             logger.exception("Overlay WS error: %s", e)
         finally:
             logger.info("WS session ending")
-            # Stop background summariser
             stop_ev = session_ctx.get("_stop_summarizer")
             if stop_ev:
                 stop_ev.set()
-            # Cancel any pending utterance flush timers
-            flush_tasks = session_ctx.get("_flush_tasks", {})
-            for task in flush_tasks.values():
+            for task in session_ctx.get("_flush_tasks", {}).values():
                 if task and not task.done():
                     task.cancel()
+            if repo:
+                repo.stop_flush_loop()
+                sid = session_ctx.get("_session_id")
+                if sid:
+                    try:
+                        await repo.end_session(sid)
+                    except Exception as e:
+                        logger.error("[repo] end_session failed: %s", e)
+                try:
+                    await repo._db.close()
+                except Exception:
+                    pass
             try:
                 if ws.client_state == WebSocketState.CONNECTED:
                     await ws.close()
             except Exception:
                 pass
 
-    async def _start_session(self, ws: WebSocket, data: dict):
+    # ------------------------------------------------------------------
+    # Session start
+    # ------------------------------------------------------------------
+
+    async def _start_session(self, ws: WebSocket, data: dict, user_id: str):
+        from app.core.cache import get_redis
+        from app.core.database import AsyncSessionLocal
+
         sid = data["session_id"]
         ctx = data.get("context", {})
-        # Stash session_id so downstream methods can key caches without
-        # threading the ID through every call signature.
         ctx["_session_id"] = sid
-        from app.core.cache import get_redis
+
         r = await get_redis()
+
+        # Outcome service — Redis-backed cache for outcome inference
+        outcome_svc = OutcomeService(redis=r)
+        ctx["_outcome_svc"] = outcome_svc
+
         ctx_mgr = ContextManager(redis=r, session_id=sid)
         if not await ctx_mgr.session_exists():
             await ctx_mgr.set_state("listening")
+
+        # Session repository — write-through to PostgreSQL
+        db = AsyncSessionLocal()
+        from app.services.cluely.session_repository import SessionRepository
+        repo = SessionRepository(db=db)
+        repo.start_flush_loop()
+
+        try:
+            await repo.create_session(
+                session_id=sid,
+                user_id=user_id,
+                company=ctx.get("company", ""),
+                role=ctx.get("job_title", ""),
+                application_id=ctx.get("application_id"),
+            )
+        except Exception as e:
+            logger.error("[repo] create_session failed: %s", e)
+
+        # RAG index (background)
         rag = RagService()
         files = ctx.get("files", [])
         if files:
             task = asyncio.create_task(rag.build_index(files))
             task.add_done_callback(
-                lambda t: logger.error("RAG index build failed: %s", t.exception()) if t.exception() else None
+                lambda t: logger.error("RAG build failed: %s", t.exception()) if t.exception() else None
             )
 
-        # --- Utterance buffer: accumulate chunks into paragraphs ---
-        # Like a messaging app — text accumulates until the speaker pauses,
-        # then the whole utterance is emitted as one bubble.
-        # State is per-session-local (not on self) so sessions don't bleed.
-        SILENCE_FLUSH_S = 2.5   # seconds of silence before flushing utterance
+        # Utterance buffer — accumulate chunks into paragraphs before emitting
+        SILENCE_FLUSH_S = 2.5
         utterance: dict[str, list[str]] = {"user": [], "interviewer": []}
         flush_tasks: dict[str, asyncio.Task | None] = {"user": None, "interviewer": None}
-        # seq counter for emitted bubbles (independent of chunk seq)
         bubble_seq = [0]
 
         async def _flush_utterance(speaker: str):
-            """Wait for silence timeout, then emit the accumulated paragraph."""
             await asyncio.sleep(SILENCE_FLUSH_S)
             parts = utterance[speaker]
             if not parts:
@@ -181,28 +218,39 @@ class OverlayService:
             entry = TranscriptEntry(speaker=speaker, text=text, seq=seq)
             await ctx_mgr.push_transcript(entry)
             await _safe_send(ws, {"type": "transcript", "speaker": speaker, "text": text, "seq": seq})
+            # Persist transcript line
+            try:
+                await repo.append_transcript_line(
+                    session_id=sid, speaker=speaker, text_content=text, seq=seq
+                )
+            except Exception as e:
+                logger.error("[repo] transcript line failed: %s", e)
             logger.info("[pipeline] bubble | speaker=%s | text=%r", speaker, text[:80])
 
         def _schedule_flush(speaker: str):
-            """Reset the silence timer for this speaker."""
             old = flush_tasks[speaker]
             if old and not old.done():
                 old.cancel()
             flush_tasks[speaker] = asyncio.create_task(_flush_utterance(speaker))
 
-        ctx["_utterance"] = utterance
+        ctx["_utterance"]      = utterance
         ctx["_schedule_flush"] = _schedule_flush
-        ctx["_flush_tasks"] = flush_tasks
+        ctx["_flush_tasks"]    = flush_tasks
+        ctx["_repo"]           = repo
 
-        # --- Background summariser ---
+        # Background summariser
         stop_summarizer = asyncio.Event()
         ctx["_stop_summarizer"] = stop_summarizer
         asyncio.create_task(run_summarizer(ctx_mgr, stop_summarizer))
 
         await _safe_send(ws, {"type": "status", "state": "listening", "latency_ms": 0})
-        return ctx_mgr, rag, ctx
+        return ctx_mgr, rag, ctx, repo
 
-    async def _handle_audio(self, ws: WebSocket, raw: bytes, ctx_mgr, rag, session_ctx):
+    # ------------------------------------------------------------------
+    # Audio frame handler
+    # ------------------------------------------------------------------
+
+    async def _handle_audio(self, ws, raw, ctx_mgr, rag, session_ctx):
         if ctx_mgr is None:
             return
         try:
@@ -219,7 +267,6 @@ class OverlayService:
             if not result["text"]:
                 return
 
-            # --- Dedup: suppress near-identical chunks within the window ---
             text = result["text"]
             sid  = session_ctx.get("_session_id", "unknown")
             now  = time.time()
@@ -228,7 +275,8 @@ class OverlayService:
 
             def _jaccard(a: str, b: str) -> float:
                 sa, sb = set(a.lower().split()), set(b.lower().split())
-                if not sa and not sb: return 1.0
+                if not sa and not sb:
+                    return 1.0
                 return len(sa & sb) / len(sa | sb)
 
             if any(_jaccard(text, tx) >= self._DEDUP_RATIO for _, tx in recent):
@@ -239,21 +287,20 @@ class OverlayService:
             logger.info("[pipeline] chunk | transcribe=%dms | speaker=%s | text=%r",
                         transcribe_ms, speaker, text[:60])
 
-            # --- AI trigger: run BERT immediately on every interviewer chunk ---
-            # Don't wait for silence buffer — start AI response as soon as a
-            # question is detected so the response arrives while they finish talking.
             if speaker == "interviewer":
-                await self._maybe_trigger_suggestion(ws, ctx_mgr, rag, session_ctx, text)
+                # Question detected → infer outcome, set up gap monitoring
+                await self._maybe_trigger_outcome(ws, ctx_mgr, rag, session_ctx, text)
+            else:
+                # User speaking → check gap against current inferred outcome
+                await self._maybe_trigger_gap(ws, ctx_mgr, rag, session_ctx, text)
 
-            # --- Utterance buffer: accumulate into paragraph, flush on silence ---
-            # Display only — paragraph bubble emitted after 2.5s silence.
-            utterance: dict = session_ctx.get("_utterance", {})
+            # Utterance buffer
+            utterance     = session_ctx.get("_utterance", {})
             schedule_flush = session_ctx.get("_schedule_flush")
             if utterance is not None and schedule_flush is not None:
                 utterance[speaker].append(text)
-                schedule_flush(speaker)   # resets the 2.5s silence timer
+                schedule_flush(speaker)
             else:
-                # Fallback: no buffer state (shouldn't happen) — emit immediately
                 entry = TranscriptEntry(speaker=speaker, text=text, seq=seq)
                 await ctx_mgr.push_transcript(entry)
                 await _safe_send(ws, {"type": "transcript", "speaker": speaker, "text": text, "seq": seq})
@@ -263,52 +310,122 @@ class OverlayService:
         except RuntimeError as e:
             if "disconnect" in str(e).lower():
                 raise WebSocketDisconnect()
-            logger.exception("Audio frame processing error (runtime): %s", e)
+            logger.exception("Audio frame error (runtime): %s", e)
         except Exception:
-            logger.exception("Audio frame processing error")
+            logger.exception("Audio frame error")
             await _safe_send(ws, {"type": "error", "code": "AUDIO_ERROR", "message": "Audio processing failed"})
 
-    async def _maybe_trigger_suggestion(self, ws: WebSocket, ctx_mgr, rag, session_ctx: dict, text: str):
-        """Run BERT on a completed interviewer utterance and stream a suggestion if it's a question."""
+    # ------------------------------------------------------------------
+    # Outcome inference (Mode 1 + Mode 3 pill data)
+    # ------------------------------------------------------------------
+
+    async def _maybe_trigger_outcome(
+        self, ws, ctx_mgr, rag, session_ctx: dict, question_text: str
+    ):
         now = time.monotonic()
         if not self._use_bert or self._bert is None:
             return
         if now - self._last_trigger <= BERT_COOLDOWN:
             return
+
         t_bert = time.monotonic()
-        is_q = await self._bert.is_question(text)
+        is_q = await self._bert.is_question(question_text)
         bert_ms = round((time.monotonic() - t_bert) * 1000)
         logger.info("[pipeline] bert=%dms | is_question=%s", bert_ms, is_q)
-        if is_q:
-            self._last_trigger = now
-            await self._stream_suggestion(ws, ctx_mgr, rag, session_ctx, question_text=text)
+
+        if not is_q:
+            return
+
+        self._last_trigger = now
+        sid = session_ctx.get("_session_id", "unknown")
+
+        # Infer outcome asynchronously — don't block audio pipeline
+        outcome_svc: OutcomeService = session_ctx.get("_outcome_svc")
+        if outcome_svc:
+            try:
+                outcome = await outcome_svc.infer_outcome(sid, question_text, session_ctx)
+                # Stash for gap detection on subsequent user chunks
+                session_ctx["_current_outcome"] = outcome
+                session_ctx["_current_question"] = question_text
+                session_ctx["_user_response_acc"] = []  # reset accumulator
+                # Send outcome pill to UI (Mode 3)
+                await _safe_send(ws, {
+                    "type": "outcome_inferred",
+                    "outcome": outcome,
+                    "question": question_text,
+                })
+                logger.info("[outcome] pill sent | outcome=%r", outcome)
+            except Exception as e:
+                logger.warning("[outcome] infer failed: %s", e)
+
+    # ------------------------------------------------------------------
+    # Gap detection (Mode 2)
+    # ------------------------------------------------------------------
+
+    async def _maybe_trigger_gap(self, ws, ctx_mgr, rag, session_ctx: dict, user_text: str):
+        outcome = session_ctx.get("_current_outcome")
+        if not outcome:
+            return
+
+        # Accumulate user response chunks
+        acc: list[str] = session_ctx.setdefault("_user_response_acc", [])
+        acc.append(user_text)
+        accumulated = " ".join(acc)
+
+        # Only check after the user has said at least 20 words — avoids false positives
+        if len(accumulated.split()) < 20:
+            return
+
+        outcome_svc: OutcomeService = session_ctx.get("_outcome_svc")
+        if not outcome_svc:
+            return
+
+        gap = await outcome_svc.detect_gap(outcome, accumulated)
+        if not gap:
+            return
+
+        # Gap detected — fire a correction suggestion and reset accumulator
+        session_ctx["_user_response_acc"] = []
+        logger.info("[outcome] gap detected — streaming correction")
+        await self._stream_suggestion(
+            ws, ctx_mgr, rag, session_ctx,
+            question_text=session_ctx.get("_current_question", ""),
+            trigger_type="auto_gap",
+        )
+
+    # ------------------------------------------------------------------
+    # Suggestion streaming (shared by auto_gap + outcome_pill)
+    # ------------------------------------------------------------------
 
     async def _stream_suggestion(
         self,
-        ws: WebSocket,
+        ws,
         ctx_mgr: ContextManager,
         rag,
         session_ctx: dict,
         question_text: str = "",
+        trigger_type: str = "auto_gap",
     ):
+        from app.core.cache import get_redis
+
         session_id = session_ctx.get("_session_id", "unknown")
         q_hash = hashlib.md5(question_text.encode()).hexdigest() if question_text else ""
 
-        # --- Deduplication cache check ---
-        if q_hash:
-            session_cache = self._suggestion_cache.get(session_id, {})
-            cached = session_cache.get(q_hash)
+        # --- Suggestion cache in Redis (shared across restarts) ---
+        r = await get_redis()
+        cache_key = f"cluely:sugg_cache:{session_id}:{q_hash}" if q_hash else ""
+
+        if cache_key:
+            cached = await r.get(cache_key)
             if cached:
-                ts, cached_response = cached
-                if time.time() - ts < SUGGESTION_CACHE_TTL:
-                    logger.debug("Cache hit for question hash %s", q_hash)
-                    await _safe_send(ws,{"type": "suggestion_delta", "delta": cached_response})
-                    await _safe_send(ws,{"type": "suggestion_end"})
-                    return
+                cached_response = cached.decode()
+                logger.debug("Suggestion cache hit | q_hash=%s", q_hash)
+                await _safe_send(ws, {"type": "suggestion_delta", "delta": cached_response})
+                await _safe_send(ws, {"type": "suggestion_end"})
+                return
 
-        await _safe_send(ws,{"type": "status", "state": "thinking", "latency_ms": 0})
+        await _safe_send(ws, {"type": "status", "state": "thinking", "latency_ms": 0})
 
-        # --- Parallel fetch: transcript window + RAG + summary + facts ---
         t_fetch = time.monotonic()
         rag_coro = rag.retrieve(question_text, k=3) if (rag and question_text) else _empty_list()
         transcript, rag_chunks, summary, facts = await asyncio.gather(
@@ -318,11 +435,13 @@ class OverlayService:
             ctx_mgr.get_facts(),
         )
         fetch_ms = round((time.monotonic() - t_fetch) * 1000)
-        logger.info("[pipeline] context_fetch=%dms | rag_chunks=%d | has_summary=%s",
+        logger.info("[pipeline] context_fetch=%dms | rag=%d | summary=%s",
                     fetch_ms, len(rag_chunks), bool(summary))
 
+        inferred_outcome = session_ctx.get("_current_outcome", "")
         t0 = time.monotonic()
         full_response: list[str] = []
+
         try:
             first = True
             batch: list[str] = []
@@ -333,69 +452,151 @@ class OverlayService:
                 rag_chunks=rag_chunks,
                 summary=summary,
                 facts=facts,
+                inferred_outcome=inferred_outcome,
             ):
                 if first:
                     latency = round((time.monotonic() - t0) * 1000)
-                    logger.info("[pipeline] llm_first_token=%dms", latency)
-                    await _safe_send(ws,{"type": "status", "state": "listening", "latency_ms": latency})
+                    await _safe_send(ws, {"type": "status", "state": "listening", "latency_ms": latency})
                     first = False
                 batch.append(delta)
                 full_response.append(delta)
-                # Flush when buffer reaches WS_BATCH_CHARS — reduces frame count
-                # by 70–80% vs. sending one token at a time.
                 if sum(len(d) for d in batch) >= WS_BATCH_CHARS:
-                    await _safe_send(ws,{"type": "suggestion_delta", "delta": "".join(batch)})
+                    await _safe_send(ws, {"type": "suggestion_delta", "delta": "".join(batch)})
                     batch = []
 
             if batch:
-                await _safe_send(ws,{"type": "suggestion_delta", "delta": "".join(batch)})
-            await _safe_send(ws,{"type": "suggestion_end"})
+                await _safe_send(ws, {"type": "suggestion_delta", "delta": "".join(batch)})
+            await _safe_send(ws, {"type": "suggestion_end"})
 
-            total_llm_ms = round((time.monotonic() - t0) * 1000)
-            logger.info(
-                "[pipeline] llm_total=%dms | tokens=%d chars",
-                total_llm_ms, sum(len(d) for d in full_response),
-            )
+            total_ms = round((time.monotonic() - t0) * 1000)
+            logger.info("[pipeline] llm_total=%dms | chars=%d", total_ms, sum(len(d) for d in full_response))
 
-            # Store in dedup cache
-            if q_hash and full_response:
-                if session_id not in self._suggestion_cache:
-                    self._suggestion_cache[session_id] = {}
-                self._suggestion_cache[session_id][q_hash] = (time.time(), "".join(full_response))
+            full_text = "".join(full_response)
+
+            # Cache in Redis
+            if cache_key and full_text:
+                await r.setex(cache_key, SUGGESTION_CACHE_TTL, full_text)
+
+            # Persist interaction
+            repo = session_ctx.get("_repo")
+            if repo and full_text:
+                try:
+                    await repo.append_interaction(
+                        session_id=session_id,
+                        trigger_type=trigger_type,
+                        ai_response=full_text,
+                        question_text=question_text or None,
+                        inferred_outcome=inferred_outcome or None,
+                    )
+                except Exception as e:
+                    logger.error("[repo] interaction write failed: %s", e)
 
         except LLMRateLimitedError:
-            # Fall back to a cached response for the same question if available.
-            session_cache = self._suggestion_cache.get(session_id, {})
-            cached = session_cache.get(q_hash) if q_hash else None
-            if cached:
-                _, cached_response = cached
-                await _safe_send(ws,{"type": "suggestion_delta", "delta": cached_response})
-                await _safe_send(ws,{"type": "suggestion_end"})
-            else:
-                await _safe_send(ws,{"type": "error", "code": "LLM_RATE_LIMITED", "message": "Rate limited"})
-                await _safe_send(ws,{"type": "status", "state": "listening", "latency_ms": 0})
+            if cache_key:
+                cached = await r.get(cache_key)
+                if cached:
+                    await _safe_send(ws, {"type": "suggestion_delta", "delta": cached.decode()})
+                    await _safe_send(ws, {"type": "suggestion_end"})
+                    return
+            await _safe_send(ws, {"type": "error", "code": "LLM_RATE_LIMITED", "message": "Rate limited"})
+            await _safe_send(ws, {"type": "status", "state": "listening", "latency_ms": 0})
         except Exception:
             logger.exception("Suggestion streaming error")
-            await _safe_send(ws,{"type": "error", "code": "LLM_ERROR", "message": "Suggestion failed"})
-            await _safe_send(ws,{"type": "status", "state": "listening", "latency_ms": 0})
+            await _safe_send(ws, {"type": "error", "code": "LLM_ERROR", "message": "Suggestion failed"})
+            await _safe_send(ws, {"type": "status", "state": "listening", "latency_ms": 0})
 
-    async def _handle_manual_ask(self, ws: WebSocket, data: dict, session_ctx: dict, rag, ctx_mgr=None):
-        text = data.get("text", "")
-        if not text:
-            await _safe_send(ws,{"type": "error", "code": "INVALID_REQUEST", "message": "text is required"})
+    # ------------------------------------------------------------------
+    # Outcome pill — full answer on demand (Mode 3 tap)
+    # ------------------------------------------------------------------
+
+    async def _handle_outcome_pill_ask(self, ws, data: dict, session_ctx: dict, rag, ctx_mgr, repo):
+        outcome = data.get("outcome") or session_ctx.get("_current_outcome", "")
+        if not outcome:
+            await _safe_send(ws, {"type": "error", "code": "NO_OUTCOME", "message": "No outcome available"})
             return
 
-        # --- Per-session rate limiting ---
+        sid = session_ctx.get("_session_id", "unknown")
+        await _safe_send(ws, {"type": "status", "state": "thinking", "latency_ms": 0})
+        t0 = time.monotonic()
+
+        rag_chunks = await rag.retrieve(outcome, k=2) if rag else []
+
+        async def _empty_str() -> str:
+            return ""
+
+        summary, facts, recent = await asyncio.gather(
+            ctx_mgr.get_summary() if ctx_mgr else _empty_str(),
+            ctx_mgr.get_facts() if ctx_mgr else _empty_str(),
+            ctx_mgr.get_window(n=10) if ctx_mgr else _empty_list(),
+        )
+
+        full_response: list[str] = []
+        batch: list[str] = []
+        first = True
+
+        try:
+            async for delta in self._llm.stream_outcome_answer(
+                outcome=outcome,
+                context=session_ctx,
+                rag_chunks=rag_chunks,
+                summary=summary,
+                facts=facts,
+                recent=recent,
+            ):
+                if first:
+                    latency = round((time.monotonic() - t0) * 1000)
+                    await _safe_send(ws, {"type": "status", "state": "listening", "latency_ms": latency})
+                    first = False
+                batch.append(delta)
+                full_response.append(delta)
+                if sum(len(d) for d in batch) >= WS_BATCH_CHARS:
+                    await _safe_send(ws, {"type": "suggestion_delta", "delta": "".join(batch)})
+                    batch = []
+
+            if batch:
+                await _safe_send(ws, {"type": "suggestion_delta", "delta": "".join(batch)})
+            await _safe_send(ws, {"type": "suggestion_end"})
+
+            full_text = "".join(full_response)
+            if repo and full_text:
+                try:
+                    await repo.append_interaction(
+                        session_id=sid,
+                        trigger_type="outcome_pill",
+                        ai_response=full_text,
+                        inferred_outcome=outcome,
+                    )
+                except Exception as e:
+                    logger.error("[repo] pill interaction write failed: %s", e)
+
+        except LLMRateLimitedError:
+            await _safe_send(ws, {"type": "error", "code": "LLM_RATE_LIMITED", "message": "Rate limited"})
+            await _safe_send(ws, {"type": "status", "state": "listening", "latency_ms": 0})
+        except Exception:
+            logger.exception("Outcome pill streaming error")
+            await _safe_send(ws, {"type": "error", "code": "LLM_ERROR", "message": "Request failed"})
+            await _safe_send(ws, {"type": "status", "state": "listening", "latency_ms": 0})
+
+    # ------------------------------------------------------------------
+    # Manual ask
+    # ------------------------------------------------------------------
+
+    async def _handle_manual_ask(self, ws, data: dict, session_ctx: dict, rag, ctx_mgr=None, repo=None):
+        text = data.get("text", "")
+        if not text:
+            await _safe_send(ws, {"type": "error", "code": "INVALID_REQUEST", "message": "text is required"})
+            return
+
         session_id = session_ctx.get("_session_id", "unknown")
         now = time.time()
         count, window_start = self._ask_rate.get(session_id, (0, now))
         if now - window_start >= ASK_RATE_WINDOW:
             count, window_start = 0, now
         if count >= ASK_RATE_LIMIT:
-            await _safe_send(ws,{
+            await _safe_send(ws, {
                 "type": "error",
                 "code": "ASK_RATE_LIMITED",
-                "message": f"Maximum {ASK_RATE_LIMIT} asks per minute reached. Please wait.",
+                "message": f"Maximum {ASK_RATE_LIMIT} asks per minute reached.",
             })
             return
         self._ask_rate[session_id] = (count + 1, window_start)
@@ -409,10 +610,10 @@ class OverlayService:
 
         await _safe_send(ws, {"type": "status", "state": "thinking", "latency_ms": 0})
         t0 = time.monotonic()
+        full_response: list[str] = []
 
         try:
             if mode == "solve":
-                # Collect the full solution for Judge0 while streaming to the user.
                 solution_parts: list[str] = []
                 batch: list[str] = []
                 first = True
@@ -422,26 +623,25 @@ class OverlayService:
                         await _safe_send(ws, {"type": "status", "state": "listening", "latency_ms": latency})
                         first = False
                     solution_parts.append(delta)
+                    full_response.append(delta)
                     batch.append(delta)
                     if sum(len(d) for d in batch) >= WS_BATCH_CHARS:
-                        await _safe_send(ws,{"type": "suggestion_delta", "delta": "".join(batch)})
+                        await _safe_send(ws, {"type": "suggestion_delta", "delta": "".join(batch)})
                         batch = []
                 if batch:
-                    await _safe_send(ws,{"type": "suggestion_delta", "delta": "".join(batch)})
-                await _safe_send(ws,{"type": "suggestion_end"})
+                    await _safe_send(ws, {"type": "suggestion_delta", "delta": "".join(batch)})
+                await _safe_send(ws, {"type": "suggestion_end"})
 
-                # Execute with Judge0 after solution is assembled
                 solution = "".join(solution_parts)
                 lang = data.get("language", "python")
                 code_result = await self._runner.execute(solution, language=lang)
-                await _safe_send(ws,{
+                await _safe_send(ws, {
                     "type": "code_result",
                     "language": lang,
                     "output": code_result["output"],
                     "solution": solution,
                 })
             else:
-                # hints / ultra — stream token-by-token
                 batch: list[str] = []
                 first = True
                 async for delta in self._llm.stream_manual_ask(text, mode=mode, context=session_ctx, rag_chunks=rag_chunks, summary=summary, facts=facts):
@@ -449,13 +649,27 @@ class OverlayService:
                         latency = round((time.monotonic() - t0) * 1000)
                         await _safe_send(ws, {"type": "status", "state": "listening", "latency_ms": latency})
                         first = False
+                    full_response.append(delta)
                     batch.append(delta)
                     if sum(len(d) for d in batch) >= WS_BATCH_CHARS:
-                        await _safe_send(ws,{"type": "suggestion_delta", "delta": "".join(batch)})
+                        await _safe_send(ws, {"type": "suggestion_delta", "delta": "".join(batch)})
                         batch = []
                 if batch:
-                    await _safe_send(ws,{"type": "suggestion_delta", "delta": "".join(batch)})
-                await _safe_send(ws,{"type": "suggestion_end"})
+                    await _safe_send(ws, {"type": "suggestion_delta", "delta": "".join(batch)})
+                await _safe_send(ws, {"type": "suggestion_end"})
+
+            full_text = "".join(full_response)
+            if repo and full_text:
+                try:
+                    await repo.append_interaction(
+                        session_id=session_id,
+                        trigger_type="manual_ask",
+                        ai_response=full_text,
+                        question_text=text,
+                        mode=mode,
+                    )
+                except Exception as e:
+                    logger.error("[repo] manual ask write failed: %s", e)
 
         except CodeRunnerError as e:
             await _safe_send(ws, {"type": "error", "code": e.code, "message": e.message})
@@ -464,6 +678,6 @@ class OverlayService:
             await _safe_send(ws, {"type": "error", "code": "LLM_RATE_LIMITED", "message": "Rate limited"})
             await _safe_send(ws, {"type": "status", "state": "listening", "latency_ms": 0})
         except Exception:
-            logger.exception("Manual ask streaming error")
+            logger.exception("Manual ask error")
             await _safe_send(ws, {"type": "error", "code": "LLM_ERROR", "message": "Request failed"})
             await _safe_send(ws, {"type": "status", "state": "listening", "latency_ms": 0})

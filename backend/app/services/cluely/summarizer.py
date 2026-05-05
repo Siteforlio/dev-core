@@ -4,12 +4,12 @@ Rolling interview summariser.
 Runs as a background asyncio task per session. Every SUMMARY_INTERVAL_S seconds,
 it picks up new transcript bubbles since the last run, merges them into the
 existing rolling summary, and extracts key facts. Both are stored in Redis so
-the LLM prompt always has full 30-min context in ~250 tokens.
+the LLM prompt always has full 2-hour context in ~375 tokens.
 
 Three-layer context model injected into every LLM call:
-  [key facts]      — named entities, tech, decisions  (~50 tokens, always current)
-  [rolling summary] — narrative of full interview      (~200 tokens, 2-min lag)
-  [last 15 verbatim] — exact recent words             (~400 tokens, real-time)
+  [key facts]        — named entities, tech, decisions  (~75 tokens, always current)
+  [rolling summary]  — narrative of full interview      (~300 tokens, 2-min lag)
+  [last 15 verbatim] — exact recent words               (~400 tokens, real-time)
 """
 import asyncio
 import logging
@@ -21,10 +21,10 @@ SUMMARY_INTERVAL_S = 120   # run every 2 minutes
 MIN_NEW_BUBBLES    = 3     # don't summarise unless at least this many new bubbles
 
 
-async def _call_gemini(prompt: str) -> str:
-    """One-shot Vertex AI call — not streamed, just returns text."""
-    from app.services.cluely.vertex_client import vertex_generate
-    return await vertex_generate(prompt)
+async def _call_deepseek(prompt: str) -> str:
+    """One-shot DeepSeek call — not streamed, just returns text."""
+    from app.services.cluely.deepseek_client import deepseek_generate
+    return await deepseek_generate(prompt, temperature=0.3, max_tokens=600)
 
 
 async def _update_summary(ctx_mgr: ContextManager) -> None:
@@ -45,13 +45,13 @@ async def _update_summary(ctx_mgr: ContextManager) -> None:
 
     new_text = "\n".join(f"{e.speaker}: {e.text}" for e in new_entries)
 
-    # Build summary prompt
+    # Build summary prompt — 400-word budget supports 2-hour interviews
     if existing_summary:
         summary_prompt = (
             "You are summarising a live job interview for an AI assistant.\n\n"
             f"EXISTING SUMMARY SO FAR:\n{existing_summary}\n\n"
             f"NEW CONVERSATION SINCE LAST SUMMARY:\n{new_text}\n\n"
-            "Update the summary to include the new content. Keep it under 200 words. "
+            "Update the summary to include the new content. Keep it under 400 words. "
             "Write in third person (e.g. 'The interviewer asked...', 'The candidate explained...'). "
             "Preserve all important technical details, decisions, and topics discussed. "
             "Do not truncate existing important content — merge and compress instead."
@@ -60,12 +60,12 @@ async def _update_summary(ctx_mgr: ContextManager) -> None:
         summary_prompt = (
             "You are summarising a live job interview for an AI assistant.\n\n"
             f"CONVERSATION:\n{new_text}\n\n"
-            "Summarise this interview conversation in under 200 words. "
+            "Summarise this interview conversation in under 400 words. "
             "Write in third person. Capture all technical topics, questions asked, "
             "and candidate responses. Be specific about technologies and decisions mentioned."
         )
 
-    # Build key facts prompt
+    # Build key facts prompt — 150-word budget preserves structured detail across 2hrs
     facts_prompt = (
         "Extract key facts from this interview conversation as a compact bullet list.\n\n"
         f"EXISTING FACTS:\n{existing_facts}\n\n"
@@ -73,13 +73,13 @@ async def _update_summary(ctx_mgr: ContextManager) -> None:
         "Update the facts list. Include: programming languages, frameworks, tools mentioned; "
         "company tech stack details; role requirements stated; candidate's stated experience; "
         "any constraints or preferences expressed. "
-        "Keep the entire list under 80 words. Remove duplicates. Be terse."
+        "Keep the entire list under 150 words. Remove duplicates. Be terse."
     )
 
     try:
         summary, facts = await asyncio.gather(
-            _call_gemini(summary_prompt),
-            _call_gemini(facts_prompt),
+            _call_deepseek(summary_prompt),
+            _call_deepseek(facts_prompt),
         )
         await ctx_mgr.set_summary(summary)
         await ctx_mgr.set_facts(facts)

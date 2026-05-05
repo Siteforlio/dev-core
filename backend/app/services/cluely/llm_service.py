@@ -3,8 +3,8 @@ from typing import AsyncGenerator
 
 from app.core.exceptions import LLMRateLimitedError
 from app.schemas.cluely import TranscriptEntry
+from app.services.cluely.deepseek_client import deepseek_stream, deepseek_generate
 from app.services.cluely.search_service import SearchService
-from app.services.cluely.vertex_client import vertex_generate, vertex_stream
 
 logger = logging.getLogger(__name__)
 
@@ -12,20 +12,44 @@ logger = logging.getLogger(__name__)
 class LLMService:
     def __init__(self):
         self._search = SearchService()
-        self._claude = None  # lazy — only created when ultra mode is used
+        self._claude = None  # lazy — only for ultra mode
 
     def _build_system_prompt(self, context: dict) -> str:
+        """
+        First-person candidate voice. The AI speaks AS the user, not at them.
+        Resume and JD are injected so every response is grounded in the user's
+        actual background.
+        """
+        job_title   = context.get("job_title", "this role")
+        company     = context.get("company", "this company")
+        resume_text = context.get("resume_text", "")[:600]
+        jd_text     = context.get("jd_text", "")[:400]
+
         return (
-            f"You are a real-time interview assistant. The user is interviewing for "
-            f"{context.get('job_title', 'a role')} at {context.get('company', 'a company')}. "
-            f"Resume highlights: {context.get('resume_text', '')[:500]}. "
-            f"Job description: {context.get('jd_text', '')[:500]}. "
-            "Respond with a single, concise talking point (1-2 sentences). "
-            "No lists. No preamble. Speak directly as a coaching whisper."
+            f"You are speaking AS the candidate in a live job interview for {job_title} at {company}. "
+            "Answer every question in the first person, naturally and confidently, as if you are the candidate speaking aloud. "
+            "Draw directly from the resume and job description provided — use specific experiences, projects, and skills. "
+            "Sound human: conversational, not textbook. No bullet points, no preamble, no meta-commentary. "
+            "One flowing answer, 2-4 sentences unless the question demands more. "
+            f"Resume: {resume_text}. "
+            f"Job description: {jd_text}."
         )
 
-    def _build_context_block(self, facts: str, summary: str, recent: list[TranscriptEntry], rag_chunks: list[str]) -> str:
-        """Build the three-layer context block injected into every prompt."""
+    def _build_context_block(
+        self,
+        facts: str,
+        summary: str,
+        recent: list[TranscriptEntry],
+        rag_chunks: list[str],
+    ) -> str:
+        """
+        Three-layer context model — kept exactly as designed.
+        Covers 2+ hour interviews within ~900 tokens:
+          [key facts]        ~75 tokens  (always current)
+          [rolling summary]  ~300 tokens (2-min lag, 400-word budget)
+          [last 15 verbatim] ~400 tokens (real-time)
+          [rag chunks]       ~125 tokens (relevant resume/JD excerpts)
+        """
         parts = []
         if facts:
             parts.append(f"KEY FACTS FROM THIS INTERVIEW:\n{facts}")
@@ -45,15 +69,23 @@ class LLMService:
         rag_chunks: list[str],
         summary: str = "",
         facts: str = "",
+        inferred_outcome: str = "",
     ) -> AsyncGenerator[str, None]:
         ctx_block = self._build_context_block(facts, summary, transcript, rag_chunks)
         system = self._build_system_prompt(context)
-        prompt = ctx_block
+
+        # Anchor the response toward the inferred outcome when available
+        outcome_line = (
+            f"\nIMPORTANT: Your answer must land on this point: {inferred_outcome}\n"
+            if inferred_outcome else ""
+        )
+        prompt = f"{outcome_line}{ctx_block}"
+
         try:
-            async for delta in vertex_stream(prompt, system=system):
+            async for delta in deepseek_stream(prompt, system=system, temperature=0.7, max_tokens=200):
                 yield delta
         except Exception as e:
-            if "429" in str(e) or "quota" in str(e).lower():
+            if "429" in str(e) or "rate" in str(e).lower():
                 raise LLMRateLimitedError() from e
             raise
 
@@ -66,7 +98,6 @@ class LLMService:
         summary: str = "",
         facts: str = "",
     ) -> AsyncGenerator[str, None]:
-        """Stream a manual ask response token-by-token."""
         if rag_chunks is None:
             rag_chunks = []
         ctx_block = self._build_context_block(facts, summary, [], rag_chunks)
@@ -83,14 +114,20 @@ class LLMService:
             prompt = f"{ctx_block}\n\nWrite a complete, clean solution for: {text}"
 
         try:
-            async for delta in vertex_stream(prompt, system=system):
+            async for delta in deepseek_stream(prompt, system=system, temperature=0.5, max_tokens=800):
                 yield delta
         except Exception as e:
-            if "429" in str(e) or "quota" in str(e).lower():
+            if "429" in str(e) or "rate" in str(e).lower():
                 raise LLMRateLimitedError() from e
             raise
 
-    async def manual_ask(self, text: str, mode: str, context: dict, rag_chunks: list[str] | None = None) -> str:
+    async def manual_ask(
+        self,
+        text: str,
+        mode: str,
+        context: dict,
+        rag_chunks: list[str] | None = None,
+    ) -> str:
         """Non-streaming manual ask — kept for code_runner integration."""
         if rag_chunks is None:
             rag_chunks = []
@@ -105,9 +142,37 @@ class LLMService:
         else:
             prompt = f"{ctx_block}\n\nWrite a complete, clean solution for: {text}"
 
-        return await vertex_generate(prompt, system=system)
+        return await deepseek_generate(prompt, system=system, temperature=0.5, max_tokens=800)
 
-    async def _ask_claude(self, system: str, user: str, rag_ctx: str = "", ctx_block: str = "") -> str:
+    async def stream_outcome_answer(
+        self,
+        outcome: str,
+        context: dict,
+        rag_chunks: list[str],
+        summary: str = "",
+        facts: str = "",
+        recent: list[TranscriptEntry] | None = None,
+    ) -> AsyncGenerator[str, None]:
+        """
+        Outcome pill tap — generate a full first-person answer targeting the
+        inferred outcome. Used when the user explicitly requests the full answer.
+        """
+        ctx_block = self._build_context_block(facts, summary, recent or [], rag_chunks)
+        system = self._build_system_prompt(context)
+        prompt = (
+            f"The interviewer expects you to: {outcome}\n\n"
+            f"{ctx_block}\n\n"
+            "Speak your complete answer now, in first person, naturally."
+        )
+        try:
+            async for delta in deepseek_stream(prompt, system=system, temperature=0.7, max_tokens=300):
+                yield delta
+        except Exception as e:
+            if "429" in str(e) or "rate" in str(e).lower():
+                raise LLMRateLimitedError() from e
+            raise
+
+    async def _ask_claude(self, system: str, user: str, ctx_block: str = "") -> str:
         import anthropic
         from app.core.config import settings
         if self._claude is None:
@@ -120,8 +185,6 @@ class LLMService:
         full_user = user
         if ctx_block:
             full_user += f"\n\n{ctx_block}"
-        elif rag_ctx:
-            full_user += f"\n\nRelevant context:\n{rag_ctx}"
         if search_results:
             full_user += "\n\nWeb search results:\n" + "\n".join(search_results)
 

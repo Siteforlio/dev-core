@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     enableInteract:   ()                 => ipcRenderer.invoke('devcore:interact:enable'),
     disableInteract:  ()                 => ipcRenderer.invoke('devcore:interact:disable'),
     manualAsk:        (payload: unknown) => ipcRenderer.invoke('devcore:manual:ask', payload),
+    outcomeAsk:       (payload: { outcome: string }) => ipcRenderer.invoke('devcore:outcome:ask', payload),
     onSuggestion: (cb: (p: { delta: string; done: boolean }) => void): (() => void) => {
       const handler = (_e: unknown, p: { delta: string; done: boolean }) => cb(p)
       ipcRenderer.on('devcore:suggestion', handler)
@@ -45,8 +46,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.on('devcore:hotkey', handler)
       return () => ipcRenderer.removeListener('devcore:hotkey', handler)
     },
+    onOutcome: (cb: (p: { outcome: string; question: string }) => void): (() => void) => {
+      const handler = (_e: unknown, p: { outcome: string; question: string }) => cb(p)
+      ipcRenderer.on('devcore:outcome', handler)
+      return () => ipcRenderer.removeListener('devcore:outcome', handler)
+    },
+    onDevicesChanged: (cb: (p: { mics: { id: number; name: string }[]; systems: { id: number; name: string }[] }) => void): (() => void) => {
+      const handler = (_e: unknown, p: { mics: { id: number; name: string }[]; systems: { id: number; name: string }[] }) => cb(p)
+      ipcRenderer.on('devcore:devices:changed', handler)
+      return () => ipcRenderer.removeListener('devcore:devices:changed', handler)
+    },
     removeAllListeners: () => {
-      ;['devcore:suggestion','devcore:transcript','devcore:status','devcore:error','devcore:hotkey']
+      ;['devcore:suggestion','devcore:transcript','devcore:status','devcore:error','devcore:hotkey','devcore:outcome','devcore:devices:changed']
         .forEach(ch => ipcRenderer.removeAllListeners(ch))
     },
   },

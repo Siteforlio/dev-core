@@ -8,6 +8,8 @@ class SessionContext(BaseModel):
     resume_text: str = ""
     jd_text: str = ""
     files: list[str] = []
+    # Optional link to a job_hunter application — creates FK in cluely_sessions
+    application_id: str | None = None
 
 
 class SessionStartRequest(BaseModel):
@@ -28,5 +30,5 @@ class SuggestionResponse(BaseModel):
 
 class ManualAskRequest(BaseModel):
     text: str
-    mode: Literal["hints", "solve"]
-    language: str = "python"  # for solve mode: caller passes detected or user-selected language
+    mode: Literal["hints", "solve", "ultra"]
+    language: str = "python"

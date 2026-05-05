@@ -56,6 +56,8 @@ export function SuggestionCard() {
   const [editingTitle, setEditingTitle] = useState(false)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [aiStreaming, setAiStreaming] = useState(false)
+  const [outcome, setOutcome] = useState<{ text: string; question: string } | null>(null)
+  const [outcomeExpanded, setOutcomeExpanded] = useState(false)
   const askRef = useRef<HTMLInputElement>(null)
   const titleRef = useRef<HTMLInputElement>(null)
   const chatBottomRef = useRef<HTMLDivElement>(null)
@@ -115,9 +117,15 @@ export function SuggestionCard() {
       useOverlayStore.getState().setLatency(0)
     })
 
+    const removeOutcome = devcore.onOutcome?.(({ outcome: o, question: q }: { outcome: string; question: string }) => {
+      setOutcome({ text: o, question: q })
+      setOutcomeExpanded(false)
+    })
+
     return () => {
       removeSuggestion?.()
       removeStatus?.()
+      removeOutcome?.()
     }
   }, [])
 
@@ -139,6 +147,7 @@ export function SuggestionCard() {
   const handleEnd = () => {
     api()?.endSession?.()
     setSessionId(null)
+    setOutcome(null)
     useOverlayStore.getState().setState('idle')
   }
 
@@ -249,6 +258,37 @@ export function SuggestionCard() {
         )}
       </div>
 
+      {/* Outcome pill — shows inferred interview goal, tap for full answer */}
+      {isActive && outcome && (
+        <div className="px-4 pt-2.5 pb-0">
+          <div
+            className="flex items-center gap-2 px-3 py-2 rounded-lg border border-amber-400/20 bg-amber-400/[0.06] cursor-pointer hover:bg-amber-400/[0.1] transition-all group"
+            onClick={() => setOutcomeExpanded(v => !v)}
+          >
+            <span className="text-amber-400 font-mono text-[10px] flex-shrink-0">▸ Land on:</span>
+            <span className="text-amber-300/90 text-[12px] leading-snug flex-1 truncate">
+              {outcome.text}
+            </span>
+            <button
+              className="flex-shrink-0 px-2 py-0.5 rounded-md border border-amber-400/20 bg-amber-400/10 text-amber-400 font-mono text-[10px] opacity-0 group-hover:opacity-100 transition-opacity hover:bg-amber-400/20"
+              onClick={e => {
+                e.stopPropagation()
+                if (aiStreaming) return
+                api()?.outcomeAsk?.({ outcome: outcome.text })
+              }}
+            >
+              Full answer
+            </button>
+          </div>
+          {outcomeExpanded && (
+            <div className="mt-1.5 px-3 py-2 rounded-lg border border-white/[0.06] bg-white/[0.02] text-[12px] text-white/50 leading-relaxed">
+              <span className="text-white/30 font-mono text-[10px]">Question: </span>
+              {outcome.question}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Chat messages */}
       <div className="flex flex-col gap-2 px-4 py-3 max-h-[55vh] overflow-y-auto scrollbar-none [&::-webkit-scrollbar]:hidden">
         {messages.length === 0 && (
@@ -297,12 +337,12 @@ export function SuggestionCard() {
             onFocus={handleInputFocus}
             onBlur={handleInputBlur}
             placeholder="Ask anything… (Ctrl+Shift+/ · Ctrl+Shift+G to auto-trigger)"
-            disabled={aiStreaming}
+            disabled={aiStreaming || !isActive}
             className="flex-1 bg-transparent border-none outline-none text-[13px] text-white/90 placeholder-white/25 font-sans disabled:opacity-40"
           />
           <button
             onClick={() => sendAsk(ask)}
-            disabled={!ask.trim() || aiStreaming}
+            disabled={!ask.trim() || aiStreaming || !isActive}
             className="flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-lg bg-violet-500/30 border border-violet-400/20 text-violet-400 hover:bg-violet-500/50 disabled:opacity-20 disabled:cursor-not-allowed transition-all"
           >
             <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
