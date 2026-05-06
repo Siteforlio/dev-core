@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useOverlayStore } from '../../store/overlayStore'
-import { getFreshToken } from '../../lib/apiFetch'
+import { getFreshToken, apiFetch } from '../../lib/apiFetch'
 import { AudioSourcePicker } from './AudioSourcePicker'
 import type { SessionContext } from '../../types/devcore'
 
@@ -145,15 +145,10 @@ export function SuggestionCard() {
   // Fetch recent sessions when picker opens
   useEffect(() => {
     if (!sessionPickerOpen) return
-    getFreshToken().then(t => {
-      if (!t) return
-      fetch('/api/v1/cluely/sessions?limit=10', {
-        headers: { Authorization: `Bearer ${t}` },
-      })
-        .then(r => r.ok ? r.json() : null)
-        .then(data => { if (data?.sessions) setRecentSessions(data.sessions) })
-        .catch(() => {})
-    })
+    apiFetch('http://localhost:8000/api/v1/cluely/sessions?limit=10')
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data?.sessions) setRecentSessions(data.sessions) })
+      .catch(() => {})
   }, [sessionPickerOpen])
 
   // Close picker on outside click
