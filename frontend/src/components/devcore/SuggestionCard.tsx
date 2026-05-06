@@ -143,21 +143,16 @@ export function SuggestionCard() {
   }, [messages])
 
   const fetchRecentSessions = async () => {
-    console.log('[sessions] fetchRecentSessions called')
-    const t = await getFreshToken()
-    console.log('[sessions] token:', t ? t.slice(0, 20) + '…' : 'NULL')
+    // Try IPC token first (works in overlay/file:// context), fall back to auth store
+    const t = await (window as any).electronAPI?.getAccessToken?.() ?? await getFreshToken()
     if (!t) return
     try {
       const r = await fetch('http://localhost:8000/api/v1/cluely/sessions?limit=10', {
         headers: { Authorization: `Bearer ${t}` },
       })
-      console.log('[sessions] response status:', r.status)
       const data = r.ok ? await r.json() : null
-      console.log('[sessions] data:', data)
       if (data?.sessions) setRecentSessions(data.sessions)
-    } catch (e) {
-      console.error('[sessions] fetch error:', e)
-    }
+    } catch {}
   }
 
   // Close picker on outside click

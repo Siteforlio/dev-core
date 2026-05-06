@@ -42,9 +42,14 @@ function createWindow() {
   }
 }
 
+let _lastToken: string = ''
+
+ipcMain.handle('auth:get:token', () => _lastToken || null)
+
 ipcMain.handle('devcore:session:start', async (_e, payload) => {
   try {
     const token: string = payload.token ?? ''
+    if (token) _lastToken = token
     startAudioCapture(BACKEND_WS, token, payload.audioSource ?? 'both', payload.sessionId, payload.context ?? {}, payload.micDeviceId ?? null, payload.sysDeviceId ?? null)
   } catch (err) {
     console.error('[devcore] session:start failed:', err)
