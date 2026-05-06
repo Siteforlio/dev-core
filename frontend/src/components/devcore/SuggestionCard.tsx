@@ -42,6 +42,9 @@ const EMPTY_CONTEXT: SessionContext = {
   jobTitle: '', company: '', resumeText: '', jdText: '', files: [],
 }
 
+// Module-level token cache — persists across renders in the overlay process
+let _overlayToken: string | null = null
+
 const AI_PENDING_ID = '__ai_pending__'
 
 export function SuggestionCard() {
@@ -143,8 +146,14 @@ export function SuggestionCard() {
   }, [messages])
 
   const fetchRecentSessions = async () => {
-    // Try IPC token first (works in overlay/file:// context), fall back to auth store
-    const t = await (window as any).electronAPI?.getAccessToken?.() ?? await getFreshToken()
+    // Try cached token, then auth store, then direct localStorage read (overlay file:// origin)
+    let t = _overlayToken ?? await getFreshToken()
+    if (!t) {
+      try {
+        const raw = localStorage.getItem('auth')
+        if (raw) t = JSON.parse(raw)?.state?.accessToken ?? null
+      } catch {}
+    }
     if (!t) return
     try {
       const r = await fetch('http://localhost:8000/api/v1/cluely/sessions?limit=10', {
@@ -168,6 +177,7 @@ export function SuggestionCard() {
   const handleStart = async () => {
     const t = await getFreshToken()
     if (!t) return
+    _overlayToken = t
     const id = crypto.randomUUID()
     setSessionId(id)
     setSessionTitle('Starting…')
@@ -179,6 +189,7 @@ export function SuggestionCard() {
     setSessionPickerOpen(false)
     const t = await getFreshToken()
     if (!t) return
+    _overlayToken = t
     setSessionId(session.id)
     setSessionTitle(session.title)
     setMessages([])
