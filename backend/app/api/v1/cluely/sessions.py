@@ -1,18 +1,25 @@
 from fastapi import APIRouter, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
 from app.core.database import get_db
-from app.core.auth import get_current_user
+from app.core.security import decode_token
 
 router = APIRouter(prefix="/cluely", tags=["cluely"])
+
+bearer = HTTPBearer()
+
+
+def get_user_id(credentials: HTTPAuthorizationCredentials = Depends(bearer)) -> str:
+    return decode_token(credentials.credentials)
 
 
 @router.get("/sessions")
 async def list_sessions(
     limit: int = 20,
     db: AsyncSession = Depends(get_db),
-    user=Depends(get_current_user),
+    user_id: str = Depends(get_user_id),
 ):
     rows = (await db.execute(text("""
         SELECT s.id, s.title, s.company, s.role,
@@ -24,7 +31,7 @@ async def list_sessions(
         GROUP BY s.id
         ORDER BY s.started_at DESC
         LIMIT :limit
-    """), {"uid": str(user.id), "limit": limit})).fetchall()
+    """), {"uid": user_id, "limit": limit})).fetchall()
 
     return {
         "sessions": [
