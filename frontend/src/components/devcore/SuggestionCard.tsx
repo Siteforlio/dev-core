@@ -142,19 +142,17 @@ export function SuggestionCard() {
     chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  // Fetch recent sessions when picker opens
-  useEffect(() => {
-    if (!sessionPickerOpen) return
-    getFreshToken().then(t => {
-      if (!t) return
-      fetch('http://localhost:8000/api/v1/cluely/sessions?limit=10', {
+  const fetchRecentSessions = async () => {
+    const t = await getFreshToken()
+    if (!t) return
+    try {
+      const r = await fetch('http://localhost:8000/api/v1/cluely/sessions?limit=10', {
         headers: { Authorization: `Bearer ${t}` },
       })
-        .then(r => r.ok ? r.json() : null)
-        .then(data => { if (data?.sessions) setRecentSessions(data.sessions) })
-        .catch(() => {})
-    })
-  }, [sessionPickerOpen])
+      const data = r.ok ? await r.json() : null
+      if (data?.sessions) setRecentSessions(data.sessions)
+    } catch {}
+  }
 
   // Close picker on outside click
   useEffect(() => {
@@ -275,7 +273,7 @@ export function SuggestionCard() {
             />
           ) : (
             <button
-              onClick={() => !isActive && setSessionPickerOpen(v => !v)}
+              onClick={() => { if (!isActive) { setSessionPickerOpen(v => !v); fetchRecentSessions() } }}
               onDoubleClick={() => isActive && setEditingTitle(true)}
               className={`flex items-center gap-1.5 font-display text-[13px] font-extrabold tracking-[0.1em] transition-all ${
                 isActive
