@@ -205,40 +205,25 @@ export function SuggestionCard() {
     if (!t) return
     _overlayToken = t
 
-    // If there's a previous session, resume it with its history
     if (lastSessionRef.current) {
+      // Reconnect to the same session — messages + transcript already in state, don't clear them
       const prev = lastSessionRef.current
       setSessionId(prev.id)
       setSessionTitle(prev.title)
-      try {
-        const r = await fetch(`http://localhost:8000/api/v1/cluely/sessions/${prev.id}`, {
-          headers: { Authorization: `Bearer ${t}` },
-        })
-        const data = r.ok ? await r.json() : null
-        if (data) {
-          const history: ChatMessage[] = []
-          for (const i of data.interactions ?? []) {
-            if (i.question) history.push({ id: crypto.randomUUID(), role: 'user', text: i.question })
-            if (i.answer)   history.push({ id: crypto.randomUUID(), role: 'ai',   text: i.answer  })
-          }
-          setMessages(history)
-          if (data.transcript?.length) useOverlayStore.getState().setTranscript(data.transcript)
-        }
-      } catch {}
       api()?.startSession({
         sessionId: prev.id,
         context: { jobTitle: prev.role, company: prev.company, resumeText: '', jdText: '', files: [] },
         audioSource, micDeviceId, sysDeviceId, token: t,
       })
-      return
+    } else {
+      // Brand new session
+      const id = crypto.randomUUID()
+      setSessionId(id)
+      setSessionTitle('Starting…')
+      setMessages([])
+      useOverlayStore.getState().setTranscript([])
+      api()?.startSession({ sessionId: id, context: EMPTY_CONTEXT, audioSource, micDeviceId, sysDeviceId, token: t })
     }
-
-    // No previous session — start fresh
-    const id = crypto.randomUUID()
-    setSessionId(id)
-    setSessionTitle('Starting…')
-    setMessages([])
-    api()?.startSession({ sessionId: id, context: EMPTY_CONTEXT, audioSource, micDeviceId, sysDeviceId, token: t })
   }
 
   const handleResumeSession = async (session: any) => {
@@ -286,13 +271,13 @@ export function SuggestionCard() {
   const handlePause = () => api()?.pauseSession?.()
   const handleEnd = () => {
     const { sessionId: sid, sessionTitle: title } = useOverlayStore.getState()
-    if (sid) {
-      lastSessionRef.current = { id: sid, title, role: '', company: '' }
-    }
+    // Save session ref so Start can reconnect — do NOT clear messages or transcript
+    if (sid) lastSessionRef.current = { id: sid, title, role: '', company: '' }
     api()?.endSession?.()
     setSessionId(null)
     setOutcome(null)
     useOverlayStore.getState().setState('idle')
+    // messages and transcript intentionally kept in state
   }
 
   const sendAsk = (text: string) => {
@@ -404,7 +389,7 @@ export function SuggestionCard() {
               <div className="px-3 py-2 border-b border-white/[0.07] flex items-center justify-between">
                 <span className="font-mono text-[9px] uppercase tracking-widest text-white/40">Sessions</span>
                 <button
-                  onClick={() => { setSessionPickerOpen(false); handleStart() }}
+                  onClick={() => { setSessionPickerOpen(false); lastSessionRef.current = null; handleStart() }}
                   className="flex items-center gap-1 px-2 py-0.5 rounded-md border border-violet-400/30 bg-violet-400/10 text-violet-400 font-mono text-[9px] hover:bg-violet-400/20 transition-all"
                 >
                   <svg width="8" height="8" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
