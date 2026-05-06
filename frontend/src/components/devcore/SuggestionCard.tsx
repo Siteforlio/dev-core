@@ -143,15 +143,21 @@ export function SuggestionCard() {
   }, [messages])
 
   const fetchRecentSessions = async () => {
+    console.log('[sessions] fetchRecentSessions called')
     const t = await getFreshToken()
+    console.log('[sessions] token:', t ? t.slice(0, 20) + '…' : 'NULL')
     if (!t) return
     try {
       const r = await fetch('http://localhost:8000/api/v1/cluely/sessions?limit=10', {
         headers: { Authorization: `Bearer ${t}` },
       })
+      console.log('[sessions] response status:', r.status)
       const data = r.ok ? await r.json() : null
+      console.log('[sessions] data:', data)
       if (data?.sessions) setRecentSessions(data.sessions)
-    } catch {}
+    } catch (e) {
+      console.error('[sessions] fetch error:', e)
+    }
   }
 
   // Close picker on outside click
