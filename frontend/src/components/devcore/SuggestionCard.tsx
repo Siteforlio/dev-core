@@ -69,13 +69,28 @@ export function SuggestionCard() {
   const chatBottomRef = useRef<HTMLDivElement>(null)
   const pickerRef = useRef<HTMLDivElement>(null)
 
-  // Check auth on mount
+  // Check auth on mount and whenever localStorage changes (e.g. user logs in from main window)
   useEffect(() => {
     const check = async () => {
       const t = _overlayToken ?? await getFreshToken()
+      if (!t) {
+        try {
+          const raw = localStorage.getItem('auth')
+          if (raw) {
+            const stored = JSON.parse(raw)?.state?.accessToken ?? null
+            if (stored) { _overlayToken = stored; setAuthed(true); return }
+          }
+        } catch {}
+      }
       setAuthed(!!t)
     }
     check()
+
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === 'auth') check()
+    }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
   }, [])
 
   // Sync UI state with actual WS connection
