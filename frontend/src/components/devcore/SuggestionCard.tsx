@@ -55,6 +55,7 @@ export function SuggestionCard() {
   } = useOverlayStore()
 
   const api = () => (window as any).electronAPI?.devcore
+  const [authed, setAuthed] = useState<boolean | null>(null)
   const [ask, setAsk] = useState('')
   const [editingTitle, setEditingTitle] = useState(false)
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -67,6 +68,15 @@ export function SuggestionCard() {
   const titleRef = useRef<HTMLInputElement>(null)
   const chatBottomRef = useRef<HTMLDivElement>(null)
   const pickerRef = useRef<HTMLDivElement>(null)
+
+  // Check auth on mount
+  useEffect(() => {
+    const check = async () => {
+      const t = _overlayToken ?? await getFreshToken()
+      setAuthed(!!t)
+    }
+    check()
+  }, [])
 
   // Sync UI state with actual WS connection
   useEffect(() => {
@@ -266,6 +276,18 @@ export function SuggestionCard() {
   }, [])
 
   const isActive = state !== 'idle'
+
+  if (authed === false) {
+    return (
+      <div className="bg-[rgba(9,9,18,0.97)] border border-white/[0.07] rounded-[13px] shadow-[0_12px_48px_rgba(0,0,0,0.75)] px-6 py-5 flex items-center gap-3" style={{ width: '594px' }}>
+        <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24" className="text-amber-400 flex-shrink-0"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+        <div>
+          <p className="font-mono text-[12px] text-white/80">Not logged in</p>
+          <p className="font-mono text-[10px] text-white/35 mt-0.5">Open the DevCore app and sign in, then restart the overlay.</p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div id="overlay-card" className="bg-[rgba(9,9,18,0.97)] border border-white/[0.07] rounded-[13px] overflow-hidden shadow-[0_12px_48px_rgba(0,0,0,0.75)]" style={{ width: '594px' }}>
