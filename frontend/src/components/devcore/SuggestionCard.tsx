@@ -68,6 +68,7 @@ export function SuggestionCard() {
   const titleRef = useRef<HTMLInputElement>(null)
   const chatBottomRef = useRef<HTMLDivElement>(null)
   const pickerRef = useRef<HTMLDivElement>(null)
+  const lastSessionRef = useRef<{ id: string; title: string; role: string; company: string } | null>(null)
 
   // Check auth on mount and whenever localStorage changes (e.g. user logs in from main window)
   useEffect(() => {
@@ -200,9 +201,39 @@ export function SuggestionCard() {
   }, [sessionPickerOpen])
 
   const handleStart = async () => {
-    const t = await getFreshToken()
+    const t = _overlayToken ?? await getFreshToken()
     if (!t) return
     _overlayToken = t
+
+    // If there's a previous session, resume it with its history
+    if (lastSessionRef.current) {
+      const prev = lastSessionRef.current
+      setSessionId(prev.id)
+      setSessionTitle(prev.title)
+      try {
+        const r = await fetch(`http://localhost:8000/api/v1/cluely/sessions/${prev.id}`, {
+          headers: { Authorization: `Bearer ${t}` },
+        })
+        const data = r.ok ? await r.json() : null
+        if (data) {
+          const history: ChatMessage[] = []
+          for (const i of data.interactions ?? []) {
+            if (i.question) history.push({ id: crypto.randomUUID(), role: 'user', text: i.question })
+            if (i.answer)   history.push({ id: crypto.randomUUID(), role: 'ai',   text: i.answer  })
+          }
+          setMessages(history)
+          if (data.transcript?.length) useOverlayStore.getState().setTranscript(data.transcript)
+        }
+      } catch {}
+      api()?.startSession({
+        sessionId: prev.id,
+        context: { jobTitle: prev.role, company: prev.company, resumeText: '', jdText: '', files: [] },
+        audioSource, micDeviceId, sysDeviceId, token: t,
+      })
+      return
+    }
+
+    // No previous session — start fresh
     const id = crypto.randomUUID()
     setSessionId(id)
     setSessionTitle('Starting…')
@@ -212,6 +243,7 @@ export function SuggestionCard() {
 
   const handleResumeSession = async (session: any) => {
     setSessionPickerOpen(false)
+    lastSessionRef.current = null  // explicit pick — don't auto-resume on next start
     const t = _overlayToken ?? await getFreshToken()
     if (!t) return
     _overlayToken = t
@@ -253,6 +285,10 @@ export function SuggestionCard() {
 
   const handlePause = () => api()?.pauseSession?.()
   const handleEnd = () => {
+    const { sessionId: sid, sessionTitle: title } = useOverlayStore.getState()
+    if (sid) {
+      lastSessionRef.current = { id: sid, title, role: '', company: '' }
+    }
     api()?.endSession?.()
     setSessionId(null)
     setOutcome(null)
