@@ -212,12 +212,34 @@ export function SuggestionCard() {
 
   const handleResumeSession = async (session: any) => {
     setSessionPickerOpen(false)
-    const t = await getFreshToken()
+    const t = _overlayToken ?? await getFreshToken()
     if (!t) return
     _overlayToken = t
     setSessionId(session.id)
     setSessionTitle(session.title)
-    setMessages([])
+
+    // Load history from backend
+    try {
+      const r = await fetch(`http://localhost:8000/api/v1/cluely/sessions/${session.id}`, {
+        headers: { Authorization: `Bearer ${t}` },
+      })
+      const data = r.ok ? await r.json() : null
+      if (data) {
+        // Rebuild chat messages from interactions (Q+A pairs)
+        const history: ChatMessage[] = []
+        for (const i of data.interactions ?? []) {
+          if (i.question) history.push({ id: crypto.randomUUID(), role: 'user', text: i.question })
+          if (i.answer)   history.push({ id: crypto.randomUUID(), role: 'ai',   text: i.answer  })
+        }
+        setMessages(history)
+
+        // Restore transcript into overlay store
+        if (data.transcript?.length) {
+          useOverlayStore.getState().setTranscript(data.transcript)
+        }
+      }
+    } catch {}
+
     api()?.startSession({
       sessionId: session.id,
       context: {
@@ -353,7 +375,7 @@ export function SuggestionCard() {
                   New
                 </button>
               </div>
-              <div className="max-h-[45vh] overflow-y-auto">
+              <div className="max-h-[45vh] overflow-y-auto [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/10 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-white/20">
                 {recentSessions.length === 0 && (
                   <p className="font-mono text-[10px] text-white/30 px-3 py-4 text-center">No sessions yet</p>
                 )}

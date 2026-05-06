@@ -23,6 +23,7 @@ interface OverlayStore {
   appendSuggestion:  (delta: string) => void
   clearSuggestion:   () => void
   addTranscript:     (entry: TranscriptEntry) => void
+  setTranscript:     (entries: TranscriptEntry[]) => void
   setLatency:        (ms: number) => void
   setAudioSource:    (src: 'mic' | 'system' | 'both') => void
   setMicDeviceId:    (id: number | null) => void
@@ -52,6 +53,7 @@ export const useOverlayStore = create<OverlayStore>((set) => ({
   appendSuggestion:  (d)  => set((st) => ({ suggestion: st.suggestion + d })),
   clearSuggestion:   ()   => set({ suggestion: '' }),
   addTranscript:     (e)  => set((st) => ({ transcript: [...st.transcript.slice(-19), e] })),
+  setTranscript:     (entries) => set({ transcript: entries }),
   setLatency:        (ms) => set({ latencyMs: ms }),
   setAudioSource:    (src)=> set({ audioSource: src }),
   setMicDeviceId:    (id) => set({ micDeviceId: id }),
