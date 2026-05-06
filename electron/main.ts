@@ -2,9 +2,25 @@ import { app, BrowserWindow, Menu, ipcMain, shell } from 'electron'
 import path from 'path'
 import fs from 'fs'
 import os from 'os'
+import { execFile } from 'child_process'
 import * as naudiodon from 'naudiodon'
 import { createOverlayWindow, getOverlayWindow, setOverlayContentBounds } from './overlay'
 import { startAudioCapture, stopAudioCapture, getActiveWs } from './audio'
+
+// Resolve paths to the Python venv and loopback helper script.
+// In dev: __dirname = dist-electron/, project root is one level up.
+const PROJECT_ROOT  = path.join(__dirname, '..')
+const PYTHON_EXE    = path.join(PROJECT_ROOT, 'backend', 'venv', 'Scripts', 'python.exe')
+const LOOPBACK_SCRIPT = path.join(PROJECT_ROOT, 'scripts', 'loopback_capture.py')
+
+function listLoopbackDevices(): Promise<{ id: number; name: string; rate: number; channels: number }[]> {
+  return new Promise((resolve) => {
+    execFile(PYTHON_EXE, [LOOPBACK_SCRIPT, 'list'], { timeout: 5000 }, (err, stdout) => {
+      if (err) { console.warn('[devcore] loopback list failed:', err.message); resolve([]); return }
+      try { resolve(JSON.parse(stdout.trim())) } catch { resolve([]) }
+    })
+  })
+}
 
 const BACKEND_WS = 'ws://localhost:8000/api/v1/cluely/ws'
 
@@ -70,19 +86,31 @@ ipcMain.handle('devcore:session:status', async () => {
 
 ipcMain.handle('devcore:devices:list', async () => {
   try {
-    const all = naudiodon.getDevices() as any[]
+    const all    = naudiodon.getDevices() as any[]
     const wasapi = all.filter((d: any) => d.hostAPIName === 'Windows WASAPI')
     const isLoopback = (d: any) =>
       d.isLoopbackDevice === true ||
       (d.maxInputChannels > 0 && /loopback|stereo mix|what u hear|wave out|\[loopback\]/i.test(d.name))
-    return {
-      mics: wasapi
-        .filter((d: any) => d.maxInputChannels > 0 && !isLoopback(d))
-        .map((d: any) => ({ id: d.id, name: d.name })),
-      systems: wasapi
-        .filter((d: any) => isLoopback(d))
-        .map((d: any) => ({ id: d.id, name: d.name })),
-    }
+
+    const mics = wasapi
+      .filter((d: any) => d.maxInputChannels > 0 && !isLoopback(d))
+      .map((d: any) => ({ id: d.id, name: d.name }))
+
+    // Merge naudiodon loopbacks (Stereo Mix if enabled) with pyaudiowpatch loopbacks
+    const naudiodonLoops = wasapi
+      .filter((d: any) => isLoopback(d))
+      .map((d: any) => ({ id: d.id, name: d.name }))
+
+    const pythonLoops = await listLoopbackDevices()
+    // pythonLoops use a separate ID space — prefix with 'py:' to avoid collision
+    const systems = [
+      ...naudiodonLoops,
+      ...pythonLoops
+        .filter(p => !naudiodonLoops.some(n => n.name.includes(p.name.replace(' [Loopback]', ''))))
+        .map(p => ({ id: p.id, name: p.name, _python: true, _rate: p.rate, _channels: p.channels })),
+    ]
+
+    return { mics, systems }
   } catch {
     return { mics: [], systems: [] }
   }

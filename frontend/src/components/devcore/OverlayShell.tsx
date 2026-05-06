@@ -30,10 +30,12 @@ export function OverlayShell() {
     <div id="overlay-root" className="fixed top-2 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 z-50">
       {/* Top pill — always visible */}
       <ListeningPill />
-      {/* Cards row */}
-      <div className="flex items-start gap-2">
+      {/* Cards row — transcript floats left, suggestion card stays fixed width */}
+      <div className="flex items-start gap-2 flex-nowrap">
         {transcriptOpen && <TranscriptCard />}
-        <SuggestionCard />
+        <div className="flex-shrink-0">
+          <SuggestionCard />
+        </div>
       </div>
     </div>
   )

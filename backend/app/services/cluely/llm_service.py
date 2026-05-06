@@ -89,6 +89,33 @@ class LLMService:
                 raise LLMRateLimitedError() from e
             raise
 
+    async def _detect_intent(self, text: str, has_transcript: bool) -> str:
+        """
+        Quickly classify user input as 'contextual' (about the ongoing interview
+        conversation) or 'standalone' (a fresh question needing a direct answer).
+        Returns 'contextual' or 'standalone'.
+        """
+        if not has_transcript:
+            return "standalone"
+
+        classification_prompt = (
+            "Classify this user message as CONTEXTUAL or STANDALONE.\n"
+            "CONTEXTUAL = the user is commenting on, clarifying, or asking about the ongoing interview conversation.\n"
+            "STANDALONE = the user is asking a fresh, self-contained question unrelated to the conversation flow.\n"
+            f"Message: \"{text}\"\n"
+            "Reply with exactly one word: CONTEXTUAL or STANDALONE."
+        )
+        try:
+            result = await deepseek_generate(
+                classification_prompt,
+                system="You are a message intent classifier. Reply with exactly one word.",
+                temperature=0.0,
+                max_tokens=5,
+            )
+            return "contextual" if "CONTEXTUAL" in result.upper() else "standalone"
+        except Exception:
+            return "contextual"  # safe default
+
     async def stream_manual_ask(
         self,
         text: str,
@@ -97,10 +124,15 @@ class LLMService:
         rag_chunks: list[str] | None = None,
         summary: str = "",
         facts: str = "",
+        recent: list[TranscriptEntry] | None = None,
     ) -> AsyncGenerator[str, None]:
         if rag_chunks is None:
             rag_chunks = []
-        ctx_block = self._build_context_block(facts, summary, [], rag_chunks)
+        if recent is None:
+            recent = []
+
+        intent = await self._detect_intent(text, has_transcript=bool(recent or summary))
+        ctx_block = self._build_context_block(facts, summary, recent, rag_chunks)
         system = self._build_system_prompt(context)
 
         if mode == "ultra":
@@ -108,13 +140,29 @@ class LLMService:
             yield result
             return
 
-        if mode == "hints":
-            prompt = f"{ctx_block}\n\nProvide hints and approach only (no full solution) for: {text}"
-        else:  # solve
-            prompt = f"{ctx_block}\n\nWrite a complete, clean solution for: {text}"
+        if mode == "solve":
+            prompt = f"{ctx_block}\n\nThe candidate (you) types: \"{text}\"\nWrite a complete, clean solution in their voice."
+        elif intent == "contextual":
+            # User is engaging with the interview flow — respond as the candidate continuing the conversation
+            prompt = (
+                f"{ctx_block}\n\n"
+                f"The candidate adds: \"{text}\"\n"
+                "Continue speaking as the candidate, building naturally on the conversation above. "
+                "Stay in first person, conversational, 1-3 sentences."
+            )
+        else:
+            # Standalone question — answer it directly as the candidate
+            prompt = (
+                f"{ctx_block}\n\n"
+                f"The candidate wants to answer this specific question: \"{text}\"\n"
+                "Respond directly and specifically to this question in first person, as the candidate speaking aloud. "
+                "Do not reference the conversation above unless directly relevant. 2-4 sentences."
+            )
+
+        logger.info("[llm] manual_ask intent=%s mode=%s text=%r", intent, mode, text[:60])
 
         try:
-            async for delta in deepseek_stream(prompt, system=system, temperature=0.5, max_tokens=800):
+            async for delta in deepseek_stream(prompt, system=system, temperature=0.7, max_tokens=300):
                 yield delta
         except Exception as e:
             if "429" in str(e) or "rate" in str(e).lower():

@@ -58,9 +58,12 @@ export function SuggestionCard() {
   const [aiStreaming, setAiStreaming] = useState(false)
   const [outcome, setOutcome] = useState<{ text: string; question: string } | null>(null)
   const [outcomeExpanded, setOutcomeExpanded] = useState(false)
+  const [sessionPickerOpen, setSessionPickerOpen] = useState(false)
+  const [recentSessions, setRecentSessions] = useState<any[]>([])
   const askRef = useRef<HTMLInputElement>(null)
   const titleRef = useRef<HTMLInputElement>(null)
   const chatBottomRef = useRef<HTMLDivElement>(null)
+  const pickerRef = useRef<HTMLDivElement>(null)
 
   // Sync UI state with actual WS connection
   useEffect(() => {
@@ -122,10 +125,15 @@ export function SuggestionCard() {
       setOutcomeExpanded(false)
     })
 
+    const removeTitle = devcore.onSessionTitle?.(({ title }: { title: string }) => {
+      if (title) setSessionTitle(title)
+    })
+
     return () => {
       removeSuggestion?.()
       removeStatus?.()
       removeOutcome?.()
+      removeTitle?.()
     }
   }, [])
 
@@ -134,13 +142,56 @@ export function SuggestionCard() {
     chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
+  // Fetch recent sessions when picker opens
+  useEffect(() => {
+    if (!sessionPickerOpen) return
+    getFreshToken().then(t => {
+      if (!t) return
+      fetch('/api/v1/cluely/sessions?limit=10', {
+        headers: { Authorization: `Bearer ${t}` },
+      })
+        .then(r => r.ok ? r.json() : null)
+        .then(data => { if (data?.sessions) setRecentSessions(data.sessions) })
+        .catch(() => {})
+    })
+  }, [sessionPickerOpen])
+
+  // Close picker on outside click
+  useEffect(() => {
+    if (!sessionPickerOpen) return
+    const handler = (e: MouseEvent) => {
+      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) setSessionPickerOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [sessionPickerOpen])
+
   const handleStart = async () => {
     const t = await getFreshToken()
     if (!t) return
     const id = crypto.randomUUID()
     setSessionId(id)
+    setSessionTitle('Starting…')
     setMessages([])
     api()?.startSession({ sessionId: id, context: EMPTY_CONTEXT, audioSource, micDeviceId, sysDeviceId, token: t })
+  }
+
+  const handleResumeSession = async (session: any) => {
+    setSessionPickerOpen(false)
+    const t = await getFreshToken()
+    if (!t) return
+    setSessionId(session.id)
+    setSessionTitle(session.title)
+    setMessages([])
+    api()?.startSession({
+      sessionId: session.id,
+      context: {
+        jobTitle: session.role ?? '',
+        company:  session.company ?? '',
+        resumeText: '', jdText: '', files: [],
+      },
+      audioSource, micDeviceId, sysDeviceId, token: t,
+    })
   }
 
   const handlePause = () => api()?.pauseSession?.()
@@ -207,25 +258,82 @@ export function SuggestionCard() {
   const isActive = state !== 'idle'
 
   return (
-    <div id="overlay-card" className="bg-[rgba(9,9,18,0.97)] border border-white/[0.07] rounded-[13px] overflow-hidden shadow-[0_12px_48px_rgba(0,0,0,0.75)] w-[540px] max-w-[90vw]">
+    <div id="overlay-card" className="bg-[rgba(9,9,18,0.97)] border border-white/[0.07] rounded-[13px] overflow-hidden shadow-[0_12px_48px_rgba(0,0,0,0.75)]" style={{ width: '594px' }}>
 
       {/* Header */}
       <div className="flex items-center gap-2 px-4 py-2.5 border-b border-white/[0.07] bg-white/[0.015]">
         <span className={`w-2 h-2 rounded-full flex-shrink-0 ${isActive ? 'animate-pulse bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]' : 'bg-white/20'}`} />
-        {editingTitle ? (
-          <input
-            ref={titleRef}
-            defaultValue={sessionTitle}
-            onBlur={e => { setSessionTitle(e.target.value || 'Untitled'); setEditingTitle(false) }}
-            onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') { setSessionTitle((e.target as HTMLInputElement).value || 'Untitled'); setEditingTitle(false) } }}
-            autoFocus
-            className="bg-transparent border-none outline-none font-display text-[13px] font-extrabold tracking-[0.1em] text-white/80 w-40"
-          />
-        ) : (
-          <button onClick={() => setEditingTitle(true)} className="font-display text-[13px] font-extrabold tracking-[0.1em] text-white/80 hover:text-white transition-colors">
-            {sessionTitle}
-          </button>
-        )}
+        <div className="relative" ref={pickerRef}>
+          {editingTitle ? (
+            <input
+              ref={titleRef}
+              defaultValue={sessionTitle}
+              onBlur={e => { setSessionTitle(e.target.value || 'Session'); setEditingTitle(false) }}
+              onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') { setSessionTitle((e.target as HTMLInputElement).value || 'Session'); setEditingTitle(false) } }}
+              autoFocus
+              className="bg-transparent border-none outline-none font-display text-[13px] font-extrabold tracking-[0.1em] text-white/80 w-44"
+            />
+          ) : (
+            <button
+              onClick={() => !isActive && setSessionPickerOpen(v => !v)}
+              onDoubleClick={() => isActive && setEditingTitle(true)}
+              className={`flex items-center gap-1.5 font-display text-[13px] font-extrabold tracking-[0.1em] transition-all ${
+                isActive
+                  ? 'text-white/80'
+                  : 'text-white/80 hover:text-white px-2 py-0.5 rounded-md border border-white/[0.10] hover:border-white/20 bg-white/[0.04] hover:bg-white/[0.07]'
+              }`}
+              title={isActive ? 'Double-click to rename' : 'Click to switch session'}
+            >
+              {sessionTitle}
+              {!isActive && (
+                <svg width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24" className="text-white/50 flex-shrink-0">
+                  <path d="m6 9 6 6 6-6"/>
+                </svg>
+              )}
+            </button>
+          )}
+
+          {/* Session picker dropdown */}
+          {sessionPickerOpen && !isActive && (
+            <div className="absolute top-full mt-2 left-0 bg-[rgba(12,12,22,0.99)] border border-white/[0.12] rounded-xl shadow-2xl z-50 w-[300px] overflow-hidden">
+              <div className="px-3 py-2 border-b border-white/[0.07] flex items-center justify-between">
+                <span className="font-mono text-[9px] uppercase tracking-widest text-white/40">Sessions</span>
+                <button
+                  onClick={() => { setSessionPickerOpen(false); handleStart() }}
+                  className="flex items-center gap-1 px-2 py-0.5 rounded-md border border-violet-400/30 bg-violet-400/10 text-violet-400 font-mono text-[9px] hover:bg-violet-400/20 transition-all"
+                >
+                  <svg width="8" height="8" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                  New
+                </button>
+              </div>
+              <div className="max-h-[45vh] overflow-y-auto">
+                {recentSessions.length === 0 && (
+                  <p className="font-mono text-[10px] text-white/30 px-3 py-4 text-center">No sessions yet</p>
+                )}
+                {recentSessions.map(s => {
+                  const date = s.started_at ? new Date(s.started_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : ''
+                  const dur  = s.duration_seconds ? `${Math.round(s.duration_seconds / 60)}m` : ''
+                  return (
+                    <button
+                      key={s.id}
+                      onClick={() => handleResumeSession(s)}
+                      className="flex items-center gap-2.5 w-full text-left px-3 py-2.5 hover:bg-white/[0.05] transition-all border-b border-white/[0.04] last:border-0 group"
+                    >
+                      <div className="w-1.5 h-1.5 rounded-full bg-violet-400/40 flex-shrink-0 group-hover:bg-violet-400 transition-colors" />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[12px] text-white/80 truncate font-medium group-hover:text-white transition-colors">{s.title}</div>
+                        <div className="font-mono text-[9px] text-white/30 mt-0.5">
+                          {date}{dur ? ` · ${dur}` : ''}{s.transcript_lines ? ` · ${s.transcript_lines} lines` : ''}
+                        </div>
+                      </div>
+                      <svg width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" className="text-white/20 group-hover:text-violet-400 flex-shrink-0 transition-colors"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+        </div>
         {isActive && latencyMs > 0 && <span className="font-mono text-[10px] text-emerald-400 ml-1">{latencyMs}ms</span>}
         <div className="flex-1" />
         <AudioSourcePicker />
@@ -266,7 +374,7 @@ export function SuggestionCard() {
             onClick={() => setOutcomeExpanded(v => !v)}
           >
             <span className="text-amber-400 font-mono text-[10px] flex-shrink-0">▸ Land on:</span>
-            <span className="text-amber-300/90 text-[12px] leading-snug flex-1 truncate">
+            <span className="text-amber-300/90 text-[12px] leading-snug flex-1 break-words min-w-0">
               {outcome.text}
             </span>
             <button

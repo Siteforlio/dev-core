@@ -1,9 +1,16 @@
 import * as naudiodon from 'naudiodon'
 import WebSocket from 'ws'
+import path from 'path'
+import { spawn, ChildProcess } from 'child_process'
 import { getOverlayWindow } from './overlay'
+
+const PROJECT_ROOT    = path.join(__dirname, '..')
+const PYTHON_EXE      = path.join(PROJECT_ROOT, 'backend', 'venv', 'Scripts', 'python.exe')
+const LOOPBACK_SCRIPT = path.join(PROJECT_ROOT, 'scripts', 'loopback_capture.py')
 
 let micInput: naudiodon.IoStreamRead | null = null
 let sysInput: naudiodon.IoStreamRead | null = null
+let sysProc: ChildProcess | null = null   // Python loopback process
 let ws: WebSocket | null = null
 let chunkSeq = 0
 
@@ -57,6 +64,9 @@ function forwardToOverlay(frame: Record<string, unknown>) {
         question: frame.question,
       })
       break
+    case 'session_title':
+      win.webContents.send('devcore:session:title', { title: frame.title })
+      break
   }
 }
 
@@ -78,7 +88,132 @@ export function startAudioCapture(
 function _stopStreams() {
   try { micInput?.quit() } catch { /* already stopped */ }
   try { sysInput?.quit() } catch { /* already stopped */ }
+  if (sysProc) { try { sysProc.kill() } catch { /* already dead */ }; sysProc = null }
   micInput = sysInput = null
+}
+
+// Start system audio capture via pyaudiowpatch subprocess.
+// Returns the ChildProcess so _stopStreams can kill it.
+function _startPythonLoopback(deviceId: number, rate: number, channels: number): ChildProcess | null {
+  try {
+    const proc = spawn(PYTHON_EXE, [
+      LOOPBACK_SCRIPT, 'capture',
+      '--device-id', String(deviceId),
+      '--rate',      String(rate),
+      '--channels',  String(channels),
+    ])
+
+    // VAD state — rate/channels may be updated when Python signals READY
+    const FRAME_MS         = 30
+    const SPEECH_THRESHOLD = 0.004
+    const SILENCE_FLUSH    = 20
+    let MIN_BYTES          = rate * 0.2 * 2
+    let FRAME_BYTES        = Math.floor(rate * FRAME_MS / 1000) * channels * 2
+
+    let rawBuf       = Buffer.alloc(0)
+    let speechBuf    = Buffer.alloc(0)
+    let silentFrames = 0
+    let inSpeech     = false
+
+    proc.stdout?.on('data', (chunk: Buffer) => {
+      if (!ws || ws.readyState !== 1) return
+      rawBuf = Buffer.concat([rawBuf, chunk])
+
+      while (rawBuf.length >= FRAME_BYTES) {
+        const frame = rawBuf.subarray(0, FRAME_BYTES)
+        rawBuf = rawBuf.subarray(FRAME_BYTES)
+
+        // stereo → mono
+        let mono: Buffer
+        if (channels === 2) {
+          const frames = Math.floor(frame.length / 4)
+          mono = Buffer.alloc(frames * 2)
+          for (let i = 0; i < frames; i++) {
+            const l = frame.readInt16LE(i * 4)
+            const r = frame.readInt16LE(i * 4 + 2)
+            mono.writeInt16LE(Math.round((l + r) / 2), i * 2)
+          }
+        } else {
+          mono = frame
+        }
+
+        // resample to 16kHz
+        let pcm: Buffer
+        if (rate !== 16000) {
+          const ratio     = rate / 16000
+          const inSamples = mono.length / 2
+          const outCount  = Math.floor(inSamples / ratio)
+          pcm = Buffer.alloc(outCount * 2)
+          for (let i = 0; i < outCount; i++) {
+            const src = Math.min(Math.round(i * ratio), inSamples - 1)
+            pcm.writeInt16LE(mono.readInt16LE(src * 2), i * 2)
+          }
+        } else {
+          pcm = mono
+        }
+
+        // RMS
+        const samples = pcm.length / 2
+        let sumSq = 0
+        for (let i = 0; i < samples; i++) {
+          const s = pcm.readInt16LE(i * 2) / 32768.0
+          sumSq += s * s
+        }
+        const rms = Math.sqrt(sumSq / samples)
+
+        if (rms >= SPEECH_THRESHOLD) {
+          speechBuf    = Buffer.concat([speechBuf, pcm])
+          silentFrames = 0
+          inSpeech     = true
+        } else if (inSpeech) {
+          speechBuf    = Buffer.concat([speechBuf, pcm])
+          silentFrames++
+          if (silentFrames >= SILENCE_FLUSH) {
+            if (speechBuf.length >= MIN_BYTES) {
+              const sock = ws
+              if (sock && sock.readyState === 1) {
+                const seq    = chunkSeq++ % 65536
+                const header = Buffer.alloc(3)
+                header.writeUInt8(0x02, 0)
+                header.writeUInt16BE(seq, 1)
+                try { sock.send(Buffer.concat([header, speechBuf])) } catch { /* closed */ }
+              }
+            }
+            speechBuf    = Buffer.alloc(0)
+            silentFrames = 0
+            inSpeech     = false
+          }
+        }
+      }
+    })
+
+    proc.stderr?.on('data', (d: Buffer) => {
+      const msg = d.toString().trim()
+      console.log('[devcore-loopback]', msg)
+      // Parse READY line to get actual rate/channels — update VAD frame size
+      const m = msg.match(/READY rate=(\d+) channels=(\d+)/)
+      if (m) {
+        rate     = parseInt(m[1])
+        channels = parseInt(m[2])
+        FRAME_BYTES = Math.floor(rate * FRAME_MS / 1000) * channels * 2
+        MIN_BYTES   = rate * 0.2 * 2
+        console.log(`[devcore-loopback] stream ready @ ${rate} Hz ${channels}ch`)
+      }
+    })
+    proc.on('exit', (code) => {
+      console.log(`[devcore-loopback] process exited code=${code}`)
+      if (sysProc === proc) sysProc = null
+    })
+    proc.on('error', (err) => {
+      console.error('[devcore-loopback] spawn error:', err.message)
+    })
+
+    console.log(`[devcore-audio] Python loopback started — device ${deviceId} @ ${rate} Hz ${channels}ch`)
+    return proc
+  } catch (err) {
+    console.error('[devcore-audio] Failed to start Python loopback:', err)
+    return null
+  }
 }
 
 function _scheduleReconnect() {
@@ -326,7 +461,16 @@ function _openWebSocket(
 
     if ((audioSource === 'system' || audioSource === 'both')) {
       const sysId = sysDeviceId ?? loopback?.id
-      if (sysId != null) sysInput = startStream(sysId, 0x02)
+      if (sysId != null) {
+        sysInput = startStream(sysId, 0x02)
+        if (!sysInput) {
+          // naudiodon couldn't open it — try pyaudiowpatch subprocess
+          const devInfo = devices.find((d: any) => d.id === sysId) as any
+          const rate    = devInfo?.defaultSampleRate ?? 48000
+          const ch      = Math.min(devInfo?.maxInputChannels ?? 2, 2) || 2
+          sysProc = _startPythonLoopback(sysId, Math.round(rate), ch)
+        }
+      }
     }
     if ((audioSource === 'mic' || audioSource === 'both')) {
       const micId = micDeviceId ?? mic?.id

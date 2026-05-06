@@ -107,6 +107,10 @@ class OverlayService:
                         ctx_mgr, rag, session_ctx, repo = await self._start_session(
                             ws, data, user_id
                         )
+                        # Send initial title to frontend immediately
+                        title = session_ctx.get("_initial_title", "")
+                        if title:
+                            await _safe_send(ws, {"type": "session_title", "title": title})
                     elif mtype == "session_pause":
                         if ctx_mgr:
                             await ctx_mgr.set_state("paused")
@@ -139,7 +143,47 @@ class OverlayService:
                 sid = session_ctx.get("_session_id")
                 if sid:
                     try:
-                        await repo.end_session(sid)
+                        # Generate AI title + summary from transcript before closing
+                        transcript_buf = session_ctx.get("_transcript_buf", [])
+                        post_summary = None
+                        ai_title = None
+                        if transcript_buf:
+                            full_text = "\n".join(
+                                f"{e.speaker}: {e.text}" for e in transcript_buf
+                            )
+                            try:
+                                from app.services.cluely.deepseek_client import deepseek_generate
+                                ai_title = await deepseek_generate(
+                                    f"Give this interview session a short title (5-7 words max) based on the transcript below. Reply with ONLY the title, no quotes.\n\n{full_text[:1200]}",
+                                    system="You are a concise title generator.",
+                                    temperature=0.3, max_tokens=20,
+                                )
+                                ai_title = ai_title.strip().strip('"').strip("'")
+                                post_summary = await deepseek_generate(
+                                    f"Summarize this interview session in 2-3 sentences. Focus on topics covered and how the candidate performed.\n\n{full_text[:3000]}",
+                                    system="You are a concise interview session summarizer.",
+                                    temperature=0.3, max_tokens=150,
+                                )
+                            except Exception as e:
+                                logger.warning("[repo] AI title/summary failed: %s", e)
+
+                        await repo.end_session(sid, post_summary=post_summary)
+
+                        if ai_title:
+                            try:
+                                from sqlalchemy import text as sa_text
+                                # Only overwrite date-based fallback titles, not context-derived ones
+                                initial = session_ctx.get("_initial_title", "")
+                                needs_ai_title = not initial or initial.startswith("Session ")
+                                if needs_ai_title:
+                                    await repo._db.execute(
+                                        sa_text("UPDATE cluely_sessions SET title = :title WHERE id = :id"),
+                                        {"title": ai_title, "id": sid},
+                                    )
+                                    await repo._db.commit()
+                                    logger.info("[repo] AI title saved: %r", ai_title)
+                            except Exception as e:
+                                logger.warning("[repo] title update failed: %s", e)
                     except Exception as e:
                         logger.error("[repo] end_session failed: %s", e)
                 try:
@@ -180,12 +224,29 @@ class OverlayService:
         repo = SessionRepository(db=db)
         repo.start_flush_loop()
 
+        # Derive initial title from context if available
+        company  = ctx.get("company", "")
+        role     = ctx.get("job_title", "")
+        from datetime import datetime
+        date_str = datetime.now().strftime("%b %d")
+        if role and company:
+            initial_title = f"{role} at {company}"
+        elif role:
+            initial_title = f"{role} Interview"
+        elif company:
+            initial_title = f"{company} Interview"
+        else:
+            initial_title = f"Session {date_str}"
+
+        ctx["_initial_title"] = initial_title
+
         try:
             await repo.create_session(
                 session_id=sid,
                 user_id=user_id,
-                company=ctx.get("company", ""),
-                role=ctx.get("job_title", ""),
+                company=company,
+                role=role,
+                title=initial_title,
                 application_id=ctx.get("application_id"),
             )
         except Exception as e:
@@ -217,6 +278,11 @@ class OverlayService:
             seq = bubble_seq[0]
             entry = TranscriptEntry(speaker=speaker, text=text, seq=seq)
             await ctx_mgr.push_transcript(entry)
+            # Keep rolling buffer in ctx for manual_ask intent detection
+            buf = ctx.setdefault("_transcript_buf", [])
+            buf.append(entry)
+            if len(buf) > 30:
+                ctx["_transcript_buf"] = buf[-30:]
             await _safe_send(ws, {"type": "transcript", "speaker": speaker, "text": text, "seq": seq})
             # Persist transcript line
             try:
@@ -608,6 +674,9 @@ class OverlayService:
         else:
             summary, facts = "", ""
 
+        # Pass recent transcript so the LLM can detect contextual vs standalone intent
+        recent = session_ctx.get("_transcript_buf", [])[-15:]
+
         await _safe_send(ws, {"type": "status", "state": "thinking", "latency_ms": 0})
         t0 = time.monotonic()
         full_response: list[str] = []
@@ -617,7 +686,7 @@ class OverlayService:
                 solution_parts: list[str] = []
                 batch: list[str] = []
                 first = True
-                async for delta in self._llm.stream_manual_ask(text, mode=mode, context=session_ctx, rag_chunks=rag_chunks, summary=summary, facts=facts):
+                async for delta in self._llm.stream_manual_ask(text, mode=mode, context=session_ctx, rag_chunks=rag_chunks, summary=summary, facts=facts, recent=recent):
                     if first:
                         latency = round((time.monotonic() - t0) * 1000)
                         await _safe_send(ws, {"type": "status", "state": "listening", "latency_ms": latency})
@@ -644,7 +713,7 @@ class OverlayService:
             else:
                 batch: list[str] = []
                 first = True
-                async for delta in self._llm.stream_manual_ask(text, mode=mode, context=session_ctx, rag_chunks=rag_chunks, summary=summary, facts=facts):
+                async for delta in self._llm.stream_manual_ask(text, mode=mode, context=session_ctx, rag_chunks=rag_chunks, summary=summary, facts=facts, recent=recent):
                     if first:
                         latency = round((time.monotonic() - t0) * 1000)
                         await _safe_send(ws, {"type": "status", "state": "listening", "latency_ms": latency})

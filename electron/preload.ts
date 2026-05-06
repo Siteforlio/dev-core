@@ -51,13 +51,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.on('devcore:outcome', handler)
       return () => ipcRenderer.removeListener('devcore:outcome', handler)
     },
+    onSessionTitle: (cb: (p: { title: string }) => void): (() => void) => {
+      const handler = (_e: unknown, p: { title: string }) => cb(p)
+      ipcRenderer.on('devcore:session:title', handler)
+      return () => ipcRenderer.removeListener('devcore:session:title', handler)
+    },
     onDevicesChanged: (cb: (p: { mics: { id: number; name: string }[]; systems: { id: number; name: string }[] }) => void): (() => void) => {
       const handler = (_e: unknown, p: { mics: { id: number; name: string }[]; systems: { id: number; name: string }[] }) => cb(p)
       ipcRenderer.on('devcore:devices:changed', handler)
       return () => ipcRenderer.removeListener('devcore:devices:changed', handler)
     },
     removeAllListeners: () => {
-      ;['devcore:suggestion','devcore:transcript','devcore:status','devcore:error','devcore:hotkey','devcore:outcome','devcore:devices:changed']
+      ;['devcore:suggestion','devcore:transcript','devcore:status','devcore:error','devcore:hotkey','devcore:outcome','devcore:devices:changed','devcore:session:title']
         .forEach(ch => ipcRenderer.removeAllListeners(ch))
     },
   },
