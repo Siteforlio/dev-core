@@ -4,8 +4,15 @@ import path from 'path'
 import { spawn, ChildProcess } from 'child_process'
 import { getOverlayWindow } from './overlay'
 
-const PROJECT_ROOT    = path.join(__dirname, '..')
-const PYTHON_EXE      = path.join(PROJECT_ROOT, 'backend', 'venv', 'Scripts', 'python.exe')
+const PROJECT_ROOT = path.join(__dirname, '..')
+
+// Platform-aware venv Python path.
+// Windows: venv\Scripts\python.exe
+// macOS / Linux: venv/bin/python3
+const PYTHON_EXE = process.platform === 'win32'
+  ? path.join(PROJECT_ROOT, 'backend', 'venv', 'Scripts', 'python.exe')
+  : path.join(PROJECT_ROOT, 'backend', 'venv', 'bin', 'python3')
+
 const LOOPBACK_SCRIPT = path.join(PROJECT_ROOT, 'scripts', 'loopback_capture.py')
 
 let micInput: naudiodon.IoStreamRead | null = null
@@ -66,6 +73,26 @@ function forwardToOverlay(frame: Record<string, unknown>) {
       break
     case 'session_title':
       win.webContents.send('devcore:session:title', { title: frame.title })
+      break
+    case 'tool:event':
+      win.webContents.send('devcore:tool:event', {
+        tool:   frame.tool,
+        status: frame.status,
+        data:   frame.data ?? {},
+      })
+      break
+    case 'agent:thinking':
+      win.webContents.send('devcore:agent:thinking', { text: frame.text })
+      break
+    case 'agent:guidance':
+      win.webContents.send('devcore:agent:guidance', { text: frame.text })
+      break
+    case 'agent:solution':
+      win.webContents.send('devcore:agent:solution', {
+        code:        frame.code,
+        language:    frame.language,
+        explanation: frame.explanation,
+      })
       break
   }
 }
@@ -294,25 +321,48 @@ function _openWebSocket(
 
   // Audio device setup — wrapped so a naudiodon failure doesn't kill the WS session.
   try {
-    const devices = naudiodon.getDevices()
-    const wasapiDevices = devices.filter((d: any) => d.hostAPIName === 'Windows WASAPI')
-    console.log('[devcore-audio] All WASAPI devices:')
-    wasapiDevices.forEach((d: any) => console.log(`  [${d.id}] "${d.name}" | inputs=${d.maxInputChannels} | loopback=${d.isLoopbackDevice}`))
+    const devices: any[] = naudiodon.getDevices()
 
-    // naudiodon on Windows doesn't set isLoopbackDevice reliably — detect by name pattern
-    const isLoopbackDevice = (d: any) =>
+    // Platform-preferred host APIs (ordered by preference).
+    // naudiodon surfaces multiple backends; we pick the most direct one per OS.
+    const PREFERRED_APIS: Record<string, string[]> = {
+      win32:  ['Windows WASAPI', 'Windows DirectSound', 'Windows MME'],
+      darwin: ['Core Audio'],
+      linux:  ['ALSA', 'PulseAudio', 'Jack Audio Connection Kit'],
+    }
+    const preferredApis = PREFERRED_APIS[process.platform] ?? []
+
+    // Pick the best available host API for this platform.
+    const bestApi = preferredApis.find(api =>
+      devices.some((d: any) => d.hostAPIName === api)
+    ) ?? null
+
+    const platformDevices = bestApi
+      ? devices.filter((d: any) => d.hostAPIName === bestApi)
+      : devices  // fallback: accept all APIs
+
+    console.log(`[devcore-audio] Platform=${process.platform} | Best API="${bestApi ?? 'any'}" | Devices:`)
+    platformDevices.forEach((d: any) =>
+      console.log(`  [${d.id}] "${d.name}" | inputs=${d.maxInputChannels} | loopback=${d.isLoopbackDevice}`)
+    )
+
+    // Loopback device detection — patterns differ per OS:
+    //   Windows : WASAPI loopback, Stereo Mix, "What U Hear", "[Loopback]" suffix
+    //   macOS   : BlackHole, Soundflower, Loopback (Rogue Amoeba), Virtual
+    //   Linux   : PulseAudio monitor sources (.monitor suffix)
+    const isLoopbackDevice = (d: any): boolean =>
       d.isLoopbackDevice === true ||
-      (d.maxInputChannels > 0 && /loopback|stereo mix|what u hear|wave out|\[loopback\]/i.test(d.name))
+      (d.maxInputChannels > 0 && /loopback|stereo mix|what u hear|wave out|\[loopback\]|blackhole|soundflower|virtual|\.monitor/i.test(d.name))
 
-    const loopback = devices.find((d: any) =>
-      d.hostAPIName === 'Windows WASAPI' && isLoopbackDevice(d)
+    const loopback = platformDevices.find((d: any) => isLoopbackDevice(d)) ?? null
+    const mic = platformDevices.find((d: any) =>
+      d.maxInputChannels > 0 && !isLoopbackDevice(d)
+    ) ?? null
+
+    console.log(
+      `[devcore-audio] mic=[${micDeviceId ?? mic?.id ?? 'none'}] "${mic?.name ?? 'none'}" | ` +
+      `loopback=[${sysDeviceId ?? loopback?.id ?? 'none'}] "${loopback?.name ?? 'none found'}"`
     )
-    const mic = devices.find((d: any) =>
-      d.hostAPIName === 'Windows WASAPI' &&
-      d.maxInputChannels > 0 &&
-      !isLoopbackDevice(d)
-    )
-    console.log(`[devcore-audio] Selected mic: [${micDeviceId ?? mic?.id}] "${mic?.name}" | loopback: [${sysDeviceId ?? loopback?.id}] "${loopback?.name ?? 'none found'}"`)
 
     const TARGET_RATE     = 16000
     const CANDIDATE_RATES = [48000, 44100, 16000]

@@ -1,13 +1,26 @@
 import { BrowserWindow, globalShortcut, app, screen } from 'electron'
 import path from 'path'
-import koffi from 'koffi'
 import Store = require('electron-store')
 
 const store = new Store<{ overlayPosition: string }>()
 
-const user32 = koffi.load('user32.dll')
-// HWND is an opaque pointer-sized integer; declare as intptr_t so we can pass the numeric value
-const SetWindowDisplayAffinity = user32.func('bool SetWindowDisplayAffinity(intptr_t hWnd, uint32 dwAffinity)')
+// Win32 screen-capture exclusion — loaded lazily so non-Windows platforms don't crash.
+type SetWindowDisplayAffinityFn = (hwnd: number, affinity: number) => boolean
+let _setWindowDisplayAffinity: SetWindowDisplayAffinityFn | null = null
+
+if (process.platform === 'win32') {
+  try {
+    // koffi is a native module — only available and needed on Windows.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const koffi = require('koffi')
+    const user32 = koffi.load('user32.dll')
+    _setWindowDisplayAffinity = user32.func(
+      'bool SetWindowDisplayAffinity(intptr_t hWnd, uint32 dwAffinity)',
+    )
+  } catch (e) {
+    console.warn('[devcore-overlay] Failed to load user32.dll (non-fatal):', e)
+  }
+}
 
 const POSITIONS: Record<string, { x: () => number; y: () => number }> = {
   'top-center':    { x: () => Math.round(screen.getPrimaryDisplay().workAreaSize.width * 0.075), y: () => 0 },
@@ -19,6 +32,45 @@ const POSITIONS: Record<string, { x: () => number; y: () => number }> = {
 const POSITION_ORDER = ['top-center', 'top-left', 'top-right', 'bottom-center', 'bottom-right']
 
 let overlayWin: BrowserWindow | null = null
+
+/**
+ * Apply the best available screen-capture exclusion for the current platform.
+ *
+ * Windows  → SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE) via Win32 API.
+ *            The window becomes completely invisible to all screen-capture
+ *            software (OBS, Zoom, Teams) on Windows 10 build 2004+ / Windows 11.
+ *
+ * macOS    → setContentProtection(true), Electron's built-in wrapper around
+ *            NSWindow.sharingType = NSWindowSharingNone.  Hides the window
+ *            from screen recording, screenshots, and the Dock preview.
+ *
+ * Linux    → No stable cross-desktop API exists.  The window remains visible
+ *            in screen captures; users should rely on the virtual camera trick
+ *            or a dedicated virtual display.
+ */
+function _applyStealthMode(win: BrowserWindow): void {
+  if (process.platform === 'win32') {
+    if (!_setWindowDisplayAffinity) return
+    try {
+      const hwndBuf = win.getNativeWindowHandle()
+      const hwnd = process.arch === 'x64'
+        ? Number(hwndBuf.readBigInt64LE(0))
+        : hwndBuf.readInt32LE(0)
+      const WDA_EXCLUDEFROMCAPTURE = 0x00000011
+      _setWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE)
+      console.log('[devcore-overlay] WDA_EXCLUDEFROMCAPTURE applied (Windows stealth)')
+    } catch (e) {
+      console.warn('[devcore-overlay] SetWindowDisplayAffinity failed (non-fatal):', e)
+    }
+  } else if (process.platform === 'darwin') {
+    win.setContentProtection(true)
+    console.log('[devcore-overlay] setContentProtection(true) applied (macOS stealth)')
+  } else {
+    console.info(
+      '[devcore-overlay] No screen-capture exclusion API available on Linux — overlay visible in captures',
+    )
+  }
+}
 let currentPositionIndex = 0
 
 // Content bounds sent from the renderer — used by the polling loop
@@ -59,16 +111,9 @@ export function createOverlayWindow(): BrowserWindow {
   overlayWin.setIgnoreMouseEvents(true, { forward: true })
   _startCursorPoll(overlayWin)
 
-  // Apply WDA_EXCLUDEFROMCAPTURE — invisible to all screen capture on Windows 11
-  try {
-    const hwndBuf = overlayWin.getNativeWindowHandle()
-    // getNativeWindowHandle() returns a Buffer containing the HWND bytes; read it as a pointer-sized integer
-    const hwnd = process.arch === 'x64' ? Number(hwndBuf.readBigInt64LE(0)) : hwndBuf.readInt32LE(0)
-    const WDA_EXCLUDEFROMCAPTURE = 0x00000011
-    SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE)
-  } catch (e) {
-    console.warn('[devcore-overlay] SetWindowDisplayAffinity failed (non-fatal):', e)
-  }
+  // Apply platform-specific screen-capture exclusion so the overlay is
+  // invisible to OBS, Zoom, Teams, etc.
+  _applyStealthMode(overlayWin)
 
   if (process.env.NODE_ENV === 'development') {
     overlayWin.loadURL('http://localhost:5173/overlay.html')

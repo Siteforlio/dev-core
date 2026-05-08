@@ -61,9 +61,43 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.on('devcore:devices:changed', handler)
       return () => ipcRenderer.removeListener('devcore:devices:changed', handler)
     },
+    // Assessment tool events — forwarded from backend WebSocket
+    onToolEvent: (cb: (p: { tool: string; status: string; data: Record<string, unknown> }) => void): (() => void) => {
+      const handler = (_e: unknown, p: { tool: string; status: string; data: Record<string, unknown> }) => cb(p)
+      ipcRenderer.on('devcore:tool:event', handler)
+      return () => ipcRenderer.removeListener('devcore:tool:event', handler)
+    },
+    onAgentThinking: (cb: (p: { text: string }) => void): (() => void) => {
+      const handler = (_e: unknown, p: { text: string }) => cb(p)
+      ipcRenderer.on('devcore:agent:thinking', handler)
+      return () => ipcRenderer.removeListener('devcore:agent:thinking', handler)
+    },
+    onAgentGuidance: (cb: (p: { text: string }) => void): (() => void) => {
+      const handler = (_e: unknown, p: { text: string }) => cb(p)
+      ipcRenderer.on('devcore:agent:guidance', handler)
+      return () => ipcRenderer.removeListener('devcore:agent:guidance', handler)
+    },
+    onAgentSolution: (cb: (p: { code: string; language: string; explanation: string }) => void): (() => void) => {
+      const handler = (_e: unknown, p: { code: string; language: string; explanation: string }) => cb(p)
+      ipcRenderer.on('devcore:agent:solution', handler)
+      return () => ipcRenderer.removeListener('devcore:agent:solution', handler)
+    },
+    // Session assessment mode — sent by main when a session starts/ends
+    onSessionMode: (cb: (p: { assessmentMode: string | null }) => void): (() => void) => {
+      const handler = (_e: unknown, p: { assessmentMode: string | null }) => cb(p)
+      ipcRenderer.on('devcore:session:mode', handler)
+      return () => ipcRenderer.removeListener('devcore:session:mode', handler)
+    },
+    // Trigger assessment agent from UI
+    assessmentTrigger: (payload: { action: string; text?: string }) =>
+      ipcRenderer.invoke('devcore:assessment:trigger', payload),
     removeAllListeners: () => {
-      ;['devcore:suggestion','devcore:transcript','devcore:status','devcore:error','devcore:hotkey','devcore:outcome','devcore:devices:changed','devcore:session:title']
-        .forEach(ch => ipcRenderer.removeAllListeners(ch))
+      ;[
+        'devcore:suggestion','devcore:transcript','devcore:status','devcore:error',
+        'devcore:hotkey','devcore:outcome','devcore:devices:changed','devcore:session:title',
+        'devcore:tool:event','devcore:agent:thinking','devcore:agent:guidance','devcore:agent:solution',
+        'devcore:session:mode',
+      ].forEach(ch => ipcRenderer.removeAllListeners(ch))
     },
   },
 })

@@ -6,6 +6,8 @@ from app.core.exceptions import BertClassifierError, LLMRateLimitedError, CodeRu
 from app.services.cluely.audio_service import AudioService, parse_audio_frame
 from app.services.cluely.context_manager import ContextManager
 from app.services.cluely.bert_classifier import BertClassifier
+from app.services.cluely.speaker_diarizer import SpeakerDiarizer
+from app.services.cluely.assessment_agent import AssessmentAgent
 from app.services.cluely.rag_service import RagService
 from app.services.cluely.llm_service import LLMService
 from app.services.cluely.outcome_service import OutcomeService
@@ -55,6 +57,9 @@ class OverlayService:
             logger.warning("BERT unavailable — using silence detection fallback")
             self._use_bert = False
             self._bert = None
+
+        # One diarizer per service instance; reset() called per session.
+        self._diarizer = SpeakerDiarizer()
 
     # ------------------------------------------------------------------
     # WebSocket entry point
@@ -119,6 +124,11 @@ class OverlayService:
                         break
                     elif mtype == "manual_ask":
                         await self._handle_manual_ask(ws, data, session_ctx, rag, ctx_mgr, repo)
+                    elif mtype == "assessment_trigger":
+                        # Route to the assessment agent if one is active for this session
+                        agent: AssessmentAgent | None = session_ctx.get("_assessment_agent")
+                        if agent:
+                            asyncio.create_task(agent.handle_assessment_trigger(data))
                     elif mtype == "outcome_pill_ask":
                         await self._handle_outcome_pill_ask(ws, data, session_ctx, rag, ctx_mgr, repo)
         except WebSocketDisconnect as e:
@@ -132,6 +142,13 @@ class OverlayService:
             logger.exception("Overlay WS error: %s", e)
         finally:
             logger.info("WS session ending")
+            # Close assessment agent resources (browser etc.)
+            agent = session_ctx.get("_assessment_agent")
+            if agent:
+                try:
+                    await agent.close()
+                except Exception:
+                    pass
             stop_ev = session_ctx.get("_stop_summarizer")
             if stop_ev:
                 stop_ev.set()
@@ -213,6 +230,8 @@ class OverlayService:
         # Outcome service — Redis-backed cache for outcome inference
         outcome_svc = OutcomeService(redis=r)
         ctx["_outcome_svc"] = outcome_svc
+
+        self._diarizer.reset()
 
         ctx_mgr = ContextManager(redis=r, session_id=sid)
         if not await ctx_mgr.session_exists():
@@ -309,6 +328,24 @@ class OverlayService:
         ctx["_stop_summarizer"] = stop_summarizer
         asyncio.create_task(run_summarizer(ctx_mgr, stop_summarizer))
 
+        # Assessment agent — created only when assessment mode is enabled
+        assessment_mode: str | None = ctx.get("assessment_mode")  # "coding" | "live" | "ai_model"
+        if assessment_mode:
+            async def _ws_send(event: dict) -> None:
+                await _safe_send(ws, event)
+
+            agent = AssessmentAgent(
+                mode=assessment_mode,
+                session_ctx=ctx,
+                send=_ws_send,
+                project_root=ctx.get("project_root"),
+                file_paths=ctx.get("file_paths", []),
+            )
+            ctx["_assessment_agent"] = agent
+            logger.info("[assessment] Agent created | mode=%s", assessment_mode)
+            # Auto-trigger on start so agent immediately begins reading the screen
+            asyncio.create_task(agent.handle_assessment_trigger({"action": "start"}))
+
         await _safe_send(ws, {"type": "status", "state": "listening", "latency_ms": 0})
         return ctx_mgr, rag, ctx, repo
 
@@ -324,7 +361,13 @@ class OverlayService:
         except ValueError:
             return
         try:
-            speaker = "interviewer" if stream == "system" else "user"
+            if stream == "mic":
+                speaker = "user"
+                # Feed mic frames into the diarizer to build the user's voice profile.
+                self._diarizer.enroll_user(pcm)
+            else:
+                # System audio: use voice embeddings to detect echo/bleed vs interviewer.
+                speaker = self._diarizer.classify_system_audio(pcm)
 
             t_transcribe = time.monotonic()
             result = await self._audio.transcribe(pcm, speaker=speaker)

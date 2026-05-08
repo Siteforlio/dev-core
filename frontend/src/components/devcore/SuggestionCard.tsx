@@ -2,7 +2,28 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useOverlayStore } from '../../store/overlayStore'
 import { getFreshToken } from '../../lib/apiFetch'
 import { AudioSourcePicker } from './AudioSourcePicker'
-import type { SessionContext } from '../../types/devcore'
+import type { AssessmentMode, SessionContext } from '../../types/devcore'
+
+const MODE_HEADER: Record<NonNullable<AssessmentMode> | 'standard', string> = {
+  standard: 'bg-white/[0.015] border-white/[0.07]',
+  coding:   'bg-amber-400/[0.07]  border-amber-400/[0.15]',
+  live:     'bg-emerald-400/[0.07] border-emerald-400/[0.15]',
+  ai_model: 'bg-sky-400/[0.07]    border-sky-400/[0.15]',
+}
+
+const MODE_ACCENT: Record<NonNullable<AssessmentMode> | 'standard', string> = {
+  standard: 'bg-violet-400',
+  coding:   'bg-amber-400',
+  live:     'bg-emerald-400',
+  ai_model: 'bg-sky-400',
+}
+
+const MODE_WATERMARK: Record<NonNullable<AssessmentMode> | 'standard', { text: string; color: string } | null> = {
+  standard: null,
+  coding:   { text: 'CODING',   color: 'text-amber-400/[0.06]'  },
+  live:     { text: 'LIVE',     color: 'text-emerald-400/[0.06]' },
+  ai_model: { text: 'AI MODEL', color: 'text-sky-400/[0.06]'     },
+}
 
 interface ChatMessage {
   id: string
@@ -38,6 +59,159 @@ function MicTestButton({ micDeviceId }: { micDeviceId: number | null }) {
   )
 }
 
+// ---------------------------------------------------------------------------
+// Tool strip — inline row of tool icons shown in assessment mode
+// ---------------------------------------------------------------------------
+
+const TOOL_ICONS: { name: string; label: string; icon: React.ReactNode }[] = [
+  { name: 'terminal', label: 'TERM', icon: (
+    <svg width="13" height="13" viewBox="0 0 18 18" fill="none"><polyline points="3,6 7,9 3,12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><line x1="9" y1="12" x2="15" y2="12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+  )},
+  { name: 'screen', label: 'VIEW', icon: (
+    <svg width="13" height="13" viewBox="0 0 18 18" fill="none"><rect x="2" y="3" width="14" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.5"/><line x1="6" y1="15" x2="12" y2="15" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/><line x1="9" y1="13" x2="9" y2="15" stroke="currentColor" strokeWidth="1.5"/></svg>
+  )},
+  { name: 'browser', label: 'WEB', icon: (
+    <svg width="13" height="13" viewBox="0 0 18 18" fill="none"><circle cx="9" cy="9" r="6.5" stroke="currentColor" strokeWidth="1.5"/><ellipse cx="9" cy="9" rx="3" ry="6.5" stroke="currentColor" strokeWidth="1.5"/><line x1="2.5" y1="6.5" x2="15.5" y2="6.5" stroke="currentColor" strokeWidth="1.5"/><line x1="2.5" y1="11.5" x2="15.5" y2="11.5" stroke="currentColor" strokeWidth="1.5"/></svg>
+  )},
+  { name: 'file', label: 'FILE', icon: (
+    <svg width="13" height="13" viewBox="0 0 18 18" fill="none"><path d="M4 2h7l3 3v11H4V2z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/><polyline points="11,2 11,5 14,5" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/><line x1="7" y1="9" x2="11" y2="9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/><line x1="7" y1="12" x2="11" y2="12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+  )},
+  { name: 'search', label: 'SRCH', icon: (
+    <svg width="13" height="13" viewBox="0 0 18 18" fill="none"><circle cx="8" cy="8" r="5" stroke="currentColor" strokeWidth="1.5"/><line x1="12" y1="12" x2="15.5" y2="15.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+  )},
+]
+
+function ToolStrip() {
+  const { activeTool, toolEvents } = useOverlayStore()
+  const [openTool, setOpenTool] = React.useState<string | null>(null)
+
+  // Build latest data per tool from events
+  const latestByTool = React.useMemo(() => {
+    const map: Record<string, Record<string, unknown>> = {}
+    for (const ev of toolEvents) {
+      if (!map[ev.tool]) map[ev.tool] = {}
+      Object.assign(map[ev.tool], ev.data)
+    }
+    return map
+  }, [toolEvents])
+
+  const termLines = React.useMemo(() =>
+    toolEvents.filter(e => e.tool === 'terminal' && e.data.text).map(e => ({
+      stream: e.data.stream as string,
+      text: e.data.text as string,
+    })),
+  [toolEvents])
+
+  const termRef = React.useRef<HTMLDivElement>(null)
+  React.useEffect(() => {
+    if (openTool === 'terminal' && termRef.current) {
+      termRef.current.scrollTop = termRef.current.scrollHeight
+    }
+  }, [termLines.length, openTool])
+
+  return (
+    <div className="mt-2">
+      {/* Icon row */}
+      <div className="flex items-center justify-center gap-1.5">
+        <span className="font-mono text-[8px] tracking-widest text-white/20 uppercase mr-1">Tools</span>
+        {TOOL_ICONS.map(t => {
+          const isActive = activeTool === t.name
+          const isOpen   = openTool === t.name
+          return (
+            <button
+              key={t.name}
+              onClick={() => setOpenTool(prev => prev === t.name ? null : t.name)}
+              className={[
+                'relative flex flex-col items-center justify-center gap-0.5 px-2 py-1.5 rounded-md border transition-all',
+                isOpen    ? 'border-amber-400/30 bg-amber-400/10 text-amber-400'
+                : isActive ? 'border-amber-400/20 bg-amber-400/[0.06] text-amber-400'
+                           : 'border-white/[0.06] bg-white/[0.02] text-white/25 hover:text-white/50 hover:border-white/[0.1]',
+              ].join(' ')}
+              title={t.name}
+            >
+              {isActive && (
+                <span className="absolute top-0.5 right-0.5 w-1 h-1 rounded-full bg-amber-400" style={{ boxShadow: '0 0 4px rgba(251,191,36,0.9)' }} />
+              )}
+              {t.icon}
+              <span className="font-mono text-[7px] leading-none tracking-wider">{t.label}</span>
+            </button>
+          )
+        })}
+      </div>
+
+      {/* Expanded panel */}
+      {openTool && (
+        <div className="mt-1.5 rounded-lg border border-white/[0.07] bg-[rgba(9,9,18,0.80)] overflow-hidden">
+          {/* panel header */}
+          <div className="flex items-center justify-between px-3 py-1.5 border-b border-white/[0.06]">
+            <div className="flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400" style={{ boxShadow: '0 0 5px rgba(251,191,36,0.8)' }} />
+              <span className="font-mono text-[9px] tracking-widest text-amber-400/70 uppercase">{openTool}</span>
+            </div>
+            <button onClick={() => setOpenTool(null)} className="font-mono text-[10px] text-white/25 hover:text-white/60 px-1">✕</button>
+          </div>
+
+          {/* panel body */}
+          <div className="max-h-[160px] overflow-y-auto px-3 py-2 [&::-webkit-scrollbar]:w-[2px] [&::-webkit-scrollbar-thumb]:bg-white/10">
+            {openTool === 'terminal' && (
+              <div ref={termRef} className="space-y-0.5">
+                {termLines.length === 0
+                  ? <p className="font-mono text-[10px] text-white/20 italic">awaiting output…</p>
+                  : termLines.map((l, i) => (
+                    <div key={i} className={`font-mono text-[10px] leading-relaxed whitespace-pre-wrap break-all ${l.stream === 'stderr' ? 'text-red-400/80' : 'text-emerald-300/80'}`}>{l.text}</div>
+                  ))
+                }
+              </div>
+            )}
+            {openTool === 'screen' && (
+              <div className="space-y-1.5">
+                {latestByTool.screen?.image
+                  ? <img src={`data:image/png;base64,${latestByTool.screen.image}`} className="w-full rounded border border-white/[0.07]" alt="capture" />
+                  : <p className="font-mono text-[10px] text-white/20 italic">no capture yet</p>
+                }
+                {latestByTool.screen?.text && <p className="font-mono text-[10px] text-white/50 leading-relaxed">{(latestByTool.screen.text as string).slice(0, 300)}</p>}
+              </div>
+            )}
+            {openTool === 'browser' && (
+              <div className="space-y-1">
+                {latestByTool.browser?.url && <p className="font-mono text-[9px] text-violet-300/60 truncate">{latestByTool.browser.url as string}</p>}
+                <p className="font-mono text-[10px] text-white/55 leading-relaxed">
+                  {(latestByTool.browser?.text as string ?? latestByTool.browser?.problem_text as string ?? 'no page loaded').slice(0, 400)}
+                </p>
+              </div>
+            )}
+            {openTool === 'file' && (
+              <div className="space-y-1">
+                {latestByTool.file?.path && <p className="font-mono text-[9px] text-amber-300/50 truncate">{latestByTool.file.path as string}</p>}
+                {latestByTool.file?.diff
+                  ? <pre className="font-mono text-[10px] leading-relaxed whitespace-pre-wrap break-all text-white/60">
+                      {(latestByTool.file.diff as string).split('\n').map((line, i) => (
+                        <span key={i} className={`block ${line.startsWith('+') ? 'text-emerald-400/80' : line.startsWith('-') ? 'text-red-400/70' : ''}`}>{line}</span>
+                      ))}
+                    </pre>
+                  : <p className="font-mono text-[10px] text-white/50 leading-relaxed">{(latestByTool.file?.content as string ?? latestByTool.file?.listing as string ?? 'no file events').slice(0, 400)}</p>
+                }
+              </div>
+            )}
+            {openTool === 'search' && (
+              <div className="space-y-2">
+                {latestByTool.search?.query && <p className="font-mono text-[9px] text-violet-300/60">"{latestByTool.search.query as string}"</p>}
+                {((latestByTool.search?.results as any[]) ?? []).slice(0, 3).map((r: any, i: number) => (
+                  <div key={i} className="border-l-2 border-amber-400/30 pl-2 space-y-0.5">
+                    <p className="font-mono text-[10px] text-amber-300/70 font-semibold">{r.title}</p>
+                    <p className="font-mono text-[10px] text-white/45">{r.snippet?.slice(0, 160)}</p>
+                  </div>
+                ))}
+                {!latestByTool.search?.results && <p className="font-mono text-[10px] text-white/20 italic">no searches yet</p>}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 const EMPTY_CONTEXT: SessionContext = {
   jobTitle: '', company: '', resumeText: '', jdText: '', files: [],
 }
@@ -51,8 +225,13 @@ export function SuggestionCard() {
   const {
     latencyMs, transcriptOpen, setTranscriptOpen,
     state, setSessionId, sessionTitle, setSessionTitle,
-    audioSource, micDeviceId, sysDeviceId,
+    audioSource, micDeviceId, sysDeviceId, assessmentMode,
   } = useOverlayStore()
+
+  const modeKey     = assessmentMode ?? 'standard'
+  const headerStyle = MODE_HEADER[modeKey]
+  const accentDot   = MODE_ACCENT[modeKey]
+  const watermark   = MODE_WATERMARK[modeKey]
 
   const api = () => (window as any).electronAPI?.devcore
   const [authed, setAuthed] = useState<boolean | null>(null)
@@ -337,7 +516,7 @@ export function SuggestionCard() {
 
   if (authed === false) {
     return (
-      <div className="bg-[rgba(9,9,18,0.97)] border border-white/[0.07] rounded-[13px] shadow-[0_12px_48px_rgba(0,0,0,0.75)] px-6 py-5 flex items-center gap-3" style={{ width: '594px' }}>
+      <div className="bg-[rgba(9,9,18,0.60)] backdrop-blur-xl border border-white/[0.07] rounded-[13px] shadow-[0_12px_48px_rgba(0,0,0,0.75)] px-6 py-5 flex items-center gap-3" style={{ width: '594px' }}>
         <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24" className="text-amber-400 flex-shrink-0"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
         <div>
           <p className="font-mono text-[12px] text-white/80">Not logged in</p>
@@ -348,11 +527,23 @@ export function SuggestionCard() {
   }
 
   return (
-    <div id="overlay-card" className="bg-[rgba(9,9,18,0.97)] border border-white/[0.07] rounded-[13px] overflow-hidden shadow-[0_12px_48px_rgba(0,0,0,0.75)]" style={{ width: '594px' }}>
+    <div id="overlay-card" className="relative bg-[rgba(9,9,18,0.60)] backdrop-blur-xl border border-white/[0.07] rounded-[13px] overflow-hidden shadow-[0_12px_48px_rgba(0,0,0,0.75)]" style={{ width: '594px' }}>
+
+      {/* Session type watermark — sits behind all content, pointer-events-none */}
+      {watermark && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none overflow-hidden">
+          <span
+            className={`font-orbitron font-black tracking-[0.25em] uppercase ${watermark.color}`}
+            style={{ fontSize: '72px', transform: 'rotate(-12deg)', whiteSpace: 'nowrap' }}
+          >
+            {watermark.text}
+          </span>
+        </div>
+      )}
 
       {/* Header */}
-      <div className="flex items-center gap-2 px-4 py-2.5 border-b border-white/[0.07] bg-white/[0.015]">
-        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${isActive ? 'animate-pulse bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]' : 'bg-white/20'}`} />
+      <div className={`flex items-center gap-2 px-4 py-2.5 border-b transition-colors duration-500 ${headerStyle}`}>
+        <span className={`w-2 h-2 rounded-full flex-shrink-0 transition-colors duration-500 ${isActive ? `animate-pulse ${accentDot} shadow-[0_0_8px_rgba(52,211,153,0.8)]` : 'bg-white/20'}`} />
         <div className="relative" ref={pickerRef}>
           {editingTitle ? (
             <input
@@ -546,6 +737,9 @@ export function SuggestionCard() {
             <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
           </button>
         </div>
+
+        {/* Tool strip — only in assessment mode */}
+        {assessmentMode && <ToolStrip />}
       </div>
     </div>
   )

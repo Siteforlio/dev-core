@@ -1,5 +1,32 @@
 import { useEffect, useRef, useState } from 'react'
 import { useOverlayStore } from '../../store/overlayStore'
+import type { AssessmentMode } from '../../types/devcore'
+
+const MODE_STYLE: Record<
+  NonNullable<AssessmentMode> | 'standard',
+  { pill: string; label: string; dot: string }
+> = {
+  standard: {
+    pill:  'bg-[rgba(9,9,18,0.60)] border-white/[0.07] backdrop-blur-xl',
+    label: 'text-violet-400',
+    dot:   'bg-violet-400 shadow-[0_0_10px_rgba(167,139,250,0.8)]',
+  },
+  coding: {
+    pill:  'bg-[rgba(40,24,0,0.65)] border-amber-400/[0.18] backdrop-blur-xl',
+    label: 'text-amber-400',
+    dot:   'bg-amber-400 shadow-[0_0_10px_rgba(251,191,36,0.8)]',
+  },
+  live: {
+    pill:  'bg-[rgba(0,32,18,0.65)] border-emerald-400/[0.18] backdrop-blur-xl',
+    label: 'text-emerald-400',
+    dot:   'bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.8)]',
+  },
+  ai_model: {
+    pill:  'bg-[rgba(10,0,45,0.65)] border-sky-400/[0.18] backdrop-blur-xl',
+    label: 'text-sky-400',
+    dot:   'bg-sky-400 shadow-[0_0_10px_rgba(56,189,248,0.8)]',
+  },
+}
 
 const BAR_COUNT = 6
 const MIN_H = 2
@@ -81,7 +108,7 @@ function useAudioBars(active: boolean, micDeviceId: number | null) {
 }
 
 export function ListeningPill() {
-  const { state, micDeviceId } = useOverlayStore()
+  const { state, micDeviceId, assessmentMode } = useOverlayStore()
 
   const isActive       = state !== 'idle'
   const isThinking     = state === 'thinking'
@@ -90,15 +117,26 @@ export function ListeningPill() {
 
   const bars = useAudioBars(isListening, micDeviceId)
 
+  const modeKey = assessmentMode ?? 'standard'
+  const style   = MODE_STYLE[modeKey]
+
+  const modeLabel: Record<string, string> = {
+    coding:   'CODING',
+    live:     'LIVE',
+    ai_model: 'AI MODEL',
+  }
+
   return (
-    <div className="flex items-center gap-3 px-6 py-2.5 rounded-full bg-[rgba(9,9,18,0.97)] border border-white/[0.07] shadow-lg">
+    <div className={`flex items-center gap-3 px-6 py-2.5 rounded-full border shadow-lg ${style.pill}`}>
       <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
         isReconnecting ? 'bg-yellow-400 shadow-[0_0_10px_rgba(250,204,21,0.8)]'
         : isActive     ? 'bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.8)]'
-                       : 'bg-violet-400 shadow-[0_0_10px_rgba(167,139,250,0.8)]'
+                       : style.dot
       } animate-pulse`} />
 
-      <span className="font-orbitron text-[14px] font-bold tracking-[0.18em] text-violet-400">DEVCORE</span>
+      <span className={`font-orbitron text-[14px] font-bold tracking-[0.18em] ${style.label}`}>
+        DEVCORE{assessmentMode ? ` · ${modeLabel[assessmentMode]}` : ''}
+      </span>
       <div className="w-px h-5 bg-white/[0.07]" />
 
       {isReconnecting ? (

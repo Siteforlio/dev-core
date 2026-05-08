@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react'
 import { useOverlaySession } from '../../hooks/useOverlaySession'
 import { useOverlayStore } from '../../store/overlayStore'
 import { useAuthStore } from '../../store/authStore'
-import type { SessionContext } from '../../types/devcore'
+import { apiFetch } from '../../lib/apiFetch'
+import type { SessionContext, AssessmentMode } from '../../types/devcore'
 
 type SourceTab = 'job' | 'calendar' | 'describe'
 
@@ -15,29 +16,64 @@ interface AppliedJob {
   jdText: string
 }
 
+const ASSESSMENT_MODES: { key: AssessmentMode; label: string; sub: string; icon: React.ReactNode }[] = [
+  {
+    key: 'coding',
+    label: 'Coding',
+    sub: 'LeetCode / DSA',
+    icon: (
+      <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+        <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
+      </svg>
+    ),
+  },
+  {
+    key: 'live',
+    label: 'Live Coding',
+    sub: 'Project build',
+    icon: (
+      <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+        <rect x="2" y="3" width="20" height="14" rx="2"/><polyline points="8 21 12 17 16 21"/>
+      </svg>
+    ),
+  },
+  {
+    key: 'ai_model',
+    label: 'AI Model',
+    sub: 'Degraded AI',
+    icon: (
+      <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+        <path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7h1a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1v1a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-1H2a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h1a7 7 0 0 1 7-7h1V5.73c-.6-.34-1-.99-1-1.73a2 2 0 0 1 2-2z"/>
+        <circle cx="9" cy="14" r="1" fill="currentColor" stroke="none"/><circle cx="15" cy="14" r="1" fill="currentColor" stroke="none"/>
+      </svg>
+    ),
+  },
+]
+
 export function SessionSetup({ onClose }: { onClose: () => void }) {
-  const [tab, setTab] = useState<SourceTab>('job')
-  const [selectedJob, setSelectedJob] = useState<string | null>(null)
-  const [description, setDescription] = useState('')
-  const [files, setFiles] = useState<string[]>([])
-  const [jobs, setJobs] = useState<AppliedJob[]>([])
-  const [starting, setStarting] = useState(false)
+  const [tab, setTab]                   = useState<SourceTab>('job')
+  const [selectedJob, setSelectedJob]   = useState<string | null>(null)
+  const [description, setDescription]   = useState('')
+  const [files, setFiles]               = useState<string[]>([])
+  const [jobs, setJobs]                 = useState<AppliedJob[]>([])
+  const [starting, setStarting]         = useState(false)
   const [loadingContext, setLoadingContext] = useState(false)
-  const { startSession } = useOverlaySession()
-  const token = useAuthStore((s) => s.accessToken)
-  const audioSource  = useOverlayStore((s) => s.audioSource)
-  const micDeviceId  = useOverlayStore((s) => s.micDeviceId)
-  const sysDeviceId  = useOverlayStore((s) => s.sysDeviceId)
+
+  // Assessment mode state
+  const [assessmentMode, setAssessmentMode] = useState<AssessmentMode | null>(null)
+  const [projectRoot, setProjectRoot]       = useState('')
+
+  const { startSession }  = useOverlaySession()
+  const token             = useAuthStore((s) => s.accessToken)
+  const audioSource       = useOverlayStore((s) => s.audioSource)
+  const micDeviceId       = useOverlayStore((s) => s.micDeviceId)
+  const sysDeviceId       = useOverlayStore((s) => s.sysDeviceId)
+  const setStoreMode      = useOverlayStore((s) => s.setAssessmentMode)
 
   useEffect(() => {
     if (!token) return
-    fetch('/api/v1/job-hunter/applications?status=interview,screening&limit=20', {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then(r => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`)
-        return r.json()
-      })
+    apiFetch('/api/v1/job-hunter/applications?status=interview,screening&limit=20')
+      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
       .then(json => setJobs((json.data ?? []).map((a: any) => ({
         id: a.application_id,
         title: a.job_title,
@@ -54,38 +90,39 @@ export function SessionSetup({ onClose }: { onClose: () => void }) {
     if (!token) return
     setLoadingContext(true)
     try {
-      const r = await fetch(`/api/v1/job-hunter/applications/${id}/context`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
+      const r = await apiFetch(`/api/v1/job-hunter/applications/${id}/context`)
       if (!r.ok) return
       const json = await r.json()
       setJobs(prev => prev.map(j =>
         j.id === id ? { ...j, resumeText: json.resume_text ?? '', jdText: json.jd_text ?? '' } : j
       ))
-    } catch {
-      // context fetch failure is non-fatal — session will run without resume/JD text
-    } finally {
+    } catch { /* non-fatal */ } finally {
       setLoadingContext(false)
     }
   }
 
   const selectedJobData = jobs.find(j => j.id === selectedJob)
 
+  const toggleAssessmentMode = (mode: AssessmentMode) => {
+    setAssessmentMode(prev => prev === mode ? null : mode)
+  }
+
   const handleStart = async () => {
     if (starting) return
     setStarting(true)
     try {
       const ctx: SessionContext = {
-        jobTitle:   tab === 'job' ? selectedJobData?.title ?? '' : '',
-        company:    tab === 'job' ? selectedJobData?.company ?? '' : '',
-        resumeText: tab === 'job' ? selectedJobData?.resumeText ?? '' : '',
-        jdText:     tab === 'job' ? selectedJobData?.jdText ?? '' : description,
+        jobTitle:       tab === 'job' ? selectedJobData?.title ?? '' : '',
+        company:        tab === 'job' ? selectedJobData?.company ?? '' : '',
+        resumeText:     tab === 'job' ? selectedJobData?.resumeText ?? '' : '',
+        jdText:         tab === 'job' ? selectedJobData?.jdText ?? '' : description,
         files,
+        assessmentMode: assessmentMode ?? undefined,
+        projectRoot:    assessmentMode === 'live' ? projectRoot.trim() : undefined,
       }
       const id = crypto.randomUUID()
+      setStoreMode(assessmentMode)
       await startSession({ sessionId: id, context: ctx, audioSource, micDeviceId, sysDeviceId, token: token ?? '' })
-      // State + sessionId are driven by the backend's status frame via IPC,
-      // not set optimistically here — the overlay store lives in the overlay window.
       onClose()
     } catch (err) {
       console.error('[devcore] startSession failed:', err)
@@ -97,6 +134,7 @@ export function SessionSetup({ onClose }: { onClose: () => void }) {
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
       <div className="bg-[rgba(9,9,18,0.97)] border border-white/[0.07] rounded-[14px] w-[520px] overflow-hidden shadow-[0_24px_64px_rgba(0,0,0,0.8)]">
+
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.07] bg-white/[0.015]">
           <div className="flex items-center gap-2">
@@ -105,9 +143,11 @@ export function SessionSetup({ onClose }: { onClose: () => void }) {
           </div>
           <span className="font-mono text-[10px] uppercase tracking-widest text-white/30">New Session</span>
         </div>
+
         {/* Body */}
         <div className="p-4 flex flex-col gap-4">
-          {/* Source tabs */}
+
+          {/* Context source tabs */}
           <div>
             <p className="font-mono text-[8.5px] uppercase tracking-widest text-white/30 mb-2">Context source</p>
             <div className="flex gap-2">
@@ -122,8 +162,10 @@ export function SessionSetup({ onClose }: { onClose: () => void }) {
               ))}
             </div>
           </div>
+
           <div className="h-px bg-white/[0.07]" />
-          {/* Panel */}
+
+          {/* Context panel */}
           {tab === 'job' && (
             <div className="flex flex-col gap-2">
               <p className="font-mono text-[8.5px] uppercase tracking-widest text-white/30">Select from applied jobs</p>
@@ -164,6 +206,7 @@ export function SessionSetup({ onClose }: { onClose: () => void }) {
               <p className="font-mono text-[10px] text-white/30">Connect a CalDAV calendar in Settings to see upcoming events.</p>
             </div>
           )}
+
           {/* Confirmation strip */}
           <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-emerald-400/15 bg-emerald-400/5">
             <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24" className="text-emerald-400 flex-shrink-0"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
@@ -175,19 +218,98 @@ export function SessionSetup({ onClose }: { onClose: () => void }) {
                 : 'Select a context source to load session context.'}
             </p>
           </div>
+
+          {/* ── Assessment Mode ── */}
+          <div className="h-px bg-white/[0.07]" />
+          <div>
+            <div className="flex items-center gap-2 mb-2.5">
+              <p className="font-mono text-[8.5px] uppercase tracking-widest text-white/30">Assessment Mode</p>
+              {assessmentMode && (
+                <span className="font-mono text-[7.5px] px-1.5 py-0.5 rounded border border-amber-400/30 bg-amber-400/10 text-amber-400 uppercase tracking-wider">
+                  active
+                </span>
+              )}
+            </div>
+
+            <div className="flex gap-2">
+              {ASSESSMENT_MODES.map(({ key, label, sub, icon }) => {
+                const active = assessmentMode === key
+                return (
+                  <button
+                    key={key}
+                    onClick={() => toggleAssessmentMode(key)}
+                    className={`flex-1 flex flex-col items-center gap-1.5 py-3 px-2 rounded-lg border transition-all ${
+                      active
+                        ? 'border-amber-400/30 bg-amber-400/[0.08] text-amber-400 shadow-[0_0_12px_rgba(251,191,36,0.06)]'
+                        : 'border-white/[0.07] bg-white/[0.02] text-white/25 hover:bg-white/[0.04] hover:text-white/40'
+                    }`}
+                  >
+                    <span className={active ? 'text-amber-400' : 'text-white/25'}>{icon}</span>
+                    <span className="font-mono text-[9px] uppercase tracking-wider font-medium">{label}</span>
+                    <span className={`font-mono text-[7.5px] ${active ? 'text-amber-400/60' : 'text-white/20'}`}>{sub}</span>
+                  </button>
+                )
+              })}
+            </div>
+
+            {/* Live Coding — project folder input */}
+            {assessmentMode === 'live' && (
+              <div className="mt-2.5 bg-white/[0.02] border border-amber-400/15 rounded-lg px-3 py-2 focus-within:border-amber-400/30 transition-all">
+                <p className="font-mono text-[7.5px] uppercase tracking-widest text-amber-400/50 mb-1.5">Project folder path</p>
+                <input
+                  type="text"
+                  value={projectRoot}
+                  onChange={e => setProjectRoot(e.target.value)}
+                  placeholder="C:\Users\me\project  or  /Users/me/project"
+                  className="w-full bg-transparent border-none outline-none text-[11px] text-white/80 placeholder-white/20 font-mono"
+                  spellCheck={false}
+                  autoComplete="off"
+                />
+              </div>
+            )}
+
+            {/* Coding mode — informational hint */}
+            {assessmentMode === 'coding' && (
+              <div className="mt-2.5 flex items-start gap-2 px-3 py-2 rounded-lg border border-amber-400/15 bg-amber-400/[0.04]">
+                <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24" className="text-amber-400/60 flex-shrink-0 mt-0.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                <p className="font-mono text-[8.5px] text-white/35 leading-relaxed">
+                  Agent will read the problem from screen, extract visible test cases, generate an optimal solution and test it locally before surfacing it to you.
+                </p>
+              </div>
+            )}
+
+            {/* AI Model mode — informational hint */}
+            {assessmentMode === 'ai_model' && (
+              <div className="mt-2.5 flex items-start gap-2 px-3 py-2 rounded-lg border border-amber-400/15 bg-amber-400/[0.04]">
+                <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24" className="text-amber-400/60 flex-shrink-0 mt-0.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                <p className="font-mono text-[8.5px] text-white/35 leading-relaxed">
+                  Agent will profile the AI model, generate optimized prompts for you to type, evaluate its output behind the scenes and coach you through re-prompting.
+                </p>
+              </div>
+            )}
+          </div>
+
         </div>
+
         {/* Footer */}
         <div className="flex items-center justify-between px-4 py-3 border-t border-white/[0.07] bg-white/[0.01]">
           <span className="font-mono text-[9px] text-white/20">Ctrl+Shift+Space to toggle overlay</span>
           <button
             onClick={handleStart}
             disabled={starting}
-            className="flex items-center gap-2 px-5 py-2 rounded-lg bg-violet-400 text-[#0a0014] font-display text-[11px] font-bold tracking-[0.1em] shadow-[0_0_20px_rgba(167,139,250,0.2)] hover:brightness-110 disabled:opacity-60 disabled:cursor-not-allowed transition-all"
+            className={`flex items-center gap-2 px-5 py-2 rounded-lg font-display text-[11px] font-bold tracking-[0.1em] transition-all disabled:opacity-60 disabled:cursor-not-allowed ${
+              assessmentMode
+                ? 'bg-amber-400 text-[#0a0a00] shadow-[0_0_20px_rgba(251,191,36,0.2)] hover:brightness-110'
+                : 'bg-violet-400 text-[#0a0014] shadow-[0_0_20px_rgba(167,139,250,0.2)] hover:brightness-110'
+            }`}
           >
-            <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
-            {starting ? 'Starting…' : 'Start Session'}
+            <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+              <circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/>
+            </svg>
+            {starting ? 'Starting…' : assessmentMode ? 'Start Assessment' : 'Start Session'}
           </button>
         </div>
+
       </div>
     </div>
   )

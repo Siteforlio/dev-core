@@ -51,6 +51,13 @@ ipcMain.handle('devcore:session:start', async (_e, payload) => {
     const token: string = payload.token ?? ''
     if (token) _lastToken = token
     startAudioCapture(BACKEND_WS, token, payload.audioSource ?? 'both', payload.sessionId, payload.context ?? {}, payload.micDeviceId ?? null, payload.sysDeviceId ?? null)
+    // Forward assessment mode to the overlay window so its store stays in sync
+    const overlayWin = getOverlayWindow()
+    if (overlayWin && !overlayWin.isDestroyed()) {
+      overlayWin.webContents.send('devcore:session:mode', {
+        assessmentMode: payload.context?.assessmentMode ?? null,
+      })
+    }
   } catch (err) {
     console.error('[devcore] session:start failed:', err)
     throw err  // surface to renderer so handleStart can catch and log it
@@ -63,6 +70,11 @@ ipcMain.handle('devcore:session:pause', async () => {
 
 ipcMain.handle('devcore:session:end', async () => {
   stopAudioCapture()
+  // Clear assessment mode in the overlay
+  const overlayWin = getOverlayWindow()
+  if (overlayWin && !overlayWin.isDestroyed()) {
+    overlayWin.webContents.send('devcore:session:mode', { assessmentMode: null })
+  }
 })
 
 // Content bounds from renderer — polling loop uses this to decide when cursor is over the UI
@@ -81,6 +93,17 @@ ipcMain.handle('devcore:interact:enable', async () => {
 ipcMain.handle('devcore:interact:disable', async () => {
   getOverlayWindow()?.setIgnoreMouseEvents(true, { forward: true })
   getOverlayWindow()?.setFocusable(false)
+})
+
+// Forward assessment trigger from overlay UI → backend via existing WebSocket
+ipcMain.handle('devcore:assessment:trigger', async (_e, payload: { action: string; text?: string }) => {
+  const ws = getActiveWs()
+  if (!ws || ws.readyState !== 1) return
+  try {
+    ws.send(JSON.stringify({ type: 'assessment_trigger', ...payload }))
+  } catch (err) {
+    console.error('[devcore] assessment:trigger send failed:', err)
+  }
 })
 
 ipcMain.handle('devcore:session:status', async () => {

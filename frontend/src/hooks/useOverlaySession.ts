@@ -25,15 +25,35 @@ export function useOverlaySession() {
     })
 
     // onSuggestion and onStatus are handled in SuggestionCard to drive the chat UI
+    const removeSessionMode = api.onSessionMode?.((p: { assessmentMode: string | null }) => {
+      store.setAssessmentMode(p.assessmentMode as any)
+    })
     const removeTranscript = api.onTranscript(({ speaker, text, seq }: { speaker: 'interviewer' | 'user'; text: string; seq: number }) => {
       store.addTranscript({ speaker, text, seq })
     })
     const removeError = api.onError?.((p: { code: string; message: string }) => {
       store.setError(p)
     })
+    const removeToolEvent = api.onToolEvent?.((p: { tool: string; status: string; data: Record<string, unknown> }) => {
+      store.addToolEvent({ ...p, ts: Date.now() } as any)
+    })
+    const removeAgentThinking = api.onAgentThinking?.((p: { text: string }) => {
+      store.setAgentThinking(p.text)
+    })
+    const removeAgentGuidance = api.onAgentGuidance?.((p: { text: string }) => {
+      store.setAgentGuidance(p.text)
+    })
+    const removeAgentSolution = api.onAgentSolution?.((p: { code: string; language: string; explanation: string }) => {
+      store.setAgentSolution(p)
+    })
     return () => {
+      removeSessionMode?.()
       removeTranscript?.()
       removeError?.()
+      removeToolEvent?.()
+      removeAgentThinking?.()
+      removeAgentGuidance?.()
+      removeAgentSolution?.()
     }
   }, [])
 
@@ -45,5 +65,7 @@ export function useOverlaySession() {
     enableInteract: () => window.electronAPI?.devcore.enableInteract(),
     manualAsk: (text: string, mode: 'hints' | 'solve' | 'ultra', language?: string) =>
       window.electronAPI?.devcore.manualAsk({ text, mode, language }),
+    assessmentTrigger: (action: string, text?: string) =>
+      window.electronAPI?.devcore.assessmentTrigger({ action, text }),
   }
 }

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { TranscriptEntry, OverlayPosition, OverlayState } from '../types/devcore'
+import type { TranscriptEntry, OverlayPosition, OverlayState, ToolEvent, AssessmentMode } from '../types/devcore'
 
 export interface AudioDevice { id: number; name: string }
 
@@ -16,6 +16,13 @@ interface OverlayStore {
   transcriptOpen: boolean
   position: OverlayPosition
   error: { code: string; message: string } | null
+  // Assessment mode state
+  assessmentMode: AssessmentMode | null
+  toolEvents: ToolEvent[]
+  agentThinking: string
+  agentGuidance: string
+  agentSolution: { code: string; language: string; explanation: string } | null
+  activeTool: string | null
 
   setSessionId:      (id: string | null) => void
   setSessionTitle:   (title: string) => void
@@ -31,6 +38,13 @@ interface OverlayStore {
   setTranscriptOpen: (open: boolean) => void
   setPosition:       (pos: OverlayPosition) => void
   setError:          (err: { code: string; message: string } | null) => void
+  setAssessmentMode: (mode: AssessmentMode | null) => void
+  addToolEvent:      (event: ToolEvent) => void
+  clearToolEvents:   () => void
+  setAgentThinking:  (text: string) => void
+  setAgentGuidance:  (text: string) => void
+  setAgentSolution:  (s: { code: string; language: string; explanation: string } | null) => void
+  setActiveTool:     (tool: string | null) => void
 }
 
 export const useOverlayStore = create<OverlayStore>((set) => ({
@@ -46,19 +60,32 @@ export const useOverlayStore = create<OverlayStore>((set) => ({
   transcriptOpen: false,
   position: 'top-center',
   error: null,
+  assessmentMode: null,
+  toolEvents: [],
+  agentThinking: '',
+  agentGuidance: '',
+  agentSolution: null,
+  activeTool: null,
 
-  setSessionId:      (id) => set({ sessionId: id }),
-  setSessionTitle:   (title) => set({ sessionTitle: title }),
-  setState:          (s)  => set({ state: s }),
-  appendSuggestion:  (d)  => set((st) => ({ suggestion: st.suggestion + d })),
-  clearSuggestion:   ()   => set({ suggestion: '' }),
-  addTranscript:     (e)  => set((st) => ({ transcript: [...st.transcript.slice(-19), e] })),
+  setSessionId:      (id)   => set({ sessionId: id }),
+  setSessionTitle:   (title)=> set({ sessionTitle: title }),
+  setState:          (s)    => set({ state: s }),
+  appendSuggestion:  (d)    => set((st) => ({ suggestion: st.suggestion + d })),
+  clearSuggestion:   ()     => set({ suggestion: '' }),
+  addTranscript:     (e)    => set((st) => ({ transcript: [...st.transcript.slice(-19), e] })),
   setTranscript:     (entries) => set({ transcript: entries }),
-  setLatency:        (ms) => set({ latencyMs: ms }),
-  setAudioSource:    (src)=> set({ audioSource: src }),
-  setMicDeviceId:    (id) => set({ micDeviceId: id }),
-  setSysDeviceId:    (id) => set({ sysDeviceId: id }),
-  setTranscriptOpen: (o)  => set({ transcriptOpen: o }),
-  setPosition:       (p)  => set({ position: p }),
-  setError:          (e)  => set({ error: e }),
+  setLatency:        (ms)   => set({ latencyMs: ms }),
+  setAudioSource:    (src)  => set({ audioSource: src }),
+  setMicDeviceId:    (id)   => set({ micDeviceId: id }),
+  setSysDeviceId:    (id)   => set({ sysDeviceId: id }),
+  setTranscriptOpen: (o)    => set({ transcriptOpen: o }),
+  setPosition:       (p)    => set({ position: p }),
+  setError:          (e)    => set({ error: e }),
+  setAssessmentMode: (m)    => set({ assessmentMode: m }),
+  addToolEvent:      (ev)   => set((st) => ({ toolEvents: [...st.toolEvents.slice(-99), ev], activeTool: ev.tool })),
+  clearToolEvents:   ()     => set({ toolEvents: [], activeTool: null }),
+  setAgentThinking:  (t)    => set({ agentThinking: t }),
+  setAgentGuidance:  (t)    => set({ agentGuidance: t }),
+  setAgentSolution:  (s)    => set({ agentSolution: s }),
+  setActiveTool:     (t)    => set({ activeTool: t }),
 }))
