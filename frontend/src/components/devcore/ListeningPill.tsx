@@ -3,13 +3,18 @@ import { useOverlayStore } from '../../store/overlayStore'
 import type { AssessmentMode } from '../../types/devcore'
 
 const MODE_STYLE: Record<
-  NonNullable<AssessmentMode> | 'standard',
+  AssessmentMode | 'standard',
   { pill: string; label: string; dot: string }
 > = {
   standard: {
     pill:  'bg-[rgba(9,9,18,0.60)] border-white/[0.07] backdrop-blur-xl',
     label: 'text-violet-400',
     dot:   'bg-violet-400 shadow-[0_0_10px_rgba(167,139,250,0.8)]',
+  },
+  present: {
+    pill:  'bg-[rgba(0,30,28,0.65)] border-teal-400/[0.18] backdrop-blur-xl',
+    label: 'text-teal-400',
+    dot:   'bg-teal-400 shadow-[0_0_10px_rgba(45,212,191,0.8)]',
   },
   coding: {
     pill:  'bg-[rgba(40,24,0,0.65)] border-amber-400/[0.18] backdrop-blur-xl',
@@ -121,6 +126,7 @@ export function ListeningPill() {
   const style   = MODE_STYLE[modeKey]
 
   const modeLabel: Record<string, string> = {
+    present:  'PRESENT',
     coding:   'CODING',
     live:     'LIVE',
     ai_model: 'AI MODEL',

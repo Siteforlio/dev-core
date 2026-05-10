@@ -4,23 +4,26 @@ import { getFreshToken } from '../../lib/apiFetch'
 import { AudioSourcePicker } from './AudioSourcePicker'
 import type { AssessmentMode, SessionContext } from '../../types/devcore'
 
-const MODE_HEADER: Record<NonNullable<AssessmentMode> | 'standard', string> = {
+const MODE_HEADER: Record<AssessmentMode | 'standard', string> = {
   standard: 'bg-white/[0.015] border-white/[0.07]',
+  present:  'bg-teal-400/[0.07]   border-teal-400/[0.15]',
   coding:   'bg-amber-400/[0.07]  border-amber-400/[0.15]',
   live:     'bg-emerald-400/[0.07] border-emerald-400/[0.15]',
   ai_model: 'bg-sky-400/[0.07]    border-sky-400/[0.15]',
 }
 
-const MODE_ACCENT: Record<NonNullable<AssessmentMode> | 'standard', string> = {
+const MODE_ACCENT: Record<AssessmentMode | 'standard', string> = {
   standard: 'bg-violet-400',
+  present:  'bg-teal-400',
   coding:   'bg-amber-400',
   live:     'bg-emerald-400',
   ai_model: 'bg-sky-400',
 }
 
-const MODE_WATERMARK: Record<NonNullable<AssessmentMode> | 'standard', { text: string; color: string } | null> = {
+const MODE_WATERMARK: Record<AssessmentMode | 'standard', { text: string; color: string } | null> = {
   standard: null,
-  coding:   { text: 'CODING',   color: 'text-amber-400/[0.06]'  },
+  present:  { text: 'PRESENT',  color: 'text-teal-400/[0.05]'    },
+  coding:   { text: 'CODING',   color: 'text-amber-400/[0.06]'   },
   live:     { text: 'LIVE',     color: 'text-emerald-400/[0.06]' },
   ai_model: { text: 'AI MODEL', color: 'text-sky-400/[0.06]'     },
 }
@@ -738,8 +741,8 @@ export function SuggestionCard() {
           </button>
         </div>
 
-        {/* Tool strip — only in assessment mode */}
-        {assessmentMode && <ToolStrip />}
+        {/* Tool strip — visible in all active sessions */}
+        {isActive && assessmentMode && <ToolStrip />}
       </div>
     </div>
   )

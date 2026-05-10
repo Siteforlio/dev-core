@@ -259,6 +259,7 @@ class OverlayService:
 
         ctx["_initial_title"] = initial_title
 
+        session_type: str | None = ctx.get("assessmentMode") or ctx.get("assessment_mode") or None
         try:
             await repo.create_session(
                 session_id=sid,
@@ -267,6 +268,7 @@ class OverlayService:
                 role=role,
                 title=initial_title,
                 application_id=ctx.get("application_id"),
+                session_type=session_type,
             )
         except Exception as e:
             logger.error("[repo] create_session failed: %s", e)
@@ -328,17 +330,28 @@ class OverlayService:
         ctx["_stop_summarizer"] = stop_summarizer
         asyncio.create_task(run_summarizer(ctx_mgr, stop_summarizer))
 
-        # Assessment agent — created only when assessment mode is enabled
-        assessment_mode: str | None = ctx.get("assessment_mode")  # "coding" | "live" | "ai_model"
-        if assessment_mode:
+        # Assessment agent — created for non-present assessment modes
+        # "present" mode gets tool access but no autonomous agent loop
+        assessment_mode: str | None = ctx.get("assessmentMode") or ctx.get("assessment_mode")
+        if assessment_mode and assessment_mode != "present":
+            sid_for_tools = ctx.get("session_id", "")
+
             async def _ws_send(event: dict) -> None:
                 await _safe_send(ws, event)
+                # Record which tools are used in the session
+                if event.get("type") == "tool:event" and event.get("status") == "start":
+                    tool = event.get("tool", "")
+                    if tool and repo:
+                        try:
+                            await repo.record_tool_used(sid_for_tools, tool)
+                        except Exception:
+                            pass
 
             agent = AssessmentAgent(
                 mode=assessment_mode,
                 session_ctx=ctx,
                 send=_ws_send,
-                project_root=ctx.get("project_root"),
+                project_root=ctx.get("projectRoot") or ctx.get("project_root"),
                 file_paths=ctx.get("file_paths", []),
             )
             ctx["_assessment_agent"] = agent

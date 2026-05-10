@@ -18,6 +18,16 @@ interface AppliedJob {
 
 const ASSESSMENT_MODES: { key: AssessmentMode; label: string; sub: string; icon: React.ReactNode }[] = [
   {
+    key: 'present',
+    label: 'Present',
+    sub: 'General meeting',
+    icon: (
+      <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+      </svg>
+    ),
+  },
+  {
     key: 'coding',
     label: 'Coding',
     sub: 'LeetCode / DSA',
@@ -59,8 +69,8 @@ export function SessionSetup({ onClose }: { onClose: () => void }) {
   const [starting, setStarting]         = useState(false)
   const [loadingContext, setLoadingContext] = useState(false)
 
-  // Assessment mode state
-  const [assessmentMode, setAssessmentMode] = useState<AssessmentMode | null>(null)
+  // Assessment mode state — 'present' is the default/floor
+  const [assessmentMode, setAssessmentMode] = useState<AssessmentMode>('present')
   const [projectRoot, setProjectRoot]       = useState('')
 
   const { startSession }  = useOverlaySession()
@@ -103,8 +113,9 @@ export function SessionSetup({ onClose }: { onClose: () => void }) {
 
   const selectedJobData = jobs.find(j => j.id === selectedJob)
 
+  // Clicking an active mode goes back to 'present' (the floor), not null
   const toggleAssessmentMode = (mode: AssessmentMode) => {
-    setAssessmentMode(prev => prev === mode ? null : mode)
+    setAssessmentMode(prev => prev === mode ? 'present' : mode)
   }
 
   const handleStart = async () => {
@@ -117,7 +128,7 @@ export function SessionSetup({ onClose }: { onClose: () => void }) {
         resumeText:     tab === 'job' ? selectedJobData?.resumeText ?? '' : '',
         jdText:         tab === 'job' ? selectedJobData?.jdText ?? '' : description,
         files,
-        assessmentMode: assessmentMode ?? undefined,
+        assessmentMode: assessmentMode,
         projectRoot:    assessmentMode === 'live' ? projectRoot.trim() : undefined,
       }
       const id = crypto.randomUUID()
@@ -224,9 +235,9 @@ export function SessionSetup({ onClose }: { onClose: () => void }) {
           <div>
             <div className="flex items-center gap-2 mb-2.5">
               <p className="font-mono text-[8.5px] uppercase tracking-widest text-white/30">Assessment Mode</p>
-              {assessmentMode && (
+              {assessmentMode !== 'present' && (
                 <span className="font-mono text-[7.5px] px-1.5 py-0.5 rounded border border-amber-400/30 bg-amber-400/10 text-amber-400 uppercase tracking-wider">
-                  active
+                  assessment
                 </span>
               )}
             </div>
@@ -239,14 +250,16 @@ export function SessionSetup({ onClose }: { onClose: () => void }) {
                     key={key}
                     onClick={() => toggleAssessmentMode(key)}
                     className={`flex-1 flex flex-col items-center gap-1.5 py-3 px-2 rounded-lg border transition-all ${
-                      active
+                      active && key === 'present'
+                        ? 'border-teal-400/30 bg-teal-400/[0.08] text-teal-400 shadow-[0_0_12px_rgba(45,212,191,0.06)]'
+                        : active
                         ? 'border-amber-400/30 bg-amber-400/[0.08] text-amber-400 shadow-[0_0_12px_rgba(251,191,36,0.06)]'
                         : 'border-white/[0.07] bg-white/[0.02] text-white/25 hover:bg-white/[0.04] hover:text-white/40'
                     }`}
                   >
-                    <span className={active ? 'text-amber-400' : 'text-white/25'}>{icon}</span>
+                    <span className={active && key === 'present' ? 'text-teal-400' : active ? 'text-amber-400' : 'text-white/25'}>{icon}</span>
                     <span className="font-mono text-[9px] uppercase tracking-wider font-medium">{label}</span>
-                    <span className={`font-mono text-[7.5px] ${active ? 'text-amber-400/60' : 'text-white/20'}`}>{sub}</span>
+                    <span className={`font-mono text-[7.5px] ${active && key === 'present' ? 'text-teal-400/60' : active ? 'text-amber-400/60' : 'text-white/20'}`}>{sub}</span>
                   </button>
                 )
               })}
@@ -298,15 +311,15 @@ export function SessionSetup({ onClose }: { onClose: () => void }) {
             onClick={handleStart}
             disabled={starting}
             className={`flex items-center gap-2 px-5 py-2 rounded-lg font-display text-[11px] font-bold tracking-[0.1em] transition-all disabled:opacity-60 disabled:cursor-not-allowed ${
-              assessmentMode
-                ? 'bg-amber-400 text-[#0a0a00] shadow-[0_0_20px_rgba(251,191,36,0.2)] hover:brightness-110'
-                : 'bg-violet-400 text-[#0a0014] shadow-[0_0_20px_rgba(167,139,250,0.2)] hover:brightness-110'
+              assessmentMode === 'present'
+                ? 'bg-teal-400 text-[#001a18] shadow-[0_0_20px_rgba(45,212,191,0.2)] hover:brightness-110'
+                : 'bg-amber-400 text-[#0a0a00] shadow-[0_0_20px_rgba(251,191,36,0.2)] hover:brightness-110'
             }`}
           >
             <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
               <circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/>
             </svg>
-            {starting ? 'Starting…' : assessmentMode ? 'Start Assessment' : 'Start Session'}
+            {starting ? 'Starting…' : assessmentMode === 'present' ? 'Start Session' : 'Start Assessment'}
           </button>
         </div>
 

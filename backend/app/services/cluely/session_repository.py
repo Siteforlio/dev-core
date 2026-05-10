@@ -52,13 +52,14 @@ class SessionRepository:
         role: str,
         title: str | None = None,
         application_id: str | None = None,
+        session_type: str | None = None,
     ) -> None:
         await self._db.execute(
             text("""
                 INSERT INTO cluely_sessions
-                    (id, user_id, company, role, title, application_id, started_at)
+                    (id, user_id, company, role, title, application_id, session_type, tools_used, started_at)
                 VALUES
-                    (:id, :user_id, :company, :role, :title, :application_id, :started_at)
+                    (:id, :user_id, :company, :role, :title, :application_id, :session_type, :tools_used, :started_at)
                 ON CONFLICT (id) DO NOTHING
             """),
             {
@@ -68,11 +69,35 @@ class SessionRepository:
                 "role": role,
                 "title": title or _auto_title(company, role),
                 "application_id": application_id,
+                "session_type": session_type,
+                "tools_used": "[]",
                 "started_at": _utcnow(),
             },
         )
         await self._db.commit()
-        logger.info("[repo] session created (or already existed) | id=%s", session_id)
+        logger.info("[repo] session created | id=%s type=%s", session_id, session_type)
+
+    async def record_tool_used(self, session_id: str, tool: str) -> None:
+        """Append a tool name to the tools_used JSON array if not already present."""
+        await self._db.execute(
+            text("""
+                UPDATE cluely_sessions
+                SET tools_used = (
+                    CASE
+                        WHEN tools_used IS NULL THEN :new_arr
+                        WHEN tools_used::jsonb @> :tool_json THEN tools_used
+                        ELSE (tools_used::jsonb || :tool_json)::text
+                    END
+                )
+                WHERE id = :id
+            """),
+            {
+                "id": session_id,
+                "new_arr": f'["{tool}"]',
+                "tool_json": f'["{tool}"]',
+            },
+        )
+        await self._db.commit()
 
     async def end_session(self, session_id: str, post_summary: str | None = None) -> None:
         # Flush any remaining transcript lines before closing

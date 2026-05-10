@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
-from sqlalchemy import String, DateTime, Integer, Text, ForeignKey
+from sqlalchemy import String, DateTime, Integer, Text, ForeignKey, JSON
 from sqlalchemy.orm import Mapped, mapped_column
+from typing import Any
 from app.models.pg.base import Base
 
 
@@ -22,6 +23,10 @@ class CluelySession(Base):
     title: Mapped[str | None] = mapped_column(String(255), nullable=True)
     company: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     role: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    # "present" | "coding" | "live" | "ai_model" — null means legacy/unknown
+    session_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # JSON list of distinct tool names used: ["terminal","screen","search",...]
+    tools_used: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)

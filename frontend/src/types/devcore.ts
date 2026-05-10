@@ -18,7 +18,7 @@ export interface SessionContext {
   filePaths?: string[]    // presentation mode: specific file paths to analyze
 }
 
-export type AssessmentMode = 'coding' | 'live' | 'ai_model'
+export type AssessmentMode = 'present' | 'coding' | 'live' | 'ai_model'
 
 export interface ToolEvent {
   tool:   'terminal' | 'screen' | 'browser' | 'file' | 'search'
