@@ -411,19 +411,20 @@ class ChatAgent:
             def _list():
                 import os as _os
                 results = []
+                # Noisy dirs to skip — but keep dotfiles like .env
+                _SKIP_DIRS = {"__pycache__", "node_modules", ".git", "venv", ".venv", ".mypy_cache", "dist", "build", ".next"}
                 for root, dirs, files in _os.walk(path):
-                    dirs[:] = [d for d in dirs if not d.startswith(".") and d not in ("__pycache__", "node_modules", ".git", "venv", ".venv")]
+                    dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
                     depth = root.replace(path, "").count(_os.sep)
                     if depth >= 2:
                         dirs.clear()
                         continue
                     for fname in files:
-                        if not fname.startswith("."):
-                            results.append(_os.path.join(root, fname).replace(path, "").lstrip(_os.sep))
+                        results.append(_os.path.join(root, fname).replace(path, "").lstrip(_os.sep))
                 return sorted(results)
             files = await _asyncio.to_thread(_list)
-            await self._send(_tool_event("file", "done", {"files": files[:50]}))
-            return "\n".join(files[:50]) or "[empty directory]"
+            await self._send(_tool_event("file", "done", {"files": files[:80]}))
+            return "\n".join(files[:80]) or "[empty directory]"
         if not self._file:
             return "[file tool unavailable — provide an absolute path or configure a project root at session start]"
         files = await self._file.list_directory(path, depth=2)

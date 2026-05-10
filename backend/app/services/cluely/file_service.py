@@ -115,13 +115,9 @@ class FileService:
                     dirs.clear()
                     continue
                 # Prune noisy directories
-                dirs[:] = [
-                    d for d in dirs
-                    if not d.startswith(".") and d not in ("__pycache__", "node_modules", ".git", "venv", ".venv")
-                ]
+                _SKIP_DIRS = {"__pycache__", "node_modules", ".git", "venv", ".venv", ".mypy_cache", "dist", "build", ".next"}
+                dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
                 for fname in files:
-                    if fname.startswith("."):
-                        continue
                     full = Path(root) / fname
                     results.append(str(full.relative_to(self._root)))
             return sorted(results)
