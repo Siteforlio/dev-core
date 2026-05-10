@@ -398,13 +398,14 @@ export function SuggestionCard() {
         audioSource, micDeviceId, sysDeviceId, token: t,
       })
     } else {
-      // Brand new session
+      // Brand new session — default to present mode
       const id = crypto.randomUUID()
       setSessionId(id)
       setSessionTitle('Starting…')
       setMessages([])
       useOverlayStore.getState().setTranscript([])
-      api()?.startSession({ sessionId: id, context: EMPTY_CONTEXT, audioSource, micDeviceId, sysDeviceId, token: t })
+      useOverlayStore.getState().setAssessmentMode('present')
+      api()?.startSession({ sessionId: id, context: { ...EMPTY_CONTEXT, assessmentMode: 'present' }, audioSource, micDeviceId, sysDeviceId, token: t })
     }
   }
 

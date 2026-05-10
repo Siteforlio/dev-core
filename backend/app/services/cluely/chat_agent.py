@@ -30,7 +30,7 @@ from app.services.cluely.deepseek_client import deepseek_with_tools, deepseek_st
 
 logger = logging.getLogger(__name__)
 
-MAX_TOOL_STEPS = 5
+MAX_TOOL_STEPS = 8
 
 _TOOL_SCHEMAS = [
     {
@@ -75,13 +75,18 @@ _TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "read_file",
-            "description": "Read the text content of a file from the project. Requires a project root to be configured.",
+            "description": (
+                "Read the full text content of a single file. "
+                "Accepts absolute paths (e.g. C:\\Users\\...\\file.py) or relative paths when a project root is set. "
+                "To explore a folder first, call list_files, then read individual files. "
+                "You can call read_file multiple times to read several files."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Path to the file, relative to the project root",
+                        "description": "Absolute or relative path to the file",
                     },
                 },
                 "required": ["path"],
@@ -92,11 +97,11 @@ _TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "write_file",
-            "description": "Write or overwrite a file in the project with the given content.",
+            "description": "Write or overwrite a file with the given content. Accepts absolute or relative paths.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Relative path to the file"},
+                    "path": {"type": "string", "description": "Absolute or relative path to the file"},
                     "content": {"type": "string", "description": "Full file content to write"},
                 },
                 "required": ["path", "content"],
@@ -107,13 +112,18 @@ _TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "list_files",
-            "description": "List files and directories in the project. Use to explore structure.",
+            "description": (
+                "List all files in a directory tree (up to 2 levels deep). "
+                "Use this to explore a project's folder structure before deciding which files to read. "
+                "Accepts absolute paths (e.g. C:\\Users\\...\\my-project) or relative paths. "
+                "After listing, call read_file on the relevant files."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Relative path to list (defaults to project root '.')",
+                        "description": "Absolute or relative path to the directory to list",
                     },
                 },
             },
