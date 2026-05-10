@@ -79,25 +79,35 @@ class SessionRepository:
 
     async def record_tool_used(self, session_id: str, tool: str) -> None:
         """Append a tool name to the tools_used JSON array if not already present."""
-        await self._db.execute(
-            text("""
-                UPDATE cluely_sessions
-                SET tools_used = (
-                    CASE
-                        WHEN tools_used IS NULL THEN :new_arr
-                        WHEN tools_used::jsonb @> :tool_json THEN tools_used
-                        ELSE (tools_used::jsonb || :tool_json)::text
-                    END
+        try:
+            # Fetch current value, update in Python, write back — avoids JSONB cast issues
+            result = await self._db.execute(
+                text("SELECT tools_used FROM cluely_sessions WHERE id = :id"),
+                {"id": session_id},
+            )
+            row = result.fetchone()
+            if row is None:
+                return
+            current = row.tools_used
+            if isinstance(current, str):
+                import json as _json
+                current = _json.loads(current)
+            if not isinstance(current, list):
+                current = []
+            if tool not in current:
+                current.append(tool)
+                import json as _json
+                await self._db.execute(
+                    text("UPDATE cluely_sessions SET tools_used = :val WHERE id = :id"),
+                    {"val": _json.dumps(current), "id": session_id},
                 )
-                WHERE id = :id
-            """),
-            {
-                "id": session_id,
-                "new_arr": f'["{tool}"]',
-                "tool_json": f'["{tool}"]',
-            },
-        )
-        await self._db.commit()
+                await self._db.commit()
+        except Exception as e:
+            logger.warning("[repo] record_tool_used failed: %s", e)
+            try:
+                await self._db.rollback()
+            except Exception:
+                pass
 
     async def end_session(self, session_id: str, post_summary: str | None = None) -> None:
         # Flush any remaining transcript lines before closing
@@ -205,12 +215,20 @@ class SessionRepository:
             mode=mode,
             occurred_at=_utcnow(),
         )
+        try:
+            # Rollback any aborted transaction before writing (defensive)
+            await self._db.rollback()
+        except Exception:
+            pass
         self._db.add(row)
         try:
             await self._db.commit()
         except Exception as e:
             logger.error("[repo] interaction write failed: %s", e)
-            await self._db.rollback()
+            try:
+                await self._db.rollback()
+            except Exception:
+                pass
 
 
 # ------------------------------------------------------------------

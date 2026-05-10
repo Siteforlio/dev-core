@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import shlex
 import time
 from typing import AsyncGenerator, Callable
@@ -197,11 +198,11 @@ class ChatAgent:
             parts.append(f"Session context: {role or 'unknown role'} at {company or 'unknown company'}.")
         if mode:
             parts.append(f"Session mode: {mode}.")
-        if not has_file or not has_project:
-            parts.append(
-                "Note: file tools (read_file, write_file, list_files) require a project root "
-                "configured at session start. If unavailable, say so briefly."
-            )
+        parts.append(
+            "File tools accept absolute paths directly (e.g. C:\\Users\\...\\file.txt or /home/user/file.txt). "
+            "If the user mentions a file path in their message, extract it and use the file tool immediately — "
+            "do NOT ask them to provide it again."
+        )
         return " ".join(parts)
 
     async def handle(
@@ -338,9 +339,12 @@ class ChatAgent:
 
     async def _run_read_file(self, args: dict) -> str:
         path = args.get("path", "")
-        if not self._file:
-            return "[file tool unavailable — no project root configured]"
         await self._send(_tool_event("file", "start", {"path": path, "action": "read"}))
+        # Absolute path — read directly without FileService scoping
+        if os.path.isabs(path):
+            return await self._read_absolute(path)
+        if not self._file:
+            return "[file tool unavailable — provide an absolute path or configure a project root at session start]"
         try:
             content = await self._file.read_file(path)
             await self._send(_tool_event("file", "done", {"path": path, "chars": len(content)}))
@@ -349,12 +353,38 @@ class ChatAgent:
             await self._send(_tool_event("file", "error", {"error": e.message}))
             return f"[access denied: {e.message}]"
 
+    async def _read_absolute(self, path: str) -> str:
+        import asyncio as _asyncio
+        def _read():
+            import os as _os
+            if not _os.path.isfile(path):
+                return f"[file not found: {path}]"
+            size = _os.path.getsize(path)
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read(256 * 1024)
+            if size > 256 * 1024:
+                content += f"\n# [truncated — file is {size} bytes]"
+            return content
+        content = await _asyncio.to_thread(_read)
+        await self._send(_tool_event("file", "done", {"path": path, "chars": len(content)}))
+        return content
+
     async def _run_write_file(self, args: dict) -> str:
         path = args.get("path", "")
         content = args.get("content", "")
-        if not self._file:
-            return "[file tool unavailable — no project root configured]"
         await self._send(_tool_event("file", "start", {"path": path, "action": "write"}))
+        if os.path.isabs(path):
+            import asyncio as _asyncio
+            def _write():
+                import os as _os
+                _os.makedirs(_os.path.dirname(path) or ".", exist_ok=True)
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(content)
+            await _asyncio.to_thread(_write)
+            await self._send(_tool_event("file", "done", {"path": path, "wrote": len(content)}))
+            return f"Written {len(content)} chars to {path}"
+        if not self._file:
+            return "[file tool unavailable — provide an absolute path or configure a project root at session start]"
         try:
             await self._file.write_file(path, content)
             await self._send(_tool_event("file", "done", {"path": path, "wrote": len(content)}))
@@ -365,9 +395,27 @@ class ChatAgent:
 
     async def _run_list_files(self, args: dict) -> str:
         path = args.get("path", ".")
-        if not self._file:
-            return "[file tool unavailable — no project root configured]"
         await self._send(_tool_event("file", "start", {"path": path, "action": "list"}))
+        if os.path.isabs(path):
+            import asyncio as _asyncio
+            def _list():
+                import os as _os
+                results = []
+                for root, dirs, files in _os.walk(path):
+                    dirs[:] = [d for d in dirs if not d.startswith(".") and d not in ("__pycache__", "node_modules", ".git", "venv", ".venv")]
+                    depth = root.replace(path, "").count(_os.sep)
+                    if depth >= 2:
+                        dirs.clear()
+                        continue
+                    for fname in files:
+                        if not fname.startswith("."):
+                            results.append(_os.path.join(root, fname).replace(path, "").lstrip(_os.sep))
+                return sorted(results)
+            files = await _asyncio.to_thread(_list)
+            await self._send(_tool_event("file", "done", {"files": files[:50]}))
+            return "\n".join(files[:50]) or "[empty directory]"
+        if not self._file:
+            return "[file tool unavailable — provide an absolute path or configure a project root at session start]"
         files = await self._file.list_directory(path, depth=2)
         await self._send(_tool_event("file", "done", {"files": files[:50]}))
         return "\n".join(files[:50]) or "[empty directory]"
