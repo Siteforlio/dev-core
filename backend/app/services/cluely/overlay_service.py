@@ -727,6 +727,7 @@ class OverlayService:
         else:
             summary, facts = "", ""
         recent = session_ctx.get("_transcript_buf", [])[-15:]
+        chat_history: list[dict] = data.get("history", [])
 
         await _safe_send(ws, {"type": "status", "state": "thinking", "latency_ms": 0})
         t0 = time.monotonic()
@@ -761,7 +762,7 @@ class OverlayService:
         try:
             first = True
             batch: list[str] = []
-            async for delta in agent.handle(text, rag_chunks, summary, facts, recent):
+            async for delta in agent.handle(text, rag_chunks, summary, facts, recent, chat_history):
                 if first:
                     latency = round((time.monotonic() - t0) * 1000)
                     await _safe_send(ws, {"type": "status", "state": "listening", "latency_ms": latency})

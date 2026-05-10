@@ -465,12 +465,15 @@ export function SuggestionCard() {
 
   const sendAsk = (text: string) => {
     if (!text.trim() || aiStreaming) return
+    const trimmed = text.trim()
+    // Build history from last 10 non-pending messages for context
+    const history = messages
+      .filter(m => !m.pending && m.role !== 'auto' && m.text)
+      .slice(-10)
+      .map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', text: m.text }))
     // Show user message immediately
-    setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'user', text: text.trim() }])
-    // Send to backend
-    const devcore = api()
-    console.log('[overlay] sendAsk — api available:', !!devcore, '| manualAsk:', !!devcore?.manualAsk)
-    devcore?.manualAsk?.({ text: text.trim(), mode: 'hints' })
+    setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'user', text: trimmed }])
+    api()?.manualAsk?.({ text: trimmed, mode: 'hints', history })
     setAsk('')
   }
 

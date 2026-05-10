@@ -222,22 +222,34 @@ class ChatAgent:
         summary: str,
         facts: str,
         recent: list,
+        chat_history: list[dict] | None = None,
     ) -> AsyncGenerator[str, None]:
         """
         Async generator — yields text deltas for the final streamed answer.
         Emits tool:event WS frames via self._send during the tool loop.
+
+        chat_history: list of {role: 'user'|'assistant', text: str} from
+        the frontend — prior turns in this chat session.
         """
-        # Build initial messages
         system = self._system_prompt()
         context_block = _build_context_block(facts, summary, recent, rag_chunks)
+
+        messages: list[dict] = [{"role": "system", "content": system}]
+
+        # Inject prior chat turns so the AI remembers the conversation
+        if chat_history:
+            for turn in chat_history:
+                role = turn.get("role", "user")
+                text = turn.get("text", "")
+                if text:
+                    messages.append({"role": role, "content": text})
+
+        # Current user message — prepend context block on first or only message
         user_content = user_text
-        if context_block:
+        if context_block and not chat_history:
             user_content = f"{context_block}\n\nUser: {user_text}"
 
-        messages: list[dict] = [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user_content},
-        ]
+        messages.append({"role": "user", "content": user_content})
 
         # ReAct loop
         for step in range(MAX_TOOL_STEPS):
