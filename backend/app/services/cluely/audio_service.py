@@ -13,15 +13,32 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 MIN_SAMPLES = 1600    # 100 ms at 16 kHz — drop frames shorter than this
-SILENCE_RMS = 0.002   # below this → silent, skip API call
+SILENCE_RMS = 0.008   # below this → silent, skip API call (raised from 0.002)
 MIC_GAIN    = 4.0     # software boost for quiet mic devices (applied to mic stream only)
 
+# Exact-match short hallucinations
 _HALLUCINATIONS = {
     "", ".", "..", "...", " ", "you", "you.", "thank you", "thank you.",
     "thanks.", "thanks for watching.", "bye.", "bye bye.", "goodbye.",
     "ok.", "okay.", "and", "and.", "um", "um.", "uh", "uh.", "so", "so.",
-    "i", "i.", "the", "the.",
+    "i", "i.", "the", "the.", "mm-hmm.", "mm-hmm", "hmm.", "hmm",
 }
+
+# Substrings that strongly indicate Whisper hallucination on silence
+_HALLUCINATION_FRAGMENTS = [
+    "please don't forget to subscribe",
+    "don't forget to subscribe",
+    "subscribe if you like",
+    "thanks for watching",
+    "like and subscribe",
+    "see you next time",
+    "have a great day",
+    "www.",
+    "http",
+    "subtitles by",
+    "transcribed by",
+    "amara.org",
+]
 
 
 def parse_audio_frame(data: bytes) -> tuple[Literal["mic", "system"], int, bytes]:
@@ -116,8 +133,12 @@ class AudioService:
             logger.error("[audio] Groq transcription error: %s", e)
             return {"speaker": speaker, "text": "", "timings": {}}
 
-        if text.lower() in _HALLUCINATIONS:
-            logger.debug("[audio] hallucination filtered: %r", text)
+        text_lower = text.lower()
+        if text_lower in _HALLUCINATIONS:
+            logger.debug("[audio] hallucination filtered (exact): %r", text)
+            text = ""
+        elif any(frag in text_lower for frag in _HALLUCINATION_FRAGMENTS):
+            logger.debug("[audio] hallucination filtered (fragment): %r", text)
             text = ""
 
         total_ms = round((time.perf_counter() - t_total) * 1000, 1)
