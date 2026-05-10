@@ -538,7 +538,7 @@ class OverlayService:
         if cache_key:
             cached = await r.get(cache_key)
             if cached:
-                cached_response = cached.decode()
+                cached_response = cached.decode() if isinstance(cached, (bytes, bytearray)) else str(cached)
                 logger.debug("Suggestion cache hit | q_hash=%s", q_hash)
                 await _safe_send(ws, {"type": "suggestion_delta", "delta": cached_response})
                 await _safe_send(ws, {"type": "suggestion_end"})
@@ -615,7 +615,7 @@ class OverlayService:
             if cache_key:
                 cached = await r.get(cache_key)
                 if cached:
-                    await _safe_send(ws, {"type": "suggestion_delta", "delta": cached.decode()})
+                    await _safe_send(ws, {"type": "suggestion_delta", "delta": cached.decode() if isinstance(cached, (bytes, bytearray)) else str(cached)})
                     await _safe_send(ws, {"type": "suggestion_end"})
                     return
             await _safe_send(ws, {"type": "error", "code": "LLM_RATE_LIMITED", "message": "Rate limited"})

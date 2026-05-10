@@ -82,7 +82,7 @@ class OutcomeService:
         if self._r:
             cached = await self._r.get(key)
             if cached:
-                outcome = cached.decode()
+                outcome = cached.decode() if isinstance(cached, (bytes, bytearray)) else str(cached)
                 logger.debug("[outcome] cache hit | q_hash=%s | outcome=%r", q_hash, outcome)
                 return outcome
 

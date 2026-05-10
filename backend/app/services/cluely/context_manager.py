@@ -44,14 +44,18 @@ class ContextManager:
 
     async def get_summary(self) -> str:
         val = await self._r.get(self._summary_key)
-        return val.decode() if val else ""
+        if not val:
+            return ""
+        return val.decode() if isinstance(val, (bytes, bytearray)) else str(val)
 
     async def set_summary(self, text: str) -> None:
         await self._r.setex(self._summary_key, TRANSCRIPT_TTL, text)
 
     async def get_facts(self) -> str:
         val = await self._r.get(self._facts_key)
-        return val.decode() if val else ""
+        if not val:
+            return ""
+        return val.decode() if isinstance(val, (bytes, bytearray)) else str(val)
 
     async def set_facts(self, text: str) -> None:
         await self._r.setex(self._facts_key, TRANSCRIPT_TTL, text)
@@ -61,7 +65,9 @@ class ContextManager:
 
     async def get_state(self) -> str | None:
         val = await self._r.get(self._state_key)
-        return val.decode() if val else None
+        if not val:
+            return None
+        return val.decode() if isinstance(val, (bytes, bytearray)) else str(val)
 
     async def session_exists(self) -> bool:
         return bool(await self._r.exists(self._state_key))
