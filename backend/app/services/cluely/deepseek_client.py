@@ -95,3 +95,62 @@ async def deepseek_generate(
         resp.raise_for_status()
         data = resp.json()
         return data["choices"][0]["message"]["content"]
+
+
+async def deepseek_with_tools(
+    messages: list[dict],
+    tools: list[dict],
+    temperature: float = 0.5,
+    max_tokens: int = 1024,
+) -> dict:
+    """
+    Non-streaming call with tool schemas.
+    Returns the raw choice dict — check choice["message"].get("tool_calls").
+    """
+    url = f"{_BASE}/chat/completions"
+    body = {
+        "model": _MODEL,
+        "messages": messages,
+        "tools": tools,
+        "tool_choice": "auto",
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "stream": False,
+    }
+    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        resp = await client.post(url, json=body, headers=_headers())
+        resp.raise_for_status()
+        data = resp.json()
+    return data["choices"][0]
+
+
+async def deepseek_stream_messages(
+    messages: list[dict],
+    temperature: float = 0.7,
+    max_tokens: int = 512,
+) -> AsyncGenerator[str, None]:
+    """Stream token deltas from a full messages list (for multi-turn tool conversations)."""
+    url = f"{_BASE}/chat/completions"
+    body = {
+        "model": _MODEL,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "stream": True,
+    }
+    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        async with client.stream("POST", url, json=body, headers=_headers()) as resp:
+            resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                if not line.startswith("data: "):
+                    continue
+                raw = line[6:].strip()
+                if not raw or raw == "[DONE]":
+                    continue
+                try:
+                    chunk = json.loads(raw)
+                    delta = chunk["choices"][0]["delta"].get("content", "")
+                    if delta:
+                        yield delta
+                except (KeyError, json.JSONDecodeError):
+                    continue

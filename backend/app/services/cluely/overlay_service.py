@@ -2,7 +2,7 @@ import asyncio, logging, json, time, hashlib
 from fastapi import WebSocket
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 from app.core.security import decode_token
-from app.core.exceptions import BertClassifierError, LLMRateLimitedError, CodeRunnerError
+from app.core.exceptions import BertClassifierError, LLMRateLimitedError
 from app.services.cluely.audio_service import AudioService, parse_audio_frame
 from app.services.cluely.context_manager import ContextManager
 from app.services.cluely.bert_classifier import BertClassifier
@@ -11,7 +11,6 @@ from app.services.cluely.assessment_agent import AssessmentAgent
 from app.services.cluely.rag_service import RagService
 from app.services.cluely.llm_service import LLMService
 from app.services.cluely.outcome_service import OutcomeService
-from app.services.cluely.code_runner import CodeRunner
 from app.services.cluely.summarizer import run_summarizer
 from app.schemas.cluely import TranscriptEntry
 
@@ -42,7 +41,6 @@ class OverlayService:
     def __init__(self):
         self._audio   = AudioService()
         self._llm     = LLMService()
-        self._runner  = CodeRunner()
         self._last_trigger = 0.0
         # ask_rate: {session_id: (count, window_start_timestamp)}
         self._ask_rate: dict[str, tuple[int, float]] = {}
@@ -700,7 +698,7 @@ class OverlayService:
             await _safe_send(ws, {"type": "status", "state": "listening", "latency_ms": 0})
 
     # ------------------------------------------------------------------
-    # Manual ask
+    # Manual ask — tool-augmented via ChatAgent
     # ------------------------------------------------------------------
 
     async def _handle_manual_ask(self, ws, data: dict, session_ctx: dict, rag, ctx_mgr=None, repo=None):
@@ -723,67 +721,62 @@ class OverlayService:
             return
         self._ask_rate[session_id] = (count + 1, window_start)
 
-        mode = data.get("mode", "hints")
         rag_chunks = await rag.retrieve(text, k=3) if rag else []
         if ctx_mgr:
             summary, facts = await asyncio.gather(ctx_mgr.get_summary(), ctx_mgr.get_facts())
         else:
             summary, facts = "", ""
-
-        # Pass recent transcript so the LLM can detect contextual vs standalone intent
         recent = session_ctx.get("_transcript_buf", [])[-15:]
 
         await _safe_send(ws, {"type": "status", "state": "thinking", "latency_ms": 0})
         t0 = time.monotonic()
         full_response: list[str] = []
 
-        try:
-            if mode == "solve":
-                solution_parts: list[str] = []
-                batch: list[str] = []
-                first = True
-                async for delta in self._llm.stream_manual_ask(text, mode=mode, context=session_ctx, rag_chunks=rag_chunks, summary=summary, facts=facts, recent=recent):
-                    if first:
-                        latency = round((time.monotonic() - t0) * 1000)
-                        await _safe_send(ws, {"type": "status", "state": "listening", "latency_ms": latency})
-                        first = False
-                    solution_parts.append(delta)
-                    full_response.append(delta)
-                    batch.append(delta)
-                    if sum(len(d) for d in batch) >= WS_BATCH_CHARS:
-                        await _safe_send(ws, {"type": "suggestion_delta", "delta": "".join(batch)})
-                        batch = []
-                if batch:
-                    await _safe_send(ws, {"type": "suggestion_delta", "delta": "".join(batch)})
-                await _safe_send(ws, {"type": "suggestion_end"})
+        # Build a tool-aware send that also records tool usage to DB
+        sid_for_tools = session_id
+        async def _chat_send(event: dict) -> None:
+            await _safe_send(ws, event)
+            if event.get("type") == "tool:event" and event.get("status") == "start":
+                tool = event.get("tool", "")
+                if tool and repo:
+                    try:
+                        await repo.record_tool_used(sid_for_tools, tool)
+                    except Exception:
+                        pass
 
-                solution = "".join(solution_parts)
-                lang = data.get("language", "python")
-                code_result = await self._runner.execute(solution, language=lang)
-                await _safe_send(ws, {
-                    "type": "code_result",
-                    "language": lang,
-                    "output": code_result["output"],
-                    "solution": solution,
-                })
-            else:
-                batch: list[str] = []
-                first = True
-                async for delta in self._llm.stream_manual_ask(text, mode=mode, context=session_ctx, rag_chunks=rag_chunks, summary=summary, facts=facts, recent=recent):
-                    if first:
-                        latency = round((time.monotonic() - t0) * 1000)
-                        await _safe_send(ws, {"type": "status", "state": "listening", "latency_ms": latency})
-                        first = False
-                    full_response.append(delta)
-                    batch.append(delta)
-                    if sum(len(d) for d in batch) >= WS_BATCH_CHARS:
-                        await _safe_send(ws, {"type": "suggestion_delta", "delta": "".join(batch)})
-                        batch = []
-                if batch:
+        # Build FileService if a project root was given at session start
+        from app.services.cluely.file_service import FileService
+        from app.services.cluely.chat_agent import ChatAgent
+
+        file_svc: FileService | None = None
+        project_root = session_ctx.get("projectRoot") or session_ctx.get("project_root")
+        if project_root:
+            try:
+                file_svc = FileService(project_root)
+            except ValueError:
+                pass
+
+        agent = ChatAgent(session_ctx=session_ctx, send=_chat_send, file_service=file_svc)
+
+        try:
+            first = True
+            batch: list[str] = []
+            async for delta in agent.handle(text, rag_chunks, summary, facts, recent):
+                if first:
+                    latency = round((time.monotonic() - t0) * 1000)
+                    await _safe_send(ws, {"type": "status", "state": "listening", "latency_ms": latency})
+                    first = False
+                full_response.append(delta)
+                batch.append(delta)
+                if sum(len(d) for d in batch) >= WS_BATCH_CHARS:
                     await _safe_send(ws, {"type": "suggestion_delta", "delta": "".join(batch)})
-                await _safe_send(ws, {"type": "suggestion_end"})
+                    batch = []
+            if batch:
+                await _safe_send(ws, {"type": "suggestion_delta", "delta": "".join(batch)})
+            await _safe_send(ws, {"type": "suggestion_end"})
 
             full_text = "".join(full_response)
+            mode = data.get("mode", "hints")
             if repo and full_text:
                 try:
                     await repo.append_interaction(
@@ -796,9 +789,6 @@ class OverlayService:
                 except Exception as e:
                     logger.error("[repo] manual ask write failed: %s", e)
 
-        except CodeRunnerError as e:
-            await _safe_send(ws, {"type": "error", "code": e.code, "message": e.message})
-            await _safe_send(ws, {"type": "status", "state": "listening", "latency_ms": 0})
         except LLMRateLimitedError:
             await _safe_send(ws, {"type": "error", "code": "LLM_RATE_LIMITED", "message": "Rate limited"})
             await _safe_send(ws, {"type": "status", "state": "listening", "latency_ms": 0})
