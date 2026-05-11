@@ -39,6 +39,17 @@ def _no_window_kwargs() -> dict:
     return {}
 
 
+def _wrap_for_shell(command: list[str]) -> tuple[list[str], bool]:
+    """
+    On Windows, wrap the command in 'cmd /c' so the shell handles quoting,
+    PATH resolution, and built-ins (echo, where, etc.) correctly.
+    Returns (wrapped_command, use_shell=False).
+    """
+    if sys.platform == "win32":
+        return ["cmd", "/c", " ".join(command)], False
+    return command, False
+
+
 def _resolve_cwd(working_dir: str | None) -> str:
     """Return an absolute existing directory, or raise ValueError."""
     path = working_dir or "~"
@@ -81,12 +92,13 @@ class TerminalService:
 
         yield _ev("system", f"$ {' '.join(command)}", cwd)
 
+        wrapped, _ = _wrap_for_shell(command)
         merged_env = {**os.environ, **(env or {})}
         proc: Process | None = None
 
         try:
             proc = await asyncio.create_subprocess_exec(
-                *command,
+                *wrapped,
                 stdout=PIPE,
                 stderr=PIPE,
                 cwd=cwd,
