@@ -133,8 +133,20 @@ _TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "capture_screen",
-            "description": "Take a screenshot of the user's screen and extract its text via OCR. Use to read what's currently visible on screen.",
-            "parameters": {"type": "object", "properties": {}},
+            "description": (
+                "Take a screenshot of the user's screen and understand it with AI vision. "
+                "Can answer specific questions about what's visible — tabs, windows, UI elements, text, counts, etc. "
+                "Pass the user's exact question as the 'question' parameter for best results."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "question": {
+                        "type": "string",
+                        "description": "Specific question to ask about the screen, e.g. 'How many browser tabs are open?' or 'What application is in focus?'",
+                    },
+                },
+            },
         },
     },
     {
@@ -323,7 +335,7 @@ class ChatAgent:
             elif name == "list_files":
                 return await self._run_list_files(args)
             elif name == "capture_screen":
-                return await self._run_capture_screen()
+                return await self._run_capture_screen(args)
             elif name == "browse_url":
                 return await self._run_browse(args)
             else:
@@ -443,9 +455,10 @@ class ChatAgent:
         await self._send(_tool_event("file", "done", {"files": files[:50]}))
         return "\n".join(files[:50]) or "[empty directory]"
 
-    async def _run_capture_screen(self) -> str:
+    async def _run_capture_screen(self, args: dict | None = None) -> str:
+        question = (args or {}).get("question", "")
         await self._send(_tool_event("screen", "start"))
-        text = await self._screen.capture_and_extract()
+        text = await self._screen.capture_and_extract(question=question)
         await self._send(_tool_event("screen", "done", {"preview": text[:200], "text": text}))
         return text or "[screen capture returned no text]"
 

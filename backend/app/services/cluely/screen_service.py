@@ -1,26 +1,22 @@
 """
-screen_service.py — Screen capture and OCR for the assessment agent.
+screen_service.py — Screen capture with DeepSeek Vision understanding.
 
-Captures the primary display (or a specified region) via a headless screenshot
-and extracts text using pytesseract.  The Electron layer also has access to
-desktopCapturer — this backend service is called when the agent needs to read
-what is on screen during an assessment (problem statement, test cases, etc.).
+Captures the primary display via mss (fast cross-platform screenshot) and
+sends the image directly to DeepSeek's vision model for understanding.
+This replaces the old Tesseract OCR pipeline which struggled with dark UIs,
+small text, and anything rendered by a GPU (browsers, Electron apps).
 
-Multi-screen stitching
-----------------------
-Some assessment problems span 4+ scrolled screens.  The agent calls
-`capture_region` multiple times (as Electron scrolls and triggers captures)
-and passes all images to `stitch_and_extract` which deduplicates overlapping
-text and returns a single clean string.
+DeepSeek Vision reads the screenshot like a human — it can count tabs,
+read UI elements, describe layout, and answer questions about what's visible.
+It uses the same API key and endpoint as the text model.
 
 Dependencies
 ------------
-  mss         — fast cross-platform screenshot (pip install mss)
-  pytesseract — OCR wrapper (pip install pytesseract)
-  Pillow      — image handling (pip install Pillow)
-  tesseract   — system binary (winget install UB-Mannheim.TesseractOCR  /  brew install tesseract)
+  mss    — fast cross-platform screenshot (pip install mss)
+  Pillow — image resizing before sending (pip install Pillow)
+  httpx  — already a project dependency
 
-All are optional — the service degrades gracefully if they are missing.
+mss and Pillow are optional — the service degrades gracefully if missing.
 """
 
 from __future__ import annotations
@@ -28,36 +24,43 @@ from __future__ import annotations
 import asyncio
 import base64
 import io
+import json
 import logging
-from typing import Optional
+
+import httpx
+
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Lazy dependency loading — non-fatal if not installed
-# ---------------------------------------------------------------------------
+_VISION_MODEL = "deepseek-vl2"
+_BASE         = "https://api.deepseek.com"
+_TIMEOUT      = 45.0
 
-def _try_import():
-    """Return (mss, Image, pytesseract) or (None, None, None)."""
+# Resize screenshots to this width before sending — reduces tokens ~4x
+# while keeping enough detail for the model to read UI elements clearly.
+_MAX_WIDTH = 1280
+
+
+def _try_import_capture():
     try:
-        import mss                          # type: ignore
-        from PIL import Image               # type: ignore
-        import pytesseract                  # type: ignore
-        return mss, Image, pytesseract
+        import mss               # type: ignore
+        from PIL import Image    # type: ignore
+        return mss, Image
     except ImportError as exc:
-        logger.info("[screen] OCR dependencies not available (%s) — screen reading disabled", exc)
-        return None, None, None
+        logger.info("[screen] mss/Pillow not available (%s) — capture disabled", exc)
+        return None, None
 
 
-_mss, _Image, _pytesseract = _try_import()
+_mss, _Image = _try_import_capture()
 
 
 class ScreenService:
     """
-    Capture screenshots and extract text.
+    Capture the screen and understand it with DeepSeek Vision.
 
-    All methods are async — CPU-bound OCR runs in a thread pool via
-    asyncio.to_thread so the event loop is never blocked.
+    capture_and_extract(question) → takes a screenshot, sends it to the
+    vision model with an optional question, returns a descriptive string.
     """
 
     @property
@@ -70,8 +73,8 @@ class ScreenService:
 
     async def capture_base64(self, monitor: int = 1) -> str:
         """
-        Capture the specified monitor and return a base64-encoded PNG.
-        monitor=1 is the primary display (mss convention).
+        Capture the specified monitor and return a base64-encoded PNG,
+        resized to _MAX_WIDTH to reduce token cost.
         Returns empty string if mss is unavailable.
         """
         if not self.available:
@@ -80,14 +83,16 @@ class ScreenService:
         def _grab() -> bytes:
             with _mss.mss() as sct:
                 monitors = sct.monitors
-                if monitor >= len(monitors):
-                    mon = monitors[1]
-                else:
-                    mon = monitors[monitor]
+                mon = monitors[monitor] if monitor < len(monitors) else monitors[1]
                 shot = sct.grab(mon)
                 img = _Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
+                # Resize to reduce tokens while keeping legibility
+                if img.width > _MAX_WIDTH:
+                    ratio = _MAX_WIDTH / img.width
+                    new_h = int(img.height * ratio)
+                    img = img.resize((_MAX_WIDTH, new_h), _Image.LANCZOS)
                 buf = io.BytesIO()
-                img.save(buf, format="PNG")
+                img.save(buf, format="PNG", optimize=True)
                 return buf.getvalue()
 
         try:
@@ -98,58 +103,89 @@ class ScreenService:
             return ""
 
     # ------------------------------------------------------------------
-    # OCR
+    # Vision understanding
     # ------------------------------------------------------------------
 
-    async def extract_text(self, base64_png: str) -> str:
+    async def understand(self, base64_png: str, question: str = "") -> str:
         """
-        Run tesseract OCR on a base64-encoded PNG.
-        Returns extracted text (may be empty if image is blank or OCR fails).
+        Send a screenshot to DeepSeek Vision and return its description.
+
+        question — optional specific question to ask about the screen.
+        If empty, the model gives a general description of what's visible.
         """
-        if not self.available or not base64_png:
+        if not base64_png:
             return ""
 
-        def _ocr() -> str:
-            raw = base64.b64decode(base64_png)
-            img = _Image.open(io.BytesIO(raw))
-            return _pytesseract.image_to_string(img, config="--psm 6")
+        if not settings.deepseek_api_key:
+            logger.warning("[screen] No DeepSeek API key — vision disabled")
+            return ""
+
+        prompt = question.strip() if question.strip() else (
+            "Describe exactly what is visible on this screen. "
+            "List all open applications, windows, browser tabs, text content, "
+            "and any other notable UI elements you can see. Be specific and thorough."
+        )
+
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{base64_png}"},
+                    },
+                    {"type": "text", "text": prompt},
+                ],
+            }
+        ]
+
+        body = {
+            "model": _VISION_MODEL,
+            "messages": messages,
+            "max_tokens": 1024,
+            "temperature": 0.2,
+            "stream": False,
+        }
+        headers = {
+            "Authorization": f"Bearer {settings.deepseek_api_key}",
+            "Content-Type": "application/json",
+        }
 
         try:
-            return await asyncio.to_thread(_ocr)
+            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+                resp = await client.post(f"{_BASE}/chat/completions", json=body, headers=headers)
+                resp.raise_for_status()
+                data = resp.json()
+                return data["choices"][0]["message"]["content"]
         except Exception as exc:
-            logger.warning("[screen] OCR failed: %s", exc)
+            logger.warning("[screen] vision API call failed: %s", exc)
+            # Fall back to empty — caller handles gracefully
             return ""
 
-    async def capture_and_extract(self, monitor: int = 1) -> str:
-        """Convenience: capture + OCR in one call."""
+    async def capture_and_extract(self, monitor: int = 1, question: str = "") -> str:
+        """
+        Convenience: capture the screen and understand it with vision.
+        question is forwarded to the model as the specific thing to look for.
+        """
         b64 = await self.capture_base64(monitor)
-        return await self.extract_text(b64)
+        if not b64:
+            return ""
+        return await self.understand(b64, question=question)
 
     # ------------------------------------------------------------------
-    # Multi-screen stitching
+    # Multi-screen stitching (kept for assessment agent compatibility)
     # ------------------------------------------------------------------
 
     async def stitch_and_extract(self, b64_images: list[str]) -> str:
         """
-        OCR each image, then deduplicate overlapping lines and return
-        a single merged text block.
-
-        Assessment problems that span multiple scrolled screens produce
-        images with overlapping content at top/bottom.  We remove
-        lines that appeared in the previous image to avoid duplicates.
+        Understand multiple screenshots and merge into a single text block.
+        Used by the assessment agent when a problem spans multiple screens.
         """
         if not b64_images:
             return ""
-
-        all_lines: list[str] = []
-        seen: set[str] = set()
-
+        results = []
         for b64 in b64_images:
-            text = await self.extract_text(b64)
-            for line in text.splitlines():
-                stripped = line.strip()
-                if stripped and stripped not in seen:
-                    seen.add(stripped)
-                    all_lines.append(stripped)
-
-        return "\n".join(all_lines)
+            text = await self.understand(b64)
+            if text:
+                results.append(text)
+        return "\n\n---\n\n".join(results)
