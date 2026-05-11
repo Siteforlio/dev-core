@@ -24,17 +24,13 @@ from __future__ import annotations
 import asyncio
 import base64
 import io
-import json
 import logging
-
-import httpx
 
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-_VISION_MODEL = "deepseek-vl2"
-_BASE         = "https://api.deepseek.com"
+_VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
 _TIMEOUT      = 45.0
 
 # Resize screenshots to this width before sending — reduces tokens ~4x
@@ -108,7 +104,7 @@ class ScreenService:
 
     async def understand(self, base64_png: str, question: str = "") -> str:
         """
-        Send a screenshot to DeepSeek Vision and return its description.
+        Send a screenshot to Groq Llama Vision and return its description.
 
         question — optional specific question to ask about the screen.
         If empty, the model gives a general description of what's visible.
@@ -116,8 +112,8 @@ class ScreenService:
         if not base64_png:
             return ""
 
-        if not settings.deepseek_api_key:
-            logger.warning("[screen] No DeepSeek API key — vision disabled")
+        if not settings.groq_api_key:
+            logger.warning("[screen] No Groq API key — vision disabled")
             return ""
 
         prompt = question.strip() if question.strip() else (
@@ -126,40 +122,29 @@ class ScreenService:
             "and any other notable UI elements you can see. Be specific and thorough."
         )
 
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/png;base64,{base64_png}"},
-                    },
-                    {"type": "text", "text": prompt},
-                ],
-            }
-        ]
-
-        body = {
-            "model": _VISION_MODEL,
-            "messages": messages,
-            "max_tokens": 1024,
-            "temperature": 0.2,
-            "stream": False,
-        }
-        headers = {
-            "Authorization": f"Bearer {settings.deepseek_api_key}",
-            "Content-Type": "application/json",
-        }
-
         try:
-            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-                resp = await client.post(f"{_BASE}/chat/completions", json=body, headers=headers)
-                resp.raise_for_status()
-                data = resp.json()
-                return data["choices"][0]["message"]["content"]
+            from groq import AsyncGroq
+            client = AsyncGroq(api_key=settings.groq_api_key)
+            response = await client.chat.completions.create(
+                model=_VISION_MODEL,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": f"data:image/png;base64,{base64_png}"},
+                            },
+                            {"type": "text", "text": prompt},
+                        ],
+                    }
+                ],
+                max_tokens=1024,
+                temperature=0.2,
+            )
+            return response.choices[0].message.content or ""
         except Exception as exc:
-            logger.warning("[screen] vision API call failed: %s", exc)
-            # Fall back to empty — caller handles gracefully
+            logger.warning("[screen] Groq vision call failed: %s", exc)
             return ""
 
     async def capture_and_extract(self, monitor: int = 1, question: str = "") -> str:
