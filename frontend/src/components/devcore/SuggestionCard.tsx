@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useOverlayStore } from '../../store/overlayStore'
 import { getFreshToken } from '../../lib/apiFetch'
 import { AudioSourcePicker } from './AudioSourcePicker'
+import { MarkdownMessage } from './MarkdownMessage'
 import type { AssessmentMode, SessionContext } from '../../types/devcore'
 
 const MODE_HEADER: Record<AssessmentMode | 'standard', string> = {
@@ -702,18 +703,20 @@ export function SuggestionCard() {
             {(msg.role === 'ai' || msg.role === 'auto') && (
               <div className="max-w-[90%] flex gap-2 items-start">
                 <span className="text-violet-400 font-mono text-[12px] flex-shrink-0 mt-1">▸</span>
-                <div className="text-[13px] text-white/90 leading-relaxed">
+                <div className="flex-1 min-w-0">
                   {msg.text
-                    ? msg.text
+                    ? <>
+                        <MarkdownMessage content={msg.text} />
+                        {msg.pending && (
+                          <span className="inline-block w-0.5 h-3.5 bg-violet-400 ml-0.5 animate-pulse align-middle" />
+                        )}
+                      </>
                     : <span className="flex gap-1 items-center text-white/30">
                         <span className="w-1 h-1 rounded-full bg-violet-400 animate-bounce" style={{ animationDelay: '0ms' }} />
                         <span className="w-1 h-1 rounded-full bg-violet-400 animate-bounce" style={{ animationDelay: '150ms' }} />
                         <span className="w-1 h-1 rounded-full bg-violet-400 animate-bounce" style={{ animationDelay: '300ms' }} />
                       </span>
                   }
-                  {msg.pending && msg.text && (
-                    <span className="inline-block w-0.5 h-3.5 bg-violet-400 ml-0.5 animate-pulse align-middle" />
-                  )}
                 </div>
               </div>
             )}
