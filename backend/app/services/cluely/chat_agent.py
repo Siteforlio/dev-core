@@ -381,7 +381,7 @@ class ChatAgent:
             return "[file tool unavailable — provide an absolute path or configure a project root at session start]"
         try:
             content = await self._file.read_file(path)
-            await self._send(_tool_event("file", "done", {"path": path, "chars": len(content)}))
+            await self._send(_tool_event("file", "done", {"path": path, "chars": len(content), "content": content[:2000]}))
             return content
         except PathEscapeError as e:
             await self._send(_tool_event("file", "error", {"error": e.message}))
@@ -400,7 +400,7 @@ class ChatAgent:
                 content += f"\n# [truncated — file is {size} bytes]"
             return content
         content = await _asyncio.to_thread(_read)
-        await self._send(_tool_event("file", "done", {"path": path, "chars": len(content)}))
+        await self._send(_tool_event("file", "done", {"path": path, "chars": len(content), "content": content[:2000]}))
         return content
 
     async def _run_write_file(self, args: dict) -> str:
@@ -447,13 +447,15 @@ class ChatAgent:
                         results.append(_os.path.join(root, fname).replace(path, "").lstrip(_os.sep))
                 return sorted(results)
             files = await _asyncio.to_thread(_list)
-            await self._send(_tool_event("file", "done", {"files": files[:80]}))
-            return "\n".join(files[:80]) or "[empty directory]"
+            listing = "\n".join(files[:80]) or "[empty directory]"
+            await self._send(_tool_event("file", "done", {"files": files[:80], "listing": listing}))
+            return listing
         if not self._file:
             return "[file tool unavailable — provide an absolute path or configure a project root at session start]"
         files = await self._file.list_directory(path, depth=2)
-        await self._send(_tool_event("file", "done", {"files": files[:50]}))
-        return "\n".join(files[:50]) or "[empty directory]"
+        listing = "\n".join(files[:50]) or "[empty directory]"
+        await self._send(_tool_event("file", "done", {"files": files[:50], "listing": listing}))
+        return listing
 
     async def _run_capture_screen(self, args: dict | None = None) -> str:
         question = (args or {}).get("question", "")
