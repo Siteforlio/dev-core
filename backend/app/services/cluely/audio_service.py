@@ -1,3 +1,4 @@
+import asyncio
 import io
 import struct
 import time
@@ -11,6 +12,15 @@ from groq import AsyncGroq
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Shared rate limiter — enforces a minimum gap between Groq Whisper calls.
+# Groq free tier: 20 RPM → 3s between requests.  We use 4s to stay safe.
+# Both mic and system streams share this lock so combined traffic stays ≤15 RPM.
+# ---------------------------------------------------------------------------
+_WHISPER_MIN_INTERVAL = 4.0   # seconds between consecutive API calls
+_whisper_lock    = asyncio.Lock()
+_whisper_last_ts: float = 0.0
 
 MIN_SAMPLES = 1600    # 100 ms at 16 kHz — drop frames shorter than this
 SILENCE_RMS = 0.008   # below this → silent, skip API call (raised from 0.002)
@@ -110,23 +120,24 @@ class AudioService:
         try:
             wav_bytes = _pcm_to_wav(pcm)
             t_infer = time.perf_counter()
-            # Retry once on 429 — wait the suggested retry-after (default 3s)
-            for attempt in range(2):
-                try:
-                    result = await self._client.audio.transcriptions.create(
-                        file=("audio.wav", wav_bytes, "audio/wav"),
-                        model="whisper-large-v3-turbo",
-                        language="en",
-                        response_format="text",
-                    )
-                    break
-                except Exception as e:
-                    if attempt == 0 and "429" in str(e):
-                        import asyncio as _aio
-                        logger.warning("[audio] 429 rate limit — waiting 4s then retrying")
-                        await _aio.sleep(4)
-                    else:
-                        raise
+
+            # Acquire the shared rate-limiter — enforces _WHISPER_MIN_INTERVAL
+            # between calls across both mic and system streams combined.
+            global _whisper_last_ts
+            async with _whisper_lock:
+                now = time.monotonic()
+                gap = _WHISPER_MIN_INTERVAL - (now - _whisper_last_ts)
+                if gap > 0:
+                    logger.debug("[audio] rate-limit: sleeping %.2fs", gap)
+                    await asyncio.sleep(gap)
+                _whisper_last_ts = time.monotonic()
+
+            result = await self._client.audio.transcriptions.create(
+                file=("audio.wav", wav_bytes, "audio/wav"),
+                model="whisper-large-v3-turbo",
+                language="en",
+                response_format="text",
+            )
             infer_ms = round((time.perf_counter() - t_infer) * 1000, 1)
             text = result.strip() if isinstance(result, str) else ""
         except Exception as e:

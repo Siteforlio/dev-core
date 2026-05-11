@@ -50,15 +50,22 @@ let overlayWin: BrowserWindow | null = null
  */
 function _applyStealthMode(win: BrowserWindow): void {
   if (process.platform === 'win32') {
-    if (!_setWindowDisplayAffinity) return
+    if (!_setWindowDisplayAffinity) {
+      console.warn('[devcore-overlay] koffi/user32 not loaded — overlay will be visible in captures')
+      return
+    }
     try {
       const hwndBuf = win.getNativeWindowHandle()
       const hwnd = process.arch === 'x64'
         ? Number(hwndBuf.readBigInt64LE(0))
         : hwndBuf.readInt32LE(0)
       const WDA_EXCLUDEFROMCAPTURE = 0x00000011
-      _setWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE)
-      console.log('[devcore-overlay] WDA_EXCLUDEFROMCAPTURE applied (Windows stealth)')
+      const ok = _setWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE)
+      if (ok) {
+        console.log('[devcore-overlay] WDA_EXCLUDEFROMCAPTURE applied (Windows stealth) hwnd=', hwnd)
+      } else {
+        console.error('[devcore-overlay] SetWindowDisplayAffinity returned false — stealth failed, hwnd=', hwnd)
+      }
     } catch (e) {
       console.warn('[devcore-overlay] SetWindowDisplayAffinity failed (non-fatal):', e)
     }
@@ -112,8 +119,14 @@ export function createOverlayWindow(): BrowserWindow {
   _startCursorPoll(overlayWin)
 
   // Apply platform-specific screen-capture exclusion so the overlay is
-  // invisible to OBS, Zoom, Teams, etc.
+  // invisible to OBS, Zoom, Teams, mss, etc.
+  // Applied twice: once early (before load) and once after did-finish-load
+  // to ensure the compositor has registered the affinity after the window
+  // is fully painted.
   _applyStealthMode(overlayWin)
+  overlayWin.webContents.once('did-finish-load', () => {
+    if (overlayWin && !overlayWin.isDestroyed()) _applyStealthMode(overlayWin)
+  })
 
   if (process.env.NODE_ENV === 'development') {
     overlayWin.loadURL('http://localhost:5173/overlay.html')
