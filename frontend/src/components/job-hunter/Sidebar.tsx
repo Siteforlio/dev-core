@@ -48,32 +48,7 @@ const IconLogout = () => (
 )
 
 const DevCoreLogo = () => (
-  // viewBox 40x40 — flat-top hexagon (widest side horizontal), two rings + crosshair
-  <svg width="34" height="34" viewBox="0 0 40 40" fill="none">
-    {/* Outer hexagon — flat-top: vertices at 0°,60°,120°,180°,240°,300° */}
-    <polygon
-      points="38,20 29,35.59 11,35.59 2,20 11,4.41 29,4.41"
-      stroke="#22d3ee"
-      strokeWidth="2.4"
-      fill="none"
-      strokeLinejoin="round"
-    />
-    {/* Inner hexagon — same orientation, smaller */}
-    <polygon
-      points="31,20 25.5,29.53 14.5,29.53 9,20 14.5,10.47 25.5,10.47"
-      stroke="#22d3ee"
-      strokeWidth="2.4"
-      fill="none"
-      strokeLinejoin="round"
-    />
-    {/* Center filled circle */}
-    <circle cx="20" cy="20" r="4" fill="#22d3ee" />
-    {/* Crosshair ticks */}
-    <line x1="20" y1="14" x2="20" y2="11" stroke="#22d3ee" strokeWidth="2.4" strokeLinecap="round" />
-    <line x1="20" y1="26" x2="20" y2="29" stroke="#22d3ee" strokeWidth="2.4" strokeLinecap="round" />
-    <line x1="14" y1="20" x2="11" y2="20" stroke="#22d3ee" strokeWidth="2.4" strokeLinecap="round" />
-    <line x1="26" y1="20" x2="29" y2="20" stroke="#22d3ee" strokeWidth="2.4" strokeLinecap="round" />
-  </svg>
+  <img src="/devcore.png" width="34" height="34" alt="DevCore" style={{ objectFit: 'contain' }} />
 )
 
 const NAV_ITEMS: NavItem[] = [

@@ -28,6 +28,7 @@ function createWindow() {
   const win = new BrowserWindow({
     width: 1280,
     height: 800,
+    icon: path.join(PROJECT_ROOT, 'frontend', 'public', 'devcore.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
