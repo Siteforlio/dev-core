@@ -112,7 +112,9 @@ export function startAudioCapture(
   _openWebSocket(wsUrl, token, audioSource, sessionId, context, micDeviceId, sysDeviceId)
 }
 
-function _stopStreams() {
+function _stopStreams(reason?: string) {
+  if (reason) console.log(`[devcore-audio] _stopStreams called: ${reason}`)
+  else console.log(`[devcore-audio] _stopStreams called`, new Error().stack?.split('\n')[2]?.trim())
   try { micInput?.quit() } catch { /* already stopped */ }
   try { sysInput?.quit() } catch { /* already stopped */ }
   if (sysProc) { try { sysProc.kill() } catch { /* already dead */ }; sysProc = null }
@@ -143,7 +145,10 @@ function _startPythonLoopback(deviceId: number, rate: number, channels: number):
     let inSpeech     = false
 
     proc.stdout?.on('data', (chunk: Buffer) => {
-      if (!ws || ws.readyState !== 1) return
+      // Always consume the pipe even when WS isn't ready — if we return early
+      // the OS pipe buffer fills (~64KB), Python's write() blocks, and the
+      // process gets killed with code=null.
+      if (!ws || ws.readyState !== 1) return  // discard but pipe was already drained
       rawBuf = Buffer.concat([rawBuf, chunk])
 
       while (rawBuf.length >= FRAME_BYTES) {
@@ -315,7 +320,7 @@ function _openWebSocket(
       console.log(`[devcore-audio] WS closed unexpectedly (code=${code}) — scheduling reconnect`)
       _scheduleReconnect()  // _scheduleReconnect stops streams itself
     } else {
-      _stopStreams()
+      _stopStreams(`WS closed intentionally code=${code}`)
     }
   })
 
