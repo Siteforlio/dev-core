@@ -317,7 +317,29 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
             ))}
           </div>
 
-          <div className="flex flex-col gap-1.5 flex-shrink-0">
+          {/* Table header */}
+          <div
+            className="grid items-center"
+            style={{
+              gridTemplateColumns: '1fr 1fr 160px 100px 90px 100px',
+              padding: '6px 16px',
+              borderBottom: '1px solid rgba(34,211,238,0.1)',
+              borderTop: '1px solid rgba(34,211,238,0.1)',
+              background: 'rgba(34,211,238,0.03)',
+            }}
+          >
+            {(['Company', 'Role', 'Match', 'Status', 'Applied', 'Actions'] as const).map((col) => (
+              <span
+                key={col}
+                className="text-[10px] font-semibold uppercase tracking-[0.12em]"
+                style={{ color: 'rgba(34,211,238,0.5)', fontFamily: 'monospace' }}
+              >
+                {col}
+              </span>
+            ))}
+          </div>
+
+          <div className="flex flex-col flex-shrink-0">
             {filteredPipeline.length === 0 ? (
               <p className="text-gray-600 text-sm py-8 text-center">
                 {pipeline.length === 0 ? 'No jobs yet — hit Run Scrape to start.' : 'No jobs in this category.'}

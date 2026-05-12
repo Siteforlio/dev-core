@@ -101,18 +101,37 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white flex flex-col">
+    <div className="min-h-screen text-white flex flex-col" style={{ background: '#070f1c' }}>
       {/* Header */}
-      <header className="flex items-center justify-between px-6 py-3 border-b border-gray-800 flex-shrink-0">
-        <span className="font-bold text-base tracking-tight">Developer Core</span>
-        <div className="flex items-center gap-4">
-          <span className="text-gray-500 text-sm">{name}</span>
-          <button
-            className="text-xs text-gray-600 hover:text-white underline transition-colors"
-            onClick={clearAuth}
+      <header
+        className="flex items-center justify-between flex-shrink-0"
+        style={{
+          height: '56px',
+          paddingLeft: '24px',
+          paddingRight: '24px',
+          background: '#050d18',
+          borderBottom: '1px solid rgba(34,211,238,0.08)',
+        }}
+      >
+        <span
+          className="text-sm font-semibold tracking-[0.15em] uppercase"
+          style={{ color: 'rgba(226,232,240,0.9)', fontFamily: 'monospace' }}
+        >
+          {activeModule === 'interview' ? 'Interview Prep' : activeModule === 'job-hunter' ? 'Job Hunter' : 'Settings'}
+        </span>
+        <div
+          className="flex items-center gap-3 px-3 py-1.5 rounded"
+          style={{ background: 'rgba(34,211,238,0.05)', border: '1px solid rgba(34,211,238,0.1)' }}
+        >
+          <div
+            className="w-7 h-7 rounded flex items-center justify-center text-xs font-bold flex-shrink-0"
+            style={{ background: 'rgba(34,211,238,0.15)', color: '#22d3ee', fontFamily: 'monospace' }}
           >
-            Sign out
-          </button>
+            {(name ?? 'U')[0].toUpperCase()}
+          </div>
+          <span className="text-sm" style={{ color: 'rgba(148,163,184,0.8)', fontFamily: 'monospace' }}>
+            {name}
+          </span>
         </div>
       </header>
 
@@ -124,6 +143,7 @@ export default function Dashboard() {
             if (mod === 'job-hunter') setActiveView('campaigns')
             setActiveModule(mod)
           }}
+          onLogout={clearAuth}
         />
 
         <main className="flex-1 overflow-y-auto">
