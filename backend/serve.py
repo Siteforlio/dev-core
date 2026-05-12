@@ -36,4 +36,5 @@ if __name__ == "__main__":
         reload=args.reload,
         timeout_graceful_shutdown=1,
         loop="asyncio",   # forces ProactorEventLoop on Windows via asyncio policy
+        access_log=True,
     )
