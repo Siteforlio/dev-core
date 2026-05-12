@@ -124,6 +124,13 @@ async def deepseek_with_tools(
     return data["choices"][0]
 
 
+def _strip_dsml(text: str) -> str:
+    """Remove DeepSeek V4 DSML tool-call markup that leaks into streamed content."""
+    import re
+    # Remove any <｜｜DSML｜｜...> tags and their content
+    return re.sub(r'<｜｜DSML｜｜.*?(?:>|$)', '', text, flags=re.DOTALL)
+
+
 async def deepseek_stream_messages(
     messages: list[dict],
     temperature: float = 0.7,
@@ -138,6 +145,8 @@ async def deepseek_stream_messages(
         "max_tokens": max_tokens,
         "stream": True,
     }
+    # Buffer to catch DSML tags that span chunk boundaries
+    buf = ""
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
         async with client.stream("POST", url, json=body, headers=_headers()) as resp:
             resp.raise_for_status()
@@ -146,11 +155,28 @@ async def deepseek_stream_messages(
                     continue
                 raw = line[6:].strip()
                 if not raw or raw == "[DONE]":
+                    if buf:
+                        clean = _strip_dsml(buf)
+                        if clean:
+                            yield clean
                     continue
                 try:
                     chunk = json.loads(raw)
                     delta = chunk["choices"][0]["delta"].get("content", "")
-                    if delta:
-                        yield delta
+                    if not delta:
+                        continue
+                    buf += delta
+                    # Only flush if we're not in the middle of a DSML tag
+                    if "<｜｜DSML｜｜" not in buf:
+                        clean = _strip_dsml(buf)
+                        if clean:
+                            yield clean
+                        buf = ""
+                    elif buf.count("<｜｜DSML｜｜") <= buf.count(">"):
+                        # Tag appears closed — flush
+                        clean = _strip_dsml(buf)
+                        if clean:
+                            yield clean
+                        buf = ""
                 except (KeyError, json.JSONDecodeError):
                     continue

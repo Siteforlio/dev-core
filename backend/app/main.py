@@ -1,4 +1,11 @@
 import asyncio
+import sys
+
+# On Windows, asyncio defaults to SelectorEventLoop which does NOT support
+# create_subprocess_exec. Switch to ProactorEventLoop so the terminal tool works.
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
