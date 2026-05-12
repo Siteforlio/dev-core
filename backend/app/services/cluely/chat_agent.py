@@ -350,13 +350,8 @@ class ChatAgent:
 
         await self._send(_tool_event("terminal", "start", {"command": command_str}))
 
-        try:
-            cmd = shlex.split(command_str)
-        except ValueError:
-            cmd = command_str.split()
-
         lines: list[str] = []
-        async for ev in self._terminal.run(cmd, working_dir=working_dir):
+        async for ev in self._terminal.run(command_str, working_dir=working_dir):
             await self._send(_tool_event("terminal", "data", ev))
             lines.append(f"[{ev.get('stream','')}] {ev.get('text','')}")
 

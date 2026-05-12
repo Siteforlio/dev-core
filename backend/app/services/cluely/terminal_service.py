@@ -39,15 +39,28 @@ def _no_window_kwargs() -> dict:
     return {}
 
 
-def _wrap_for_shell(command: list[str]) -> tuple[list[str], bool]:
+def _prepare_command(command: str | list[str]) -> list[str]:
     """
-    On Windows, wrap the command in 'cmd /c' so the shell handles quoting,
-    PATH resolution, and built-ins (echo, where, etc.) correctly.
-    Returns (wrapped_command, use_shell=False).
+    Normalize command to argv list ready for create_subprocess_exec.
+
+    On Windows: always delegate to cmd /c with the raw string so the shell
+    handles PATH, backslash paths, && chaining, and built-ins correctly.
+    shlex is intentionally avoided on Windows — it treats backslashes as
+    escape characters which corrupts Windows paths like C:\\Users\\...
+
+    On POSIX: shlex-split the string so arguments are parsed correctly.
     """
     if sys.platform == "win32":
-        return ["cmd", "/c", " ".join(command)], False
-    return command, False
+        raw = command if isinstance(command, str) else " ".join(command)
+        return ["cmd", "/c", raw]
+    # POSIX
+    if isinstance(command, str):
+        import shlex
+        try:
+            return shlex.split(command)
+        except ValueError:
+            return command.split()
+    return command
 
 
 def _resolve_cwd(working_dir: str | None) -> str:
@@ -71,7 +84,7 @@ class TerminalService:
 
     async def run(
         self,
-        command: list[str],
+        command: str | list[str],
         working_dir: str | None = None,
         env: dict[str, str] | None = None,
     ) -> AsyncGenerator[TerminalEvent, None]:
@@ -90,15 +103,16 @@ class TerminalService:
             yield _ev("system", str(exc), "?")
             return
 
-        yield _ev("system", f"$ {' '.join(command)}", cwd)
+        display = command if isinstance(command, str) else " ".join(command)
+        yield _ev("system", f"$ {display}", cwd)
 
-        wrapped, _ = _wrap_for_shell(command)
+        argv = _prepare_command(command)
         merged_env = {**os.environ, **(env or {})}
         proc: Process | None = None
 
         try:
             proc = await asyncio.create_subprocess_exec(
-                *wrapped,
+                *argv,
                 stdout=PIPE,
                 stderr=PIPE,
                 cwd=cwd,
@@ -106,7 +120,7 @@ class TerminalService:
                 **_no_window_kwargs(),
             )
         except FileNotFoundError:
-            yield _ev("system", f"Command not found: {command[0]!r}", cwd)
+            yield _ev("system", f"Command not found: {argv[0]!r}", cwd)
             return
         except Exception as exc:
             yield _ev("system", f"Failed to start process: {exc}", cwd)
