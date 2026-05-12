@@ -33,9 +33,9 @@ function MatchBar({ score }: { score: string | null }) {
       </div>
       <span
         className="text-[10px] font-mono flex-shrink-0"
-        style={{ color: cfg.fill, minWidth: '28px' }}
+        style={{ color: cfg.fill, minWidth: '44px' }}
       >
-        {cfg.pct}%
+        {score ?? 'SKIP'}
       </span>
     </div>
   )
@@ -108,7 +108,7 @@ export default function ApplicationCard({ application, onStartInterviewPrep, onA
         {showInterviewPrep && (
           <button
             onClick={() => onStartInterviewPrep(id)}
-            title="Interview Prep"
+            aria-label="Interview Prep"
             className="flex items-center justify-center rounded transition-all duration-150"
             style={{
               width: '28px', height: '28px',
@@ -133,7 +133,7 @@ export default function ApplicationCard({ application, onStartInterviewPrep, onA
         {isApplied ? (
           <button
             onClick={() => onViewTracking(id)}
-            title="Track"
+            aria-label="Track"
             className="flex items-center justify-center rounded transition-all duration-150"
             style={{
               width: '28px', height: '28px',
@@ -158,7 +158,7 @@ export default function ApplicationCard({ application, onStartInterviewPrep, onA
         ) : (
           <button
             onClick={() => onApply(id)}
-            title="Apply"
+            aria-label="Apply"
             className="flex items-center justify-center rounded transition-all duration-150"
             style={{
               width: '28px', height: '28px',

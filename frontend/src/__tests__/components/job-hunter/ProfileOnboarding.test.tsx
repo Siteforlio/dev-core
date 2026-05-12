@@ -33,19 +33,19 @@ describe('ProfileOnboarding', () => {
 
   it('parse button is disabled when textarea is empty', () => {
     render(<ProfileOnboarding onComplete={() => {}} />)
-    expect(screen.getByRole('button', { name: /parse resume/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /parse text/i })).toBeDisabled()
   })
 
   it('parse button enabled after typing in textarea', () => {
     render(<ProfileOnboarding onComplete={() => {}} />)
     fireEvent.change(screen.getByPlaceholderText(/paste your resume/i), { target: { value: 'My resume' } })
-    expect(screen.getByRole('button', { name: /parse resume/i })).not.toBeDisabled()
+    expect(screen.getByRole('button', { name: /parse text/i })).not.toBeDisabled()
   })
 
   it('calls parseResume when Parse Resume is clicked', async () => {
     render(<ProfileOnboarding onComplete={() => {}} />)
     fireEvent.change(screen.getByPlaceholderText(/paste your resume/i), { target: { value: 'My resume text' } })
-    fireEvent.click(screen.getByRole('button', { name: /parse resume/i }))
+    fireEvent.click(screen.getByRole('button', { name: /parse text/i }))
     await waitFor(() => expect(mockParseResume).toHaveBeenCalledWith('My resume text'))
   })
 

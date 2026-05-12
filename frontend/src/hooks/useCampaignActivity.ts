@@ -18,8 +18,9 @@ export function useCampaignActivity(campaignId: string | null, token: string | n
 
     function connect() {
       if (deadRef.current) return
+      const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
       const ws = new WebSocket(
-        `ws://localhost:8000/api/v1/ws/campaign/${campaignId}/activity?token=${token}`
+        `${proto}//${window.location.host}/api/v1/ws/campaign/${campaignId}/activity?token=${token}`
       )
       wsRef.current = ws
 

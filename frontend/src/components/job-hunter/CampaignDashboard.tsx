@@ -95,7 +95,7 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
     setPipeline(p)
     setInterviews(i)
     setPersistedFeed(
-      activityLog.map((l, idx) => ({
+      (activityLog ?? []).map((l, idx) => ({
         id: `persisted-${idx}-${l.createdAt}`,
         text: l.message,
         timestamp: new Date(l.createdAt),

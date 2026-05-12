@@ -34,7 +34,7 @@ describe('useCampaignActivity', () => {
 
   it('connects to correct WS URL with token', () => {
     renderHook(() => useCampaignActivity('camp-1', 'tok-abc'))
-    expect(MockWebSocket.instances[0].url).toBe('/api/v1/ws/campaign/camp-1/activity?token=tok-abc')
+    expect(MockWebSocket.instances[0].url).toContain('/api/v1/ws/campaign/camp-1/activity?token=tok-abc')
   })
 
   it('does not connect when campaignId is null', () => {

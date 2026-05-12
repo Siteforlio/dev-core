@@ -4,11 +4,13 @@ import { useJobHunter } from '../../hooks/useJobHunter'
 
 const mockToken = 'test-token'
 
-vi.mock('../../store/authStore', () => ({
-  useAuthStore: vi.fn((selector: (s: { accessToken: string }) => unknown) =>
-    selector({ accessToken: mockToken })
-  ),
-}))
+vi.mock('../../store/authStore', () => {
+  const store = Object.assign(
+    vi.fn((selector: (s: { accessToken: string }) => unknown) => selector({ accessToken: 'test-token' })),
+    { getState: () => ({ accessToken: 'test-token' }) }
+  )
+  return { useAuthStore: store }
+})
 
 describe('useJobHunter', () => {
   beforeEach(() => {
@@ -33,6 +35,8 @@ describe('useJobHunter', () => {
 
   it('createCampaign posts to correct endpoint with snake_case body', async () => {
     global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
       json: () => Promise.resolve({
         data: { id: 'c2', name: 'New', status: 'active', sub_categories: ['Backend'] },
         error: null,
@@ -46,7 +50,7 @@ describe('useJobHunter', () => {
       '/api/v1/job-hunter/campaigns',
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ name: 'New', broad_category: 'Engineering', user_country: 'US' }),
+        body: JSON.stringify({ name: 'New', broad_category: 'Engineering', user_country: 'US', anywhere: false, work_type: 'remote' }),
       })
     )
     expect(campaign.id).toBe('c2')

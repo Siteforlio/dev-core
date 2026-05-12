@@ -22,10 +22,12 @@ const mockTracking: TrackingStatus = {
 }
 
 const mockGetTracking = vi.fn()
+const mockScanEmails = vi.fn()
 
 vi.mock('../../../hooks/useJobHunter', () => ({
   useJobHunter: () => ({
     getTrackingStatus: mockGetTracking,
+    scanEmails: mockScanEmails,
   }),
 }))
 
@@ -33,6 +35,7 @@ describe('TrackingPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockGetTracking.mockResolvedValue(mockTracking)
+    mockScanEmails.mockResolvedValue({ noCredentials: false })
   })
 
   it('shows loading spinner initially', () => {

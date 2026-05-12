@@ -8,6 +8,8 @@ vi.mock('../../../hooks/useJobHunter', () => ({
   useJobHunter: () => ({
     getDashboard: mockGetDashboard,
     getInterviewContext: mockGetInterviewContext,
+    triggerScrape: vi.fn().mockResolvedValue({}),
+    getScrapeStatus: vi.fn().mockResolvedValue({ run: null, boards: {} }),
   }),
 }))
 
@@ -48,6 +50,7 @@ const dashboardData = {
   interviews: [
     { applicationId: 'app-1', company: 'Stripe', role: 'Backend Engineer', scheduledAt: '2026-04-15T14:00:00Z' },
   ],
+  activityLog: [],
 }
 
 describe('CampaignDashboard', () => {
