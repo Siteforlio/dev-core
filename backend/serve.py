@@ -16,8 +16,10 @@ import os
 if sys.platform == "win32":
     import asyncio
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
-    # Also set for child processes spawned by --reload
     os.environ["PYTHONASYNCIODEBUG"] = "0"
+
+# Force uvicorn worker processes to log access — env var is inherited by reloader children
+os.environ["UVICORN_ACCESS_LOG"] = "1"
 
 import uvicorn
 
@@ -35,6 +37,8 @@ if __name__ == "__main__":
         port=args.port,
         reload=args.reload,
         timeout_graceful_shutdown=1,
-        loop="asyncio",   # forces ProactorEventLoop on Windows via asyncio policy
+        loop="asyncio",
         access_log=True,
+        log_level="info",
+        use_colors=True,
     )
