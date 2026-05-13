@@ -113,12 +113,15 @@ export default function Dashboard() {
           borderBottom: '1px solid rgba(34,211,238,0.08)',
         }}
       >
-        <span
-          className="text-sm font-semibold tracking-[0.15em] uppercase"
-          style={{ color: 'rgba(226,232,240,0.9)', fontFamily: 'monospace' }}
-        >
-          {activeModule === 'interview' ? 'Interview Prep' : activeModule === 'job-hunter' ? 'Job Hunter' : 'Settings'}
-        </span>
+        <div className="flex items-center gap-2.5">
+          <img src="/devcore.png" width="26" height="26" alt="DevCore" style={{ objectFit: 'contain' }} />
+          <span
+            className="text-sm font-semibold tracking-[0.15em] uppercase"
+            style={{ color: 'rgba(226,232,240,0.9)', fontFamily: 'monospace' }}
+          >
+            {activeModule === 'interview' ? 'Interview Prep' : activeModule === 'job-hunter' ? 'Job Hunter' : 'Settings'}
+          </span>
+        </div>
         <div
           className="flex items-center gap-3 px-3 py-1.5 rounded"
           style={{ background: 'rgba(34,211,238,0.05)', border: '1px solid rgba(34,211,238,0.1)' }}
