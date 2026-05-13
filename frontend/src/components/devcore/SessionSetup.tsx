@@ -159,8 +159,8 @@ export function SessionSetup({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-      <div className="bg-[rgba(9,9,18,0.97)] border border-white/[0.07] rounded-[14px] w-[520px] overflow-hidden shadow-[0_24px_64px_rgba(0,0,0,0.8)]">
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={onClose}>
+      <div className="bg-[rgba(9,9,18,0.97)] border border-white/[0.07] rounded-[14px] w-[520px] overflow-hidden shadow-[0_24px_64px_rgba(0,0,0,0.8)]" onClick={e => e.stopPropagation()}>
 
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.07] bg-white/[0.015]">
@@ -168,7 +168,20 @@ export function SessionSetup({ onClose }: { onClose: () => void }) {
             <span className="w-1.5 h-1.5 rounded-full bg-[#22d3ee] shadow-[0_0_8px_rgba(34,211,238,0.8)]" />
             <span className="font-mono text-[11px] font-extrabold tracking-[0.15em] text-[#22d3ee]">DEVCORE</span>
           </div>
-          <span className="font-mono text-[10px] uppercase tracking-widest text-white/30">New Session</span>
+          <div className="flex items-center gap-3">
+            <span className="font-mono text-[10px] uppercase tracking-widest text-white/30">New Session</span>
+            <button
+              onClick={onClose}
+              className="flex items-center justify-center rounded transition-all duration-150"
+              style={{ width: '24px', height: '24px', color: 'rgba(255,255,255,0.3)', background: 'transparent' }}
+              onMouseEnter={e => { e.currentTarget.style.color = 'rgba(255,255,255,0.8)'; e.currentTarget.style.background = 'rgba(255,255,255,0.06)' }}
+              onMouseLeave={e => { e.currentTarget.style.color = 'rgba(255,255,255,0.3)'; e.currentTarget.style.background = 'transparent' }}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+            </button>
+          </div>
         </div>
 
         {/* Body */}
@@ -176,13 +189,13 @@ export function SessionSetup({ onClose }: { onClose: () => void }) {
 
           {/* Context source tabs */}
           <div>
-            <p className="font-mono text-[8.5px] uppercase tracking-widest text-white/30 mb-2">Context source</p>
+            <p className="font-mono text-[11px] uppercase tracking-widest text-white/40 mb-2">Context source</p>
             <div className="flex gap-2">
               {([['job','Applied Job'], ['calendar','Calendar'], ['describe','Describe']] as [SourceTab, string][]).map(([key, label]) => (
                 <button
                   key={key}
                   onClick={() => setTab(key)}
-                  className={`flex-1 py-3 rounded-lg border text-[9px] font-mono uppercase tracking-wider transition-all ${tab === key ? 'border-[rgba(34,211,238,0.25)] bg-[rgba(34,211,238,0.08)] text-[#22d3ee]' : 'border-white/[0.07] bg-white/[0.025] text-white/30 hover:bg-white/[0.045]'}`}
+                  className={`flex-1 py-3 rounded-lg border text-[11px] font-mono uppercase tracking-wider transition-all ${tab === key ? 'border-[rgba(34,211,238,0.25)] bg-[rgba(34,211,238,0.08)] text-[#22d3ee]' : 'border-white/[0.07] bg-white/[0.025] text-white/40 hover:bg-white/[0.045]'}`}
                 >
                   {label}
                 </button>
@@ -195,9 +208,9 @@ export function SessionSetup({ onClose }: { onClose: () => void }) {
           {/* Context panel */}
           {tab === 'job' && (
             <div className="flex flex-col gap-2">
-              <p className="font-mono text-[8.5px] uppercase tracking-widest text-white/30">Select from applied jobs</p>
+              <p className="font-mono text-[11px] uppercase tracking-widest text-white/40">Select from applied jobs</p>
               {jobs.length === 0 && (
-                <p className="font-mono text-[9px] text-white/30 py-2">No interview-stage applications found. Use Describe tab instead.</p>
+                <p className="font-mono text-[11px] text-white/40 py-2">No interview-stage applications found. Use Describe tab instead.</p>
               )}
               {jobs.map(job => (
                 <button
@@ -205,19 +218,19 @@ export function SessionSetup({ onClose }: { onClose: () => void }) {
                   onClick={() => selectJob(job.id)}
                   className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border text-left transition-all ${selectedJob === job.id ? 'border-[rgba(34,211,238,0.25)] bg-[rgba(34,211,238,0.08)]' : 'border-white/[0.07] bg-white/[0.02] hover:bg-white/[0.04]'}`}
                 >
-                  <div className="w-8 h-8 rounded-md bg-white/[0.06] border border-white/[0.07] flex items-center justify-center font-display text-[11px] font-bold text-white/50 flex-shrink-0">{job.company[0]}</div>
+                  <div className="w-9 h-9 rounded-md bg-white/[0.06] border border-white/[0.07] flex items-center justify-center font-mono text-[13px] font-bold text-white/60 flex-shrink-0">{job.company[0]}</div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-[12px] text-white/90 font-medium truncate">{job.title}</p>
-                    <p className="font-mono text-[9px] text-white/30 mt-0.5">{job.company}</p>
+                    <p className="text-[13px] text-white/90 font-medium truncate">{job.title}</p>
+                    <p className="font-mono text-[11px] text-white/40 mt-0.5">{job.company}</p>
                   </div>
-                  <span className="font-mono text-[8px] px-2 py-1 rounded-full border border-emerald-400/25 bg-emerald-400/[0.08] text-emerald-400 flex-shrink-0">{job.status}</span>
+                  <span className="font-mono text-[10px] px-2 py-1 rounded-full border border-emerald-400/25 bg-emerald-400/[0.08] text-emerald-400 flex-shrink-0">{job.status}</span>
                 </button>
               ))}
             </div>
           )}
           {tab === 'describe' && (
             <div className="flex flex-col gap-2">
-              <p className="font-mono text-[8.5px] uppercase tracking-widest text-white/30">Describe the interview</p>
+              <p className="font-mono text-[11px] uppercase tracking-widest text-white/40">Describe the interview</p>
               <div className="bg-white/[0.025] border border-white/[0.07] rounded-lg p-3 focus-within:border-[rgba(34,211,238,0.25)] transition-all">
                 <textarea
                   value={description}
@@ -230,7 +243,7 @@ export function SessionSetup({ onClose }: { onClose: () => void }) {
           )}
           {tab === 'calendar' && (
             <div className="flex items-center justify-center py-6">
-              <p className="font-mono text-[10px] text-white/30">Connect a CalDAV calendar in Settings to see upcoming events.</p>
+              <p className="font-mono text-[12px] text-white/40">Connect a CalDAV calendar in Settings to see upcoming events.</p>
             </div>
           )}
 
@@ -250,9 +263,9 @@ export function SessionSetup({ onClose }: { onClose: () => void }) {
           <div className="h-px bg-white/[0.07]" />
           <div>
             <div className="flex items-center gap-2 mb-2.5">
-              <p className="font-mono text-[8.5px] uppercase tracking-widest text-white/30">Assessment Mode</p>
+              <p className="font-mono text-[11px] uppercase tracking-widest text-white/40">Assessment Mode</p>
               {assessmentMode !== 'present' && (
-                <span className="font-mono text-[7.5px] px-1.5 py-0.5 rounded border border-amber-400/30 bg-amber-400/10 text-amber-400 uppercase tracking-wider">
+                <span className="font-mono text-[10px] px-1.5 py-0.5 rounded border border-amber-400/30 bg-amber-400/10 text-amber-400 uppercase tracking-wider">
                   assessment
                 </span>
               )}
@@ -286,8 +299,8 @@ export function SessionSetup({ onClose }: { onClose: () => void }) {
                     }}
                   >
                     <span>{icon}</span>
-                    <span className="font-mono text-[9px] uppercase tracking-wider font-semibold">{label}</span>
-                    <span className="font-mono text-[7.5px]" style={{ color: active ? `${color}99` : 'rgba(255,255,255,0.18)' }}>{sub}</span>
+                    <span className="font-mono text-[11px] uppercase tracking-wider font-semibold">{label}</span>
+                    <span className="font-mono text-[10px]" style={{ color: active ? `${color}99` : 'rgba(255,255,255,0.25)' }}>{sub}</span>
                   </button>
                 )
               })}
@@ -296,7 +309,7 @@ export function SessionSetup({ onClose }: { onClose: () => void }) {
             {/* Live Coding — project folder input */}
             {assessmentMode === 'live' && (
               <div className="mt-2.5 bg-white/[0.02] border border-amber-400/15 rounded-lg px-3 py-2 focus-within:border-amber-400/30 transition-all">
-                <p className="font-mono text-[7.5px] uppercase tracking-widest text-amber-400/50 mb-1.5">Project folder path</p>
+                <p className="font-mono text-[10px] uppercase tracking-widest text-amber-400/60 mb-1.5">Project folder path</p>
                 <input
                   type="text"
                   value={projectRoot}
@@ -313,7 +326,7 @@ export function SessionSetup({ onClose }: { onClose: () => void }) {
             {assessmentMode === 'coding' && (
               <div className="mt-2.5 flex items-start gap-2 px-3 py-2 rounded-lg border border-amber-400/15 bg-amber-400/[0.04]">
                 <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24" className="text-amber-400/60 flex-shrink-0 mt-0.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-                <p className="font-mono text-[8.5px] text-white/35 leading-relaxed">
+                <p className="font-mono text-[11px] text-white/40 leading-relaxed">
                   Agent will read the problem from screen, extract visible test cases, generate an optimal solution and test it locally before surfacing it to you.
                 </p>
               </div>
@@ -323,7 +336,7 @@ export function SessionSetup({ onClose }: { onClose: () => void }) {
             {assessmentMode === 'ai_model' && (
               <div className="mt-2.5 flex items-start gap-2 px-3 py-2 rounded-lg border border-amber-400/15 bg-amber-400/[0.04]">
                 <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24" className="text-amber-400/60 flex-shrink-0 mt-0.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-                <p className="font-mono text-[8.5px] text-white/35 leading-relaxed">
+                <p className="font-mono text-[11px] text-white/40 leading-relaxed">
                   Agent will profile the AI model, generate optimized prompts for you to type, evaluate its output behind the scenes and coach you through re-prompting.
                 </p>
               </div>
@@ -334,7 +347,7 @@ export function SessionSetup({ onClose }: { onClose: () => void }) {
 
         {/* Footer */}
         <div className="flex items-center justify-between px-4 py-3 border-t border-white/[0.07] bg-white/[0.01]">
-          <span className="font-mono text-[9px] text-white/20">Ctrl+Shift+Space to toggle overlay</span>
+          <span className="font-mono text-[10px] text-white/30">Ctrl+Shift+Space to toggle overlay</span>
           {(() => {
             const m = ASSESSMENT_MODES.find(m => m.key === assessmentMode)!
             return (
