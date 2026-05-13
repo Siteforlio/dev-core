@@ -114,7 +114,7 @@ export default function Dashboard() {
       >
         {/* Logo slot — same width as sidebar (64px) so it lines up with the icons */}
         <div className="flex items-center justify-center flex-shrink-0" style={{ width: '64px' }}>
-          <img src="/devcore.png" width="30" height="30" alt="DevCore" style={{ objectFit: 'contain' }} />
+          <img src="/devcore.png" width="42" height="42" alt="DevCore" style={{ objectFit: 'contain' }} />
         </div>
         <span
           className="flex-1 text-sm font-semibold tracking-[0.15em] uppercase"
