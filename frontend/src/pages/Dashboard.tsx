@@ -163,15 +163,33 @@ export default function Dashboard() {
                   {interviewError && <p className="text-red-400 text-sm">{interviewError}</p>}
                   <CompanySelector onSelect={handleInterviewSelect} />
                   <div className="flex items-center gap-3 w-full max-w-sm">
-                    <div className="flex-1 h-px bg-gray-800" />
-                    <span className="text-xs text-gray-600 font-mono uppercase tracking-widest">or</span>
-                    <div className="flex-1 h-px bg-gray-800" />
+                    <div className="flex-1 h-px" style={{ background: 'rgba(34,211,238,0.08)' }} />
+                    <span className="text-[10px] font-mono uppercase tracking-[0.18em]" style={{ color: 'rgba(34,211,238,0.3)' }}>or</span>
+                    <div className="flex-1 h-px" style={{ background: 'rgba(34,211,238,0.08)' }} />
                   </div>
                   <button
                     onClick={() => setShowSessionSetup(true)}
-                    className="flex items-center gap-2 px-6 py-2.5 rounded-lg bg-violet-500/10 border border-violet-400/20 text-violet-400 text-sm font-semibold tracking-wide hover:bg-violet-500/20 hover:border-violet-400/40 transition-all"
+                    className="flex items-center gap-2.5 px-6 py-2.5 rounded-lg transition-all duration-150 w-full max-w-sm justify-center"
+                    style={{
+                      background: 'rgba(167,139,250,0.07)',
+                      border: '1px solid rgba(167,139,250,0.2)',
+                      color: '#a78bfa',
+                      fontFamily: 'monospace',
+                      fontSize: '11px',
+                      fontWeight: 600,
+                      letterSpacing: '0.14em',
+                      textTransform: 'uppercase',
+                    }}
+                    onMouseEnter={e => {
+                      e.currentTarget.style.background = 'rgba(167,139,250,0.13)'
+                      e.currentTarget.style.borderColor = 'rgba(167,139,250,0.38)'
+                    }}
+                    onMouseLeave={e => {
+                      e.currentTarget.style.background = 'rgba(167,139,250,0.07)'
+                      e.currentTarget.style.borderColor = 'rgba(167,139,250,0.2)'
+                    }}
                   >
-                    <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+                    <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
                     Start DevCore Session
                   </button>
                 </div>

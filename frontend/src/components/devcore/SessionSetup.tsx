@@ -16,13 +16,17 @@ interface AppliedJob {
   jdText: string
 }
 
-const ASSESSMENT_MODES: { key: AssessmentMode; label: string; sub: string; icon: React.ReactNode }[] = [
+const ASSESSMENT_MODES: { key: AssessmentMode; label: string; sub: string; color: string; glow: string; bg: string; border: string; icon: React.ReactNode }[] = [
   {
     key: 'present',
     label: 'Present',
     sub: 'General meeting',
+    color: '#2dd4bf',
+    glow: 'rgba(45,212,191,0.15)',
+    bg: 'rgba(45,212,191,0.07)',
+    border: 'rgba(45,212,191,0.25)',
     icon: (
-      <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+      <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
         <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
       </svg>
     ),
@@ -31,8 +35,12 @@ const ASSESSMENT_MODES: { key: AssessmentMode; label: string; sub: string; icon:
     key: 'coding',
     label: 'Coding',
     sub: 'LeetCode / DSA',
+    color: '#fbbf24',
+    glow: 'rgba(251,191,36,0.15)',
+    bg: 'rgba(251,191,36,0.07)',
+    border: 'rgba(251,191,36,0.25)',
     icon: (
-      <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+      <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
         <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
       </svg>
     ),
@@ -41,8 +49,12 @@ const ASSESSMENT_MODES: { key: AssessmentMode; label: string; sub: string; icon:
     key: 'live',
     label: 'Live Coding',
     sub: 'Project build',
+    color: '#34d399',
+    glow: 'rgba(52,211,153,0.15)',
+    bg: 'rgba(52,211,153,0.07)',
+    border: 'rgba(52,211,153,0.25)',
     icon: (
-      <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+      <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
         <rect x="2" y="3" width="20" height="14" rx="2"/><polyline points="8 21 12 17 16 21"/>
       </svg>
     ),
@@ -51,8 +63,12 @@ const ASSESSMENT_MODES: { key: AssessmentMode; label: string; sub: string; icon:
     key: 'ai_model',
     label: 'AI Model',
     sub: 'Degraded AI',
+    color: '#38bdf8',
+    glow: 'rgba(56,189,248,0.15)',
+    bg: 'rgba(56,189,248,0.07)',
+    border: 'rgba(56,189,248,0.25)',
     icon: (
-      <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+      <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
         <path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7h1a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1v1a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-1H2a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h1a7 7 0 0 1 7-7h1V5.73c-.6-.34-1-.99-1-1.73a2 2 0 0 1 2-2z"/>
         <circle cx="9" cy="14" r="1" fill="currentColor" stroke="none"/><circle cx="15" cy="14" r="1" fill="currentColor" stroke="none"/>
       </svg>
@@ -243,23 +259,35 @@ export function SessionSetup({ onClose }: { onClose: () => void }) {
             </div>
 
             <div className="flex gap-2">
-              {ASSESSMENT_MODES.map(({ key, label, sub, icon }) => {
+              {ASSESSMENT_MODES.map(({ key, label, sub, icon, color, bg, border, glow }) => {
                 const active = assessmentMode === key
                 return (
                   <button
                     key={key}
                     onClick={() => toggleAssessmentMode(key)}
-                    className={`flex-1 flex flex-col items-center gap-1.5 py-3 px-2 rounded-lg border transition-all ${
-                      active && key === 'present'
-                        ? 'border-teal-400/30 bg-teal-400/[0.08] text-teal-400 shadow-[0_0_12px_rgba(45,212,191,0.06)]'
-                        : active
-                        ? 'border-amber-400/30 bg-amber-400/[0.08] text-amber-400 shadow-[0_0_12px_rgba(251,191,36,0.06)]'
-                        : 'border-white/[0.07] bg-white/[0.02] text-white/25 hover:bg-white/[0.04] hover:text-white/40'
-                    }`}
+                    className="flex-1 flex flex-col items-center gap-2 py-3 px-2 rounded-lg transition-all duration-150"
+                    style={{
+                      background: active ? bg : 'rgba(255,255,255,0.02)',
+                      border: `1px solid ${active ? border : 'rgba(255,255,255,0.06)'}`,
+                      color: active ? color : 'rgba(255,255,255,0.25)',
+                      boxShadow: active ? `0 0 16px ${glow}` : 'none',
+                    }}
+                    onMouseEnter={e => {
+                      if (!active) {
+                        e.currentTarget.style.background = 'rgba(255,255,255,0.04)'
+                        e.currentTarget.style.color = 'rgba(255,255,255,0.45)'
+                      }
+                    }}
+                    onMouseLeave={e => {
+                      if (!active) {
+                        e.currentTarget.style.background = 'rgba(255,255,255,0.02)'
+                        e.currentTarget.style.color = 'rgba(255,255,255,0.25)'
+                      }
+                    }}
                   >
-                    <span className={active && key === 'present' ? 'text-teal-400' : active ? 'text-amber-400' : 'text-white/25'}>{icon}</span>
-                    <span className="font-mono text-[9px] uppercase tracking-wider font-medium">{label}</span>
-                    <span className={`font-mono text-[7.5px] ${active && key === 'present' ? 'text-teal-400/60' : active ? 'text-amber-400/60' : 'text-white/20'}`}>{sub}</span>
+                    <span>{icon}</span>
+                    <span className="font-mono text-[9px] uppercase tracking-wider font-semibold">{label}</span>
+                    <span className="font-mono text-[7.5px]" style={{ color: active ? `${color}99` : 'rgba(255,255,255,0.18)' }}>{sub}</span>
                   </button>
                 )
               })}
@@ -307,20 +335,29 @@ export function SessionSetup({ onClose }: { onClose: () => void }) {
         {/* Footer */}
         <div className="flex items-center justify-between px-4 py-3 border-t border-white/[0.07] bg-white/[0.01]">
           <span className="font-mono text-[9px] text-white/20">Ctrl+Shift+Space to toggle overlay</span>
-          <button
-            onClick={handleStart}
-            disabled={starting}
-            className={`flex items-center gap-2 px-5 py-2 rounded-lg font-display text-[11px] font-bold tracking-[0.1em] transition-all disabled:opacity-60 disabled:cursor-not-allowed ${
-              assessmentMode === 'present'
-                ? 'bg-teal-400 text-[#001a18] shadow-[0_0_20px_rgba(45,212,191,0.2)] hover:brightness-110'
-                : 'bg-amber-400 text-[#0a0a00] shadow-[0_0_20px_rgba(251,191,36,0.2)] hover:brightness-110'
-            }`}
-          >
-            <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
-              <circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/>
-            </svg>
-            {starting ? 'Starting…' : assessmentMode === 'present' ? 'Start Session' : 'Start Assessment'}
-          </button>
+          {(() => {
+            const m = ASSESSMENT_MODES.find(m => m.key === assessmentMode)!
+            return (
+              <button
+                onClick={handleStart}
+                disabled={starting}
+                className="flex items-center gap-2 px-5 py-2 rounded-lg font-mono text-[10px] font-bold tracking-[0.12em] uppercase transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{
+                  background: m.bg,
+                  border: `1px solid ${m.border}`,
+                  color: m.color,
+                  boxShadow: `0 0 20px ${m.glow}`,
+                }}
+                onMouseEnter={e => { e.currentTarget.style.filter = 'brightness(1.15)' }}
+                onMouseLeave={e => { e.currentTarget.style.filter = 'none' }}
+              >
+                <svg width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+                  <circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/>
+                </svg>
+                {starting ? 'Starting…' : assessmentMode === 'present' ? 'Start Session' : 'Start Assessment'}
+              </button>
+            )
+          })()}
         </div>
 
       </div>
