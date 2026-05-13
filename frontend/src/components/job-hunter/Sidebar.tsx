@@ -65,8 +65,13 @@ export default function Sidebar({ activeModule, onSelect, onLogout }: Props) {
         borderRight: '1px solid rgba(34,211,238,0.08)',
       }}
     >
+      {/* Logo */}
+      <div className="flex items-center justify-center w-full py-3">
+        <img src="/devcore.png" width="28" height="28" alt="DevCore" style={{ objectFit: 'contain' }} />
+      </div>
+
       {/* Nav items */}
-      <div className="flex flex-col items-center gap-1 py-4 w-full">
+      <div className="flex flex-col items-center gap-1 py-2 w-full">
         {NAV_ITEMS.map(({ module, label, icon }) => (
           <button
             key={module}
