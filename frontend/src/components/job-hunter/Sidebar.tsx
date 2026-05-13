@@ -65,17 +65,6 @@ export default function Sidebar({ activeModule, onSelect, onLogout }: Props) {
         borderRight: '1px solid rgba(34,211,238,0.08)',
       }}
     >
-      {/* Logo area */}
-      <div
-        className="w-full flex items-center justify-center flex-shrink-0"
-        style={{
-          height: '56px',
-          borderBottom: '1px solid rgba(34,211,238,0.08)',
-        }}
-      >
-        <DevCoreLogo />
-      </div>
-
       {/* Nav items */}
       <div className="flex flex-col items-center gap-1 py-4 w-full">
         {NAV_ITEMS.map(({ module, label, icon }) => (
