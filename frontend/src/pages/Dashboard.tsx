@@ -107,14 +107,17 @@ export default function Dashboard() {
         className="flex items-center justify-between flex-shrink-0"
         style={{
           height: '56px',
-          paddingLeft: '24px',
           paddingRight: '24px',
           background: '#050d18',
           borderBottom: '1px solid rgba(34,211,238,0.08)',
         }}
       >
+        {/* Logo slot — same width as sidebar (64px) so it lines up with the icons */}
+        <div className="flex items-center justify-center flex-shrink-0" style={{ width: '64px' }}>
+          <img src="/devcore.png" width="30" height="30" alt="DevCore" style={{ objectFit: 'contain' }} />
+        </div>
         <span
-          className="text-sm font-semibold tracking-[0.15em] uppercase"
+          className="flex-1 text-sm font-semibold tracking-[0.15em] uppercase"
           style={{ color: 'rgba(226,232,240,0.9)', fontFamily: 'monospace' }}
         >
           {activeModule === 'interview' ? 'Interview Prep' : activeModule === 'job-hunter' ? 'Job Hunter' : 'Settings'}
