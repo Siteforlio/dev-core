@@ -171,9 +171,9 @@ export default function Dashboard() {
                     onClick={() => setShowSessionSetup(true)}
                     className="flex items-center gap-2.5 px-6 py-2.5 rounded-lg transition-all duration-150 w-full max-w-sm justify-center"
                     style={{
-                      background: 'rgba(167,139,250,0.07)',
-                      border: '1px solid rgba(167,139,250,0.2)',
-                      color: '#a78bfa',
+                      background: 'rgba(34,211,238,0.07)',
+                      border: '1px solid rgba(34,211,238,0.2)',
+                      color: '#22d3ee',
                       fontFamily: 'monospace',
                       fontSize: '11px',
                       fontWeight: 600,
@@ -181,12 +181,12 @@ export default function Dashboard() {
                       textTransform: 'uppercase',
                     }}
                     onMouseEnter={e => {
-                      e.currentTarget.style.background = 'rgba(167,139,250,0.13)'
-                      e.currentTarget.style.borderColor = 'rgba(167,139,250,0.38)'
+                      e.currentTarget.style.background = 'rgba(34,211,238,0.13)'
+                      e.currentTarget.style.borderColor = 'rgba(34,211,238,0.38)'
                     }}
                     onMouseLeave={e => {
-                      e.currentTarget.style.background = 'rgba(167,139,250,0.07)'
-                      e.currentTarget.style.borderColor = 'rgba(167,139,250,0.2)'
+                      e.currentTarget.style.background = 'rgba(34,211,238,0.07)'
+                      e.currentTarget.style.borderColor = 'rgba(34,211,238,0.2)'
                     }}
                   >
                     <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>

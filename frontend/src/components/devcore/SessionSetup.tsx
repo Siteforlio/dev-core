@@ -165,8 +165,8 @@ export function SessionSetup({ onClose }: { onClose: () => void }) {
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.07] bg-white/[0.015]">
           <div className="flex items-center gap-2">
-            <span className="w-1.5 h-1.5 rounded-full bg-violet-400 shadow-[0_0_8px_rgba(167,139,250,0.8)]" />
-            <span className="font-display text-[11px] font-extrabold tracking-[0.15em] text-violet-400">DEVCORE</span>
+            <span className="w-1.5 h-1.5 rounded-full bg-[#22d3ee] shadow-[0_0_8px_rgba(34,211,238,0.8)]" />
+            <span className="font-mono text-[11px] font-extrabold tracking-[0.15em] text-[#22d3ee]">DEVCORE</span>
           </div>
           <span className="font-mono text-[10px] uppercase tracking-widest text-white/30">New Session</span>
         </div>
@@ -182,7 +182,7 @@ export function SessionSetup({ onClose }: { onClose: () => void }) {
                 <button
                   key={key}
                   onClick={() => setTab(key)}
-                  className={`flex-1 py-3 rounded-lg border text-[9px] font-mono uppercase tracking-wider transition-all ${tab === key ? 'border-violet-400/25 bg-violet-400/10 text-violet-400' : 'border-white/[0.07] bg-white/[0.025] text-white/30 hover:bg-white/[0.045]'}`}
+                  className={`flex-1 py-3 rounded-lg border text-[9px] font-mono uppercase tracking-wider transition-all ${tab === key ? 'border-[rgba(34,211,238,0.25)] bg-[rgba(34,211,238,0.08)] text-[#22d3ee]' : 'border-white/[0.07] bg-white/[0.025] text-white/30 hover:bg-white/[0.045]'}`}
                 >
                   {label}
                 </button>
@@ -203,7 +203,7 @@ export function SessionSetup({ onClose }: { onClose: () => void }) {
                 <button
                   key={job.id}
                   onClick={() => selectJob(job.id)}
-                  className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border text-left transition-all ${selectedJob === job.id ? 'border-violet-400/25 bg-violet-400/10' : 'border-white/[0.07] bg-white/[0.02] hover:bg-white/[0.04]'}`}
+                  className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border text-left transition-all ${selectedJob === job.id ? 'border-[rgba(34,211,238,0.25)] bg-[rgba(34,211,238,0.08)]' : 'border-white/[0.07] bg-white/[0.02] hover:bg-white/[0.04]'}`}
                 >
                   <div className="w-8 h-8 rounded-md bg-white/[0.06] border border-white/[0.07] flex items-center justify-center font-display text-[11px] font-bold text-white/50 flex-shrink-0">{job.company[0]}</div>
                   <div className="flex-1 min-w-0">
@@ -218,7 +218,7 @@ export function SessionSetup({ onClose }: { onClose: () => void }) {
           {tab === 'describe' && (
             <div className="flex flex-col gap-2">
               <p className="font-mono text-[8.5px] uppercase tracking-widest text-white/30">Describe the interview</p>
-              <div className="bg-white/[0.025] border border-white/[0.07] rounded-lg p-3 focus-within:border-violet-400/25 transition-all">
+              <div className="bg-white/[0.025] border border-white/[0.07] rounded-lg p-3 focus-within:border-[rgba(34,211,238,0.25)] transition-all">
                 <textarea
                   value={description}
                   onChange={e => setDescription(e.target.value)}
