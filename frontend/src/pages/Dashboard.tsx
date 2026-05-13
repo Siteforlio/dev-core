@@ -107,13 +107,18 @@ export default function Dashboard() {
         className="flex items-center justify-between flex-shrink-0"
         style={{
           height: '56px',
-          paddingRight: '24px',
+          paddingRight: '0',
           background: '#050d18',
           borderBottom: '1px solid rgba(34,211,238,0.08)',
+          // @ts-ignore
+          WebkitAppRegion: 'drag',
         }}
       >
         {/* Logo slot — same width as sidebar (64px) so it lines up with the icons */}
-        <div className="flex items-center justify-center flex-shrink-0" style={{ width: '64px' }}>
+        <div
+          className="flex items-center justify-center flex-shrink-0"
+          style={{ width: '64px', WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+        >
           <img src="/devcore.png" width="42" height="42" alt="DevCore" style={{ objectFit: 'contain' }} />
         </div>
         <span
@@ -122,9 +127,10 @@ export default function Dashboard() {
         >
           {activeModule === 'interview' ? 'Interview Prep' : activeModule === 'job-hunter' ? 'Job Hunter' : 'Settings'}
         </span>
+        {/* User chip */}
         <div
           className="flex items-center gap-3 px-3 py-1.5 rounded"
-          style={{ background: 'rgba(34,211,238,0.05)', border: '1px solid rgba(34,211,238,0.1)' }}
+          style={{ background: 'rgba(34,211,238,0.05)', border: '1px solid rgba(34,211,238,0.1)', WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         >
           <div
             className="w-7 h-7 rounded flex items-center justify-center text-xs font-bold flex-shrink-0"
@@ -135,6 +141,42 @@ export default function Dashboard() {
           <span className="text-sm" style={{ color: 'rgba(148,163,184,0.8)', fontFamily: 'monospace' }}>
             {name}
           </span>
+        </div>
+        {/* Window controls */}
+        <div
+          className="flex items-center flex-shrink-0 ml-3"
+          style={{ WebkitAppRegion: 'no-drag', height: '56px' } as React.CSSProperties}
+        >
+          {/* Minimize */}
+          <button
+            onClick={() => (window as any).electronAPI?.window?.minimize()}
+            className="flex items-center justify-center transition-colors duration-100"
+            style={{ width: '46px', height: '100%', color: 'rgba(148,163,184,0.5)' }}
+            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; e.currentTarget.style.color = 'rgba(226,232,240,0.9)' }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgba(148,163,184,0.5)' }}
+          >
+            <svg width="11" height="11" viewBox="0 0 12 1" fill="currentColor"><rect width="12" height="1" rx="0.5"/></svg>
+          </button>
+          {/* Maximize */}
+          <button
+            onClick={() => (window as any).electronAPI?.window?.maximize()}
+            className="flex items-center justify-center transition-colors duration-100"
+            style={{ width: '46px', height: '100%', color: 'rgba(148,163,184,0.5)' }}
+            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; e.currentTarget.style.color = 'rgba(226,232,240,0.9)' }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgba(148,163,184,0.5)' }}
+          >
+            <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2"><rect x="0.6" y="0.6" width="10.8" height="10.8" rx="1"/></svg>
+          </button>
+          {/* Close */}
+          <button
+            onClick={() => (window as any).electronAPI?.window?.close()}
+            className="flex items-center justify-center transition-colors duration-100"
+            style={{ width: '46px', height: '100%', color: 'rgba(148,163,184,0.5)' }}
+            onMouseEnter={e => { e.currentTarget.style.background = '#e81123'; e.currentTarget.style.color = '#ffffff' }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgba(148,163,184,0.5)' }}
+          >
+            <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"><line x1="1" y1="1" x2="11" y2="11"/><line x1="11" y1="1" x2="1" y2="11"/></svg>
+          </button>
         </div>
       </header>
 

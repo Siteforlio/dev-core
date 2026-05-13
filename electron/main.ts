@@ -28,6 +28,7 @@ function createWindow() {
   const win = new BrowserWindow({
     width: 1280,
     height: 800,
+    frame: false,
     icon: path.join(PROJECT_ROOT, 'frontend', 'public', 'devcore.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -291,6 +292,14 @@ function _startDeviceWatcher() {
     }
   }, 2000)
 }
+
+ipcMain.handle('window:minimize', () => BrowserWindow.getFocusedWindow()?.minimize())
+ipcMain.handle('window:maximize', () => {
+  const win = BrowserWindow.getFocusedWindow()
+  if (!win) return
+  win.isMaximized() ? win.unmaximize() : win.maximize()
+})
+ipcMain.handle('window:close', () => BrowserWindow.getFocusedWindow()?.close())
 
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null)

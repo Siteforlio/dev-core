@@ -7,6 +7,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   auth: authIPC,
   interview: interviewIPC,
   getAccessToken: () => ipcRenderer.invoke('auth:get:token'),
+  window: {
+    minimize: () => ipcRenderer.invoke('window:minimize'),
+    maximize: () => ipcRenderer.invoke('window:maximize'),
+    close:    () => ipcRenderer.invoke('window:close'),
+  },
   devcore: {
     getStatus:            () => ipcRenderer.invoke('devcore:session:status'),
     listDevices:          () => ipcRenderer.invoke('devcore:devices:list'),
