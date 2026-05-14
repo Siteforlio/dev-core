@@ -36,10 +36,12 @@ class DebriefService:
             return json.loads(raw)
         except json.JSONDecodeError:
             m = re.search(r'\{.*\}', raw, re.DOTALL)
-            return json.loads(m.group()) if m else {
-                "overall_score": 5.0, "strengths": [], "improvements": [],
-                "recommendation": raw[:200]
-            }
+            if m:
+                try:
+                    return json.loads(m.group())
+                except json.JSONDecodeError:
+                    pass
+            return {"overall_score": 5.0, "strengths": [], "improvements": [], "recommendation": raw[:200]}
 
     async def _get_moments(self, round_id: str) -> list:
         result = await self.db.execute(

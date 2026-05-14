@@ -30,15 +30,18 @@ async def test_generate_questions_with_no_graph_uses_llm_fallback():
 
 async def test_grade_answer_returns_score_and_feedback():
     orchestrator = LLMOrchestrator()
-    with patch.object(orchestrator, '_call_llm', new=AsyncMock(return_value={
-        "score": 7.5, "passed": True, "feedback": "Good answer, lacked specifics."
-    })):
+    with patch.object(orchestrator, '_call_llm', new=AsyncMock(return_value=json.dumps({
+        "score": 8.0, "passed": True,
+        "what_worked": "Clear explanation.",
+        "what_was_missing": "No metrics.",
+        "stronger_version": "Add quantified result."
+    }))):
         result = await orchestrator.grade_answer(
             question="Tell me about yourself.",
             answer="I am a software engineer with 5 years experience.",
             company="Google", role="SWE", round_type="behavioral"
         )
-    assert result["score"] == 7.5
+    assert result["score"] == 8.0
     assert result["passed"] is True
 
 

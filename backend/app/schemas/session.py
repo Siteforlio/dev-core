@@ -34,6 +34,8 @@ class AdvanceRoundRequest(BaseModel):
 class GradeResponse(BaseModel):
     score: float
     passed: bool
-    feedback: str
+    what_worked: str
+    what_was_missing: str
+    stronger_version: str
     next_round: Optional[str] = None
     session_complete: bool = False

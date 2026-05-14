@@ -32,7 +32,7 @@ async def test_generate_debrief_returns_structured_report():
 
     service = DebriefService(db=mock_db)
     with patch.object(service, '_get_moments', new=AsyncMock(return_value=[mock_moment])):
-        with patch.object(service, '_call_claude', new=AsyncMock(return_value={
+        with patch.object(service, '_call_llm', new=AsyncMock(return_value={
             "overall_score": 7.5,
             "strengths": ["Clear communication"],
             "improvements": ["More specifics"],
@@ -56,7 +56,7 @@ async def test_generate_debrief_includes_emotion_summary():
 
     service = DebriefService(db=mock_db)
     with patch.object(service, '_get_moments', new=AsyncMock(return_value=[])):
-        with patch.object(service, '_call_claude', new=AsyncMock(return_value={
+        with patch.object(service, '_call_llm', new=AsyncMock(return_value={
             "overall_score": 5.0, "strengths": [], "improvements": [], "recommendation": "Needs work"
         })):
             result = await service.generate(session_id="s1")

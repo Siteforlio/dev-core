@@ -122,7 +122,9 @@ class InterviewEngine:
         return {
             "score": grade["score"],
             "passed": grade["passed"],
-            "feedback": grade["feedback"],
+            "what_worked": grade.get("what_worked", ""),
+            "what_was_missing": grade.get("what_was_missing", ""),
+            "stronger_version": grade.get("stronger_version", ""),
             "round_complete": round_complete,
             "round_passed": round_passed,
         }

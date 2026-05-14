@@ -40,7 +40,12 @@ async def test_submit_answer_stores_moment_and_grade():
     mock_db.execute = AsyncMock(side_effect=results)
 
     mock_orchestrator = AsyncMock()
-    mock_orchestrator.grade_answer.return_value = {"score": 8.0, "passed": True, "feedback": "Great answer."}
+    mock_orchestrator.grade_answer.return_value = {
+        "score": 8.0, "passed": True,
+        "what_worked": "Good structure.",
+        "what_was_missing": "No metrics.",
+        "stronger_version": "Add quantified result."
+    }
 
     engine = InterviewEngine(db=mock_db, orchestrator=mock_orchestrator)
     result = await engine.submit_answer("s1", "r1", "Tell me about yourself.", "I am a SWE.")
