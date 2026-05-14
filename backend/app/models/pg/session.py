@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
-from sqlalchemy import String, DateTime, ForeignKey, Boolean, Float, Text
+from sqlalchemy import String, DateTime, ForeignKey, Boolean, Float, Text, Integer
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from app.models.pg.base import Base
 
@@ -29,6 +30,9 @@ class Round(Base):
     grade: Mapped[float | None] = mapped_column(Float, nullable=True)
     passed: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, default=utcnow, nullable=True)
+    time_budget_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    evaluation: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
 class RoundMoment(Base):
     __tablename__ = "round_moments"
@@ -40,6 +44,9 @@ class RoundMoment(Base):
     answer: Mapped[str] = mapped_column(Text, nullable=False)
     emotion_state: Mapped[str | None] = mapped_column(String(50), nullable=True)
     ai_reaction: Mapped[str | None] = mapped_column(Text, nullable=True)
+    time_taken_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    rewrite_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    is_followup: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
 class InterviewProfile(Base):
     __tablename__ = "interview_profiles"
