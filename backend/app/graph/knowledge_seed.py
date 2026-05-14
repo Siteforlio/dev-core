@@ -166,6 +166,30 @@ RED_FLAGS = [
     "Dismissive of the company's challenges",
 ]
 
+NEGOTIATION_PROFILES = {
+    track: {
+        "core_competencies": ["salary research", "value articulation", "BATNA awareness", "negotiation framing", "package components"],
+        "question_archetypes": [
+            {"type": "situational", "framework": "open", "weight": 0.4,
+             "example": f"What salary range are you targeting for this {TRACK_DATA[track]['label']} role?"},
+            {"type": "behavioral", "framework": "STAR", "weight": 0.3,
+             "example": "Tell me about a time you successfully negotiated a compensation package."},
+            {"type": "situational", "framework": "open", "weight": 0.3,
+             "example": "The offer is 10% below your target. How do you respond?"},
+        ],
+        "evaluation_rubrics": RUBRICS,
+        "answer_frameworks": ["BATNA", "STAR"],
+        "common_pitfalls": [
+            "Anchoring too low before the company makes an offer",
+            "Negotiating only salary and ignoring total comp",
+            "Accepting immediately without considering",
+        ],
+        "red_flags": ["Ultimatums", "Emotional reactions", "No market research"],
+        "skill_dimensions": ["communication_clarity", "quantified_impact", "executive_presence"],
+    }
+    for track in TRACKS
+}
+
 
 def _build_profile(track: str, level: str, stage: str = "hr_interview") -> dict:
     t = TRACK_DATA[track]
@@ -241,3 +265,22 @@ async def _seed_stage(db: AsyncSession, stage: str) -> None:
 async def seed_knowledge_profiles(db: AsyncSession) -> None:
     await _seed_stage(db, "hr_interview")   # 50 profiles
     await _seed_stage(db, "skills_domain")  # 50 profiles
+    # Offer negotiation: uses NEGOTIATION_PROFILES override, not _build_profile
+    for track in TRACKS:
+        for level in LEVELS:
+            existing = await db.execute(
+                select(KnowledgeProfile).where(
+                    KnowledgeProfile.track == track,
+                    KnowledgeProfile.level == level,
+                    KnowledgeProfile.stage == "offer_negotiation",
+                )
+            )
+            if existing.scalar_one_or_none():
+                continue
+            neg_profile = {**NEGOTIATION_PROFILES[track], "track": track, "level": level, "stage": "offer_negotiation"}
+            db.add(KnowledgeProfile(
+                id=str(uuid.uuid4()),
+                track=track, level=level, stage="offer_negotiation",
+                profile=neg_profile,
+            ))
+    await db.commit()
