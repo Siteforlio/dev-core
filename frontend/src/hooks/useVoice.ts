@@ -10,38 +10,21 @@ export function useVoice() {
   const [isRecording, setIsRecording] = useState(false)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
-  const currentAudioRef = useRef<HTMLAudioElement | null>(null)
-
-  const speak = useCallback(async (text: string) => {
-    try {
-      // Stop any currently playing audio
-      currentAudioRef.current?.pause()
-
-      const form = new FormData()
-      form.append('text', text)
-      form.append('language', languagePref)
-
-      const res = await apiFetch(`${API}/speech/synthesize`, {
-        method: 'POST',
-        body: form,
-      })
-      if (!res.ok) return
-
-      const blob = await res.blob()
-      const url = URL.createObjectURL(blob)
-      const audio = new Audio(url)
-      currentAudioRef.current = audio
-      setIsSpeaking(true)
-      audio.onended = () => {
-        setIsSpeaking(false)
-        URL.revokeObjectURL(url)
-      }
-      audio.onerror = () => setIsSpeaking(false)
-      await audio.play()
-    } catch {
-      setIsSpeaking(false)
-    }
-  }, [languagePref])
+  const speak = useCallback((text: string) => {
+    if (!text || typeof window === 'undefined' || !window.speechSynthesis) return
+    window.speechSynthesis.cancel()
+    const utterance = new SpeechSynthesisUtterance(text)
+    utterance.rate = 0.95
+    utterance.pitch = 1.0
+    utterance.volume = 1.0
+    const voices = window.speechSynthesis.getVoices()
+    const enVoice = voices.find(v => v.lang.startsWith('en') && !v.name.includes('Google'))
+    if (enVoice) utterance.voice = enVoice
+    utterance.onstart = () => setIsSpeaking(true)
+    utterance.onend = () => setIsSpeaking(false)
+    utterance.onerror = () => setIsSpeaking(false)
+    window.speechSynthesis.speak(utterance)
+  }, [])
 
   const startRecording = useCallback(async () => {
     try {
@@ -88,7 +71,7 @@ export function useVoice() {
   }, [languagePref])
 
   const stopSpeaking = useCallback(() => {
-    currentAudioRef.current?.pause()
+    window.speechSynthesis?.cancel()
     setIsSpeaking(false)
   }, [])
 
