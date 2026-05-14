@@ -32,3 +32,21 @@ async def get_session_state(session_id: str) -> dict | None:
 async def delete_session_state(session_id: str) -> None:
     r = await get_redis()
     await r.delete(f"interview:session:{session_id}:state")
+
+
+# ── Generic key/value cache helpers (used by JD parser, knowledge service, etc.) ──
+
+async def cache_set(key: str, value: dict | list, ttl: int = 86400) -> None:
+    r = await get_redis()
+    await r.setex(key, ttl, json.dumps(value))
+
+
+async def cache_get(key: str) -> dict | list | None:
+    r = await get_redis()
+    raw = await r.get(key)
+    return json.loads(raw) if raw else None
+
+
+async def cache_delete(key: str) -> None:
+    r = await get_redis()
+    await r.delete(key)
