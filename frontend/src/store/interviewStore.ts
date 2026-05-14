@@ -1,12 +1,19 @@
 import { create } from 'zustand'
 
+interface FeedbackResult {
+  what_worked: string
+  what_was_missing: string
+  stronger_version: string
+  passed: boolean
+}
+
 interface Round {
   id: string
   type: string
   questions: string[]
   currentQuestionIndex: number
   passed?: boolean
-  feedback?: string
+  feedbackResult?: FeedbackResult
 }
 
 interface InterviewState {
@@ -27,7 +34,7 @@ interface InterviewState {
     persona: string
   ) => void
   nextQuestion: () => void
-  setRoundResult: (passed: boolean, feedback: string) => void
+  setRoundResult: (passed: boolean, feedbackResult: FeedbackResult) => void
   advanceRound: (round: Round, persona: string, remainingRounds: string[]) => void
   setRoundFailed: (failed: boolean) => void
   completeSession: () => void
@@ -51,8 +58,8 @@ export const useInterviewStore = create<InterviewState>((set) => ({
         ? { currentRound: { ...s.currentRound, currentQuestionIndex: s.currentRound.currentQuestionIndex + 1 } }
         : s
     ),
-  setRoundResult: (passed, feedback) =>
-    set((s) => (s.currentRound ? { currentRound: { ...s.currentRound, passed, feedback } } : s)),
+  setRoundResult: (passed, feedbackResult) =>
+    set((s) => (s.currentRound ? { currentRound: { ...s.currentRound, passed, feedbackResult } } : s)),
   advanceRound: (round, persona, remainingRounds) =>
     set({ currentRound: round, persona, remainingRounds, roundFailed: false }),
   setRoundFailed: (failed) => set({ roundFailed: failed }),

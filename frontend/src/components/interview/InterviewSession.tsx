@@ -35,7 +35,9 @@ export default function InterviewSession({ token }: Props) {
   const [answer, setAnswer] = useState('')
   const [codeReaction, setCodeReaction] = useState<string | null>(null)
   const [feedback, setFeedback] = useState<{
-    text: string
+    what_worked: string
+    what_was_missing: string
+    stronger_version: string
     passed: boolean
     roundComplete: boolean
     roundPassed: boolean | null
@@ -104,9 +106,21 @@ export default function InterviewSession({ token }: Props) {
     })
     const roundComplete = result.round_complete ?? false
     const roundPassed = result.round_passed ?? null
-    setFeedback({ text: result.feedback, passed: result.passed, roundComplete, roundPassed })
-    setRoundResult(result.passed, result.feedback)
-    speak(result.feedback)
+    setFeedback({
+      what_worked: result.what_worked,
+      what_was_missing: result.what_was_missing,
+      stronger_version: result.stronger_version,
+      passed: result.passed,
+      roundComplete,
+      roundPassed,
+    })
+    setRoundResult(result.passed, {
+      what_worked: result.what_worked,
+      what_was_missing: result.what_was_missing,
+      stronger_version: result.stronger_version,
+      passed: result.passed,
+    })
+    speak(result.what_worked || '')
     setAnswer('')
     setLoading(false)
   }
@@ -247,13 +261,21 @@ export default function InterviewSession({ token }: Props) {
                 ) : (
                   <>
                     <div
-                      className={`flex-1 rounded-lg px-4 py-2 text-sm ${
+                      className={`flex-1 rounded-lg px-4 py-2 text-sm space-y-1 ${
                         feedback.passed
-                          ? 'bg-green-950 border border-green-700 text-green-200'
-                          : 'bg-red-950 border border-red-700 text-red-200'
+                          ? 'bg-green-950 border border-green-700'
+                          : 'bg-red-950 border border-red-700'
                       }`}
                     >
-                      <span className="font-semibold">{feedback.passed ? '✓' : '✗'}</span> {feedback.text}
+                      {feedback.what_worked && (
+                        <p className="text-green-300"><span className="font-semibold">✓ Worked: </span>{feedback.what_worked}</p>
+                      )}
+                      {feedback.what_was_missing && (
+                        <p className="text-yellow-300"><span className="font-semibold">△ Missing: </span>{feedback.what_was_missing}</p>
+                      )}
+                      {feedback.stronger_version && (
+                        <p className="text-blue-300"><span className="font-semibold">→ Stronger: </span>{feedback.stronger_version}</p>
+                      )}
                     </div>
                     <button
                       onClick={handleNext}
@@ -274,15 +296,26 @@ export default function InterviewSession({ token }: Props) {
               </div>
 
               {feedback && (
-                <div
-                  className={`rounded-xl p-4 text-sm leading-relaxed ${
-                    feedback.passed
-                      ? 'bg-green-950 border border-green-700 text-green-200'
-                      : 'bg-red-950 border border-red-700 text-red-200'
-                  }`}
-                >
-                  <span className="font-semibold mr-1">{feedback.passed ? '✓ Pass' : '✗ Needs work'}</span>
-                  — {feedback.text}
+                <div className={`rounded-xl p-4 text-sm leading-relaxed space-y-2 ${
+                  feedback.passed
+                    ? 'bg-green-950 border border-green-700'
+                    : 'bg-red-950 border border-red-700'
+                }`}>
+                  {feedback.what_worked && (
+                    <p className="text-green-300">
+                      <span className="font-semibold">✓ Worked: </span>{feedback.what_worked}
+                    </p>
+                  )}
+                  {feedback.what_was_missing && (
+                    <p className="text-yellow-300">
+                      <span className="font-semibold">△ Missing: </span>{feedback.what_was_missing}
+                    </p>
+                  )}
+                  {feedback.stronger_version && (
+                    <p className="text-blue-300">
+                      <span className="font-semibold">→ Stronger: </span>{feedback.stronger_version}
+                    </p>
+                  )}
                 </div>
               )}
 
