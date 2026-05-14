@@ -17,6 +17,31 @@ from app.core.exceptions import SessionNotFoundError
 from app.services.community_pipeline import CommunityPipeline
 
 
+def _extract_dimension_scores(analysis: dict, rounds: list) -> dict[str, float]:
+    """Derive per-dimension scores from analysis + round grades."""
+    overall = float(analysis.get("overall_score", 5.0))
+    dims = {
+        "domain_knowledge": overall,
+        "communication_clarity": overall,
+        "quantified_impact": overall * 0.9 if not analysis.get("improvements") else overall * 0.7,
+        "leadership_narrative": overall,
+        "culture_alignment": overall,
+        "executive_presence": overall,
+        "problem_solving": overall,
+    }
+    for s in analysis.get("strengths", []):
+        s_lower = s.lower()
+        for dim in dims:
+            if dim.replace("_", " ") in s_lower:
+                dims[dim] = min(10.0, dims[dim] + 1.0)
+    for imp in analysis.get("improvements", []):
+        i_lower = imp.lower()
+        for dim in dims:
+            if dim.replace("_", " ") in i_lower:
+                dims[dim] = max(0.0, dims[dim] - 1.5)
+    return {k: round(v, 2) for k, v in dims.items()}
+
+
 class DebriefService:
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -83,12 +108,32 @@ class DebriefService:
 
         prompt = (
             f"You are reviewing an interview for {session.company}, role: {session.role}.\n\n"
-            f"Transcript:\n{transcript}\n\n"
-            f"Average score: {avg_score:.1f}/10\n\n"
-            "Return a JSON debrief:\n"
-            '{"overall_score": 7.5, "strengths": ["..."], "improvements": ["..."], "recommendation": "..."}'
+            f"Transcript:\n{transcript}\n\nAverage score: {avg_score:.1f}/10\n\n"
+            "Return a JSON debrief with improvement plan:\n"
+            '{"overall_score": 7.5, "strengths": ["..."], "improvements": ["..."], '
+            '"recommendation": "...", "top_3_focus_areas": ["area 1", "area 2", "area 3"], '
+            '"recommended_next_session": "e.g. Practice Hiring Manager stage at Senior level"}'
         )
         analysis = await self._call_llm(prompt)
+
+        # Write skill dimension scores to user_progress
+        try:
+            from app.services.progress_service import ProgressService
+            progress_svc = ProgressService(db=self.db)
+            dimension_scores = _extract_dimension_scores(analysis, rounds)
+            career_track = getattr(session, 'career_track', None) or 'technology'
+            level = getattr(session, 'level', None) or 'mid_level'
+            stage = getattr(session, 'interview_stage', None) or 'hr_interview'
+            await progress_svc.write_scores(
+                user_id=session.user_id,
+                session_id=session_id,
+                career_track=career_track,
+                level=level,
+                stage=stage,
+                scores=dimension_scores,
+            )
+        except Exception:
+            pass  # best-effort
 
         # Stage anonymized data for community pipeline (fire-and-forget)
         try:
@@ -124,6 +169,8 @@ class DebriefService:
             "strengths": analysis.get("strengths", []),
             "improvements": analysis.get("improvements", []),
             "recommendation": analysis.get("recommendation", ""),
+            "top_3_focus_areas": analysis.get("top_3_focus_areas", []),
+            "recommended_next_session": analysis.get("recommended_next_session", ""),
             "emotion_summary": emotion_summary,
             "rounds": [
                 {

@@ -6,6 +6,8 @@ interface DebriefData {
   strengths: string[]
   improvements: string[]
   recommendation: string
+  top_3_focus_areas: string[]
+  recommended_next_session: string
   emotion_summary: Record<string, number>
   rounds: { type: string; grade: number; passed: boolean }[]
 }
@@ -100,6 +102,24 @@ export default function DebriefReport({ token, onRestart }: Props) {
                     </li>
                   ))}
                 </ul>
+              </div>
+            )}
+
+            {data.top_3_focus_areas?.length > 0 && (
+              <div className="bg-gray-900 rounded-2xl p-5">
+                <h2 className="text-sm font-semibold text-cyan-400 uppercase tracking-wider mb-3">Top 3 Focus Areas</h2>
+                <ol className="space-y-1.5 list-decimal list-inside">
+                  {data.top_3_focus_areas.map((area, i) => (
+                    <li key={i} className="text-sm text-gray-300">{area}</li>
+                  ))}
+                </ol>
+              </div>
+            )}
+
+            {data.recommended_next_session && (
+              <div className="bg-cyan-950 border border-cyan-800 rounded-2xl p-5">
+                <h2 className="text-sm font-semibold text-cyan-400 uppercase tracking-wider mb-1">Recommended Next Session</h2>
+                <p className="text-sm text-cyan-200">{data.recommended_next_session}</p>
               </div>
             )}
 
