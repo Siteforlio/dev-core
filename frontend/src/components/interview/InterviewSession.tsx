@@ -41,10 +41,21 @@ export default function InterviewSession({ token }: Props) {
     passed: boolean
     roundComplete: boolean
     roundPassed: boolean | null
+    followUp: string | null
+    evaluation: Record<string, unknown> | null
   } | null>(null)
   const [loading, setLoading] = useState(false)
   const [advancing, setAdvancing] = useState(false)
+  const [followUpQuestion, setFollowUpQuestion] = useState<string | null>(null)
+  const [isFollowUp, setIsFollowUp] = useState(false)
+  const [avatarReaction, setAvatarReaction] = useState<string | null>(null)
+  const [timeWarning, setTimeWarning] = useState<'amber' | 'red' | null>(null)
+
   const prevQuestionRef = useRef('')
+  const questionStartTimeRef = useRef<number>(Date.now())
+  const rewriteCountRef = useRef(0)
+  const prevAnswerLengthRef = useRef(0)
+  const roundStartTimeRef = useRef<number>(Date.now())
 
   const question = currentRound?.questions[currentRound.currentQuestionIndex] ?? ''
   const qIndex = currentRound?.currentQuestionIndex ?? 0
@@ -58,6 +69,39 @@ export default function InterviewSession({ token }: Props) {
       speak(question)
     }
   }, [question]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Reset timer and rewrite counter when question changes
+  useEffect(() => {
+    questionStartTimeRef.current = Date.now()
+    rewriteCountRef.current = 0
+    prevAnswerLengthRef.current = 0
+  }, [question])
+
+  // Reset round start time when round changes
+  useEffect(() => {
+    roundStartTimeRef.current = Date.now()
+    setTimeWarning(null)
+  }, [currentRound?.id])
+
+  // Time warning banner — poll every 30s
+  useEffect(() => {
+    const timeBudgetSeconds = currentRound?.timeBudgetSeconds ?? 1800
+    const interval = setInterval(() => {
+      const elapsed = (Date.now() - roundStartTimeRef.current) / 1000
+      const pct = elapsed / timeBudgetSeconds
+      if (pct >= 1.0) {
+        setTimeWarning('red')
+      } else if (pct >= 0.95) {
+        setTimeWarning('red')
+      } else if (pct >= 0.80) {
+        setTimeWarning('amber')
+      } else {
+        setTimeWarning(null)
+      }
+    }, 30_000)
+    return () => clearInterval(interval)
+  }, [currentRound?.id, currentRound?.timeBudgetSeconds])
+  // Note: handleSubmit is intentionally excluded from deps — auto-submit is best-effort
 
   if (!currentRound || !sessionId) return null
 
@@ -96,16 +140,59 @@ export default function InterviewSession({ token }: Props) {
     )
   }
 
+  // Active question: follow-up overrides prepared question
+  const activeQuestion = followUpQuestion ?? question
+
+  // ── Answer change handler (rewrite detection) ───────────────────────────────
+  const handleAnswerChange = (newValue: string) => {
+    const dropped = prevAnswerLengthRef.current - newValue.length
+    if (dropped >= 40) {
+      rewriteCountRef.current += 1
+      // Fire behavioral signal (non-blocking)
+      fetch(`/api/v1/interview-sessions/${sessionId}/behavioral-signal`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ rewrite_count: rewriteCountRef.current }),
+      })
+        .then((r) => r.json())
+        .then((j) => {
+          if (j.data?.reaction) {
+            setAvatarReaction(j.data.reaction)
+            setTimeout(() => setAvatarReaction(null), 8000)
+          }
+        })
+        .catch(() => {})
+    }
+    prevAnswerLengthRef.current = newValue.length
+    setAnswer(newValue)
+  }
+
   // ── Submit handler ──────────────────────────────────────────────────────────
   const handleSubmit = async () => {
     if (!answer.trim()) return
     setLoading(true)
-    const result = await submitAnswer(sessionId, currentRound.id, question, answer, {
+
+    const timeTakenSeconds = Math.floor((Date.now() - questionStartTimeRef.current) / 1000)
+    const currentQuestion = followUpQuestion ?? question
+
+    const result = await submitAnswer(sessionId, currentRound.id, currentQuestion, answer, {
       totalQuestions,
       emotionState: undefined,
+      timeTakenSeconds,
+      rewriteCount: rewriteCountRef.current,
+      isFollowup: isFollowUp,
     })
+
+    // Reset rewrite tracking for next question
+    rewriteCountRef.current = 0
+    prevAnswerLengthRef.current = 0
+
     const roundComplete = result.round_complete ?? false
     const roundPassed = result.round_passed ?? null
+
     setFeedback({
       what_worked: result.what_worked,
       what_was_missing: result.what_was_missing,
@@ -113,6 +200,8 @@ export default function InterviewSession({ token }: Props) {
       passed: result.passed,
       roundComplete,
       roundPassed,
+      followUp: result.follow_up ?? null,
+      evaluation: result.evaluation ?? null,
     })
     setRoundResult(result.passed, {
       what_worked: result.what_worked,
@@ -136,9 +225,20 @@ export default function InterviewSession({ token }: Props) {
 
   const handleNext = async () => {
     if (!feedback) return
-    const { roundComplete, roundPassed } = feedback
+    const { roundComplete, roundPassed, followUp } = feedback
     setFeedback(null)
     setCodeReaction(null)
+
+    // If there's a follow-up question, inject it before advancing
+    if (followUp && !roundComplete) {
+      setFollowUpQuestion(followUp)
+      setIsFollowUp(true)
+      return  // Don't advance question index yet — follow-up is next
+    }
+
+    // Clear follow-up state and advance
+    setFollowUpQuestion(null)
+    setIsFollowUp(false)
 
     if (!roundComplete) {
       nextQuestion()
@@ -151,7 +251,6 @@ export default function InterviewSession({ token }: Props) {
       return
     }
 
-    // Round passed — advance or complete
     if (remainingRounds.length === 0) {
       completeSession()
       return
@@ -213,6 +312,17 @@ export default function InterviewSession({ token }: Props) {
           <span className="text-xs text-gray-500">
             Q {qIndex + 1} / {totalQuestions}
           </span>
+          {timeWarning && (
+            <div style={{
+              background: timeWarning === 'red' ? 'rgba(239,68,68,0.15)' : 'rgba(245,158,11,0.12)',
+              border: `1px solid ${timeWarning === 'red' ? 'rgba(239,68,68,0.4)' : 'rgba(245,158,11,0.4)'}`,
+              color: timeWarning === 'red' ? '#f87171' : '#fbbf24',
+              fontFamily: 'monospace', fontSize: '11px', fontWeight: 600,
+              padding: '3px 10px', borderRadius: '4px',
+            }}>
+              {timeWarning === 'red' ? 'Time almost up' : 'Interview ending soon'}
+            </div>
+          )}
           <button className="text-xs text-gray-600 hover:text-gray-400 underline" onClick={reset}>
             Exit
           </button>
@@ -225,6 +335,22 @@ export default function InterviewSession({ token }: Props) {
         <div className="w-2/5 flex flex-col">
           <div className="flex-1 p-6">
             <AvatarPanel sessionId={sessionId} persona={persona} isSpeaking={isSpeaking} />
+            {avatarReaction && (
+              <div style={{
+                marginTop: '12px',
+                background: 'rgba(30,41,59,0.9)',
+                border: '1px solid rgba(34,211,238,0.2)',
+                borderRadius: '8px',
+                padding: '10px 14px',
+                color: 'rgba(226,232,240,0.85)',
+                fontFamily: 'monospace',
+                fontSize: '12px',
+                lineHeight: '1.5',
+              }}>
+                <span style={{ color: 'rgba(34,211,238,0.6)', fontSize: '10px', fontWeight: 600, textTransform: 'uppercase' as const, letterSpacing: '0.12em' }}>Interviewer</span>
+                <p style={{ margin: '4px 0 0' }}>{avatarReaction}</p>
+              </div>
+            )}
           </div>
         </div>
 
@@ -234,7 +360,7 @@ export default function InterviewSession({ token }: Props) {
             // ── Leetcode split: question top, Monaco bottom ──
             <div className="flex flex-col h-full">
               <div className="bg-gray-800 rounded-none px-5 py-4 text-base leading-relaxed border-b border-gray-700 shrink-0">
-                {question}
+                {activeQuestion}
               </div>
               {codeReaction && (
                 <div className="bg-blue-950 border-b border-blue-800 px-5 py-2 text-xs text-blue-200 leading-relaxed shrink-0">
@@ -243,7 +369,7 @@ export default function InterviewSession({ token }: Props) {
               )}
               <div className="flex-1 min-h-0">
                 <CodeEditor
-                  question={question}
+                  question={activeQuestion}
                   company={company}
                   sessionId={sessionId}
                   onReaction={setCodeReaction}
@@ -292,8 +418,19 @@ export default function InterviewSession({ token }: Props) {
           ) : (
             // ── Standard Q&A layout ──
             <>
+              {isFollowUp && (
+                <div style={{
+                  display: 'inline-flex', alignItems: 'center', gap: '4px',
+                  background: 'rgba(34,211,238,0.1)', border: '1px solid rgba(34,211,238,0.3)',
+                  color: '#22d3ee', fontFamily: 'monospace', fontSize: '10px',
+                  fontWeight: 600, textTransform: 'uppercase' as const, letterSpacing: '0.12em',
+                  padding: '3px 8px', borderRadius: '4px', marginBottom: '6px',
+                }}>
+                  ↩ Follow-up
+                </div>
+              )}
               <div className="bg-gray-800 rounded-xl p-5 text-base leading-relaxed">
-                {question}
+                {activeQuestion}
               </div>
 
               {feedback && (
@@ -326,7 +463,7 @@ export default function InterviewSession({ token }: Props) {
                     className="bg-gray-800 border border-gray-700 focus:border-blue-500 outline-none rounded-xl p-4 resize-none h-36 text-white text-sm"
                     placeholder="Type your answer or use the mic…"
                     value={answer}
-                    onChange={(e) => setAnswer(e.target.value)}
+                    onChange={(e) => handleAnswerChange(e.target.value)}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && e.metaKey) handleSubmit()
                     }}
