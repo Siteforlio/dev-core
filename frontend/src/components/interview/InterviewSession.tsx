@@ -56,6 +56,7 @@ export default function InterviewSession({ token }: Props) {
   const rewriteCountRef = useRef(0)
   const prevAnswerLengthRef = useRef(0)
   const roundStartTimeRef = useRef<number>(Date.now())
+  const handleSubmitRef = useRef<(() => Promise<void>) | null>(null)
 
   const question = currentRound?.questions[currentRound.currentQuestionIndex] ?? ''
   const qIndex = currentRound?.currentQuestionIndex ?? 0
@@ -91,6 +92,9 @@ export default function InterviewSession({ token }: Props) {
       const pct = elapsed / timeBudgetSeconds
       if (pct >= 1.0) {
         setTimeWarning('red')
+        if (!loading && !feedback && answer.trim()) {
+          handleSubmitRef.current?.()
+        }
       } else if (pct >= 0.95) {
         setTimeWarning('red')
       } else if (pct >= 0.80) {
@@ -213,6 +217,7 @@ export default function InterviewSession({ token }: Props) {
     setAnswer('')
     setLoading(false)
   }
+  handleSubmitRef.current = handleSubmit
 
   const handleMic = async () => {
     if (isRecording) {
@@ -247,11 +252,15 @@ export default function InterviewSession({ token }: Props) {
 
     // Round is over
     if (roundPassed === false) {
+      setFollowUpQuestion(null)
+      setIsFollowUp(false)
       setRoundFailed(true)
       return
     }
 
     if (remainingRounds.length === 0) {
+      setFollowUpQuestion(null)
+      setIsFollowUp(false)
       completeSession()
       return
     }
@@ -266,6 +275,8 @@ export default function InterviewSession({ token }: Props) {
       if (res.ok) {
         const json = await res.json()
         const d = json.data
+        setFollowUpQuestion(null)
+        setIsFollowUp(false)
         advanceRound(
           {
             id: d.round_id,
