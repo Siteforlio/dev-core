@@ -11,6 +11,7 @@ import CampaignProfileBuilder from '../components/job-hunter/CampaignProfileBuil
 import CampaignDashboard from '../components/job-hunter/CampaignDashboard'
 import GlobalIntegrationsPanel from '../components/job-hunter/GlobalIntegrationsPanel'
 import { SessionSetup } from '../components/devcore/SessionSetup'
+import ProgressDashboard from '../components/interview/ProgressDashboard'
 import type { Campaign } from '../types/jobHunter'
 
 type Module = 'interview' | 'job-hunter' | 'settings'
@@ -180,38 +181,45 @@ export default function Dashboard() {
           {activeModule === 'interview' ? (
             /* ── Interview Prep ── */
             <div className="flex h-full items-center justify-center p-8">
-              <div className="flex flex-col items-center gap-6">
-                <SessionSetupForm />
-                <div className="flex items-center gap-3 w-full max-w-sm">
-                  <div className="flex-1 h-px" style={{ background: 'rgba(34,211,238,0.08)' }} />
-                  <span className="text-[10px] font-mono uppercase tracking-[0.18em]" style={{ color: 'rgba(34,211,238,0.3)' }}>or</span>
-                  <div className="flex-1 h-px" style={{ background: 'rgba(34,211,238,0.08)' }} />
+              <div className="flex gap-8 w-full max-w-5xl">
+                <div style={{ flex: '0 0 440px' }}>
+                  <div className="flex flex-col items-center gap-6">
+                    <SessionSetupForm />
+                    <div className="flex items-center gap-3 w-full max-w-sm">
+                      <div className="flex-1 h-px" style={{ background: 'rgba(34,211,238,0.08)' }} />
+                      <span className="text-[10px] font-mono uppercase tracking-[0.18em]" style={{ color: 'rgba(34,211,238,0.3)' }}>or</span>
+                      <div className="flex-1 h-px" style={{ background: 'rgba(34,211,238,0.08)' }} />
+                    </div>
+                    <button
+                      onClick={() => setShowSessionSetup(true)}
+                      className="flex items-center gap-2.5 px-6 py-2.5 rounded-lg transition-all duration-150 w-full max-w-sm justify-center"
+                      style={{
+                        background: 'rgba(34,211,238,0.07)',
+                        border: '1px solid rgba(34,211,238,0.2)',
+                        color: '#22d3ee',
+                        fontFamily: 'monospace',
+                        fontSize: '11px',
+                        fontWeight: 600,
+                        letterSpacing: '0.14em',
+                        textTransform: 'uppercase',
+                      }}
+                      onMouseEnter={e => {
+                        e.currentTarget.style.background = 'rgba(34,211,238,0.13)'
+                        e.currentTarget.style.borderColor = 'rgba(34,211,238,0.38)'
+                      }}
+                      onMouseLeave={e => {
+                        e.currentTarget.style.background = 'rgba(34,211,238,0.07)'
+                        e.currentTarget.style.borderColor = 'rgba(34,211,238,0.2)'
+                      }}
+                    >
+                      <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+                      Start DevCore Session
+                    </button>
+                  </div>
                 </div>
-                <button
-                  onClick={() => setShowSessionSetup(true)}
-                  className="flex items-center gap-2.5 px-6 py-2.5 rounded-lg transition-all duration-150 w-full max-w-sm justify-center"
-                  style={{
-                    background: 'rgba(34,211,238,0.07)',
-                    border: '1px solid rgba(34,211,238,0.2)',
-                    color: '#22d3ee',
-                    fontFamily: 'monospace',
-                    fontSize: '11px',
-                    fontWeight: 600,
-                    letterSpacing: '0.14em',
-                    textTransform: 'uppercase',
-                  }}
-                  onMouseEnter={e => {
-                    e.currentTarget.style.background = 'rgba(34,211,238,0.13)'
-                    e.currentTarget.style.borderColor = 'rgba(34,211,238,0.38)'
-                  }}
-                  onMouseLeave={e => {
-                    e.currentTarget.style.background = 'rgba(34,211,238,0.07)'
-                    e.currentTarget.style.borderColor = 'rgba(34,211,238,0.2)'
-                  }}
-                >
-                  <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
-                  Start DevCore Session
-                </button>
+                <div className="flex-1 min-w-0">
+                  <ProgressDashboard onStartNew={() => {}} />
+                </div>
               </div>
             </div>
           ) : activeModule === 'settings' ? (
