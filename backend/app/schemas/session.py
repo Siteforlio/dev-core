@@ -30,6 +30,14 @@ class AnswerRequest(BaseModel):
     answer: str
     total_questions: int = 5
     emotion_state: Optional[str] = None
+    time_taken_seconds: Optional[int] = None
+    rewrite_count: int = 0
+    is_followup: bool = False
+
+
+class BehavioralSignalRequest(BaseModel):
+    signal: str  # "rewrite"
+    rewrite_count: int = 1
 
 
 class AdvanceRoundRequest(BaseModel):

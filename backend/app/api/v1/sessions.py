@@ -1,13 +1,15 @@
 from fastapi import APIRouter, Depends
 from fastapi.responses import Response
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.security import decode_token
-from app.schemas.session import CreateSessionRequest, AnswerRequest, AdvanceRoundRequest
+from app.schemas.session import CreateSessionRequest, AnswerRequest, AdvanceRoundRequest, BehavioralSignalRequest
 from app.services.llm_orchestrator import LLMOrchestrator
 from app.services.interview_engine import InterviewEngine
 from app.services.debrief_service import DebriefService
+from app.models.pg.session import InterviewSession
 
 router = APIRouter(prefix="/interview-sessions", tags=["sessions"])
 bearer = HTTPBearer()
@@ -55,6 +57,9 @@ async def submit_answer(
         answer=body.answer,
         total_questions=body.total_questions,
         emotion_state=body.emotion_state,
+        time_taken_seconds=body.time_taken_seconds,
+        rewrite_count=body.rewrite_count,
+        is_followup=body.is_followup,
     )
     return {"data": result, "error": None}
 
@@ -73,6 +78,28 @@ async def advance_round(
         next_round_type=body.next_round_type,
     )
     return {"data": result, "error": None}
+
+
+@router.post("/{session_id}/behavioral-signal")
+async def behavioral_signal(
+    session_id: str,
+    body: BehavioralSignalRequest,
+    user_id: str = Depends(get_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(InterviewSession).where(InterviewSession.id == session_id)
+    )
+    session = result.scalar_one_or_none()
+    if not session:
+        return {"data": {"reaction": ""}, "error": None}
+    orchestrator = LLMOrchestrator()
+    reaction = await orchestrator.react_to_rewrite(
+        company=session.company,
+        role=session.role,
+        rewrite_count=body.rewrite_count,
+    )
+    return {"data": {"reaction": reaction}, "error": None}
 
 
 @router.get("/{session_id}/debrief")
