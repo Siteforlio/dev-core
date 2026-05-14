@@ -17,7 +17,7 @@ from app.core.exceptions import SessionNotFoundError
 from app.services.community_pipeline import CommunityPipeline
 
 
-def _extract_dimension_scores(analysis: dict, rounds: list) -> dict[str, float]:
+def _extract_dimension_scores(analysis: dict) -> dict[str, float]:
     """Derive per-dimension scores from analysis + round grades."""
     overall = float(analysis.get("overall_score", 5.0))
     dims = {
@@ -120,7 +120,7 @@ class DebriefService:
         try:
             from app.services.progress_service import ProgressService
             progress_svc = ProgressService(db=self.db)
-            dimension_scores = _extract_dimension_scores(analysis, rounds)
+            dimension_scores = _extract_dimension_scores(analysis)
             career_track = getattr(session, 'career_track', None) or 'technology'
             level = getattr(session, 'level', None) or 'mid_level'
             stage = getattr(session, 'interview_stage', None) or 'hr_interview'
