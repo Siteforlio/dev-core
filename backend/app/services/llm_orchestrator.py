@@ -27,11 +27,13 @@ class LLMOrchestrator:
         if isinstance(raw, dict):
             return raw
         try:
-            return json.loads(raw)
+            parsed = json.loads(raw)
+            return {**fallback, **parsed}
         except (json.JSONDecodeError, TypeError):
             match = re.search(r'\{.*\}', str(raw), re.DOTALL)
             try:
-                return json.loads(match.group()) if match else fallback
+                parsed = json.loads(match.group()) if match else fallback
+                return {**fallback, **parsed}
             except (json.JSONDecodeError, AttributeError):
                 return fallback
 
@@ -158,8 +160,8 @@ class LLMOrchestrator:
             rewrites = f", rewrote {m['rewrite_count']}x" if m.get("rewrite_count", 0) > 0 else ""
             score_str = f", score {m.get('score', '?')}/10"
             transcript_lines.append(
-                f"{label}: {m['question']}\n"
-                f"Answer: {m['answer']}{timing}{rewrites}{score_str}]"
+                f"{label}: {m.get('question', 'Unknown question')}\n"
+                f"Answer: {m.get('answer', '')}{timing}{rewrites}{score_str}]"
             )
         transcript = "\n\n".join(transcript_lines) or "No answers recorded."
 
@@ -195,6 +197,8 @@ class LLMOrchestrator:
         })
 
     async def react_to_rewrite(self, company: str, role: str, rewrite_count: int) -> str:
+        if rewrite_count < 1:
+            return "Take your time."
         if rewrite_count == 1:
             situation = "is reconsidering their answer for the first time"
         else:
