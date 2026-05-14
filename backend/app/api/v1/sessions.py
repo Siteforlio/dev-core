@@ -88,7 +88,10 @@ async def behavioral_signal(
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
-        select(InterviewSession).where(InterviewSession.id == session_id)
+        select(InterviewSession).where(
+            InterviewSession.id == session_id,
+            InterviewSession.user_id == user_id,
+        )
     )
     session = result.scalar_one_or_none()
     if not session:

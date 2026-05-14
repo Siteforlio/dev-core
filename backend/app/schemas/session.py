@@ -36,7 +36,6 @@ class AnswerRequest(BaseModel):
 
 
 class BehavioralSignalRequest(BaseModel):
-    signal: str  # "rewrite"
     rewrite_count: int = 1
 
 
