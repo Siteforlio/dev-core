@@ -34,6 +34,8 @@ from app.api.v1.cluely.ws import router as cluely_ws_router
 from app.api.v1.cluely.sessions import router as cluely_sessions_router
 from app.api.v1.progress import router as progress_router
 from app.graph.seed import run_seed
+from app.graph.knowledge_seed import seed_knowledge_profiles
+from app.core.database import AsyncSessionLocal
 from app.workers.community_flush import flush_loop
 
 limiter = Limiter(key_func=get_remote_address, default_limits=["100/minute"])
@@ -42,6 +44,8 @@ limiter = Limiter(key_func=get_remote_address, default_limits=["100/minute"])
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await run_seed()
+    async with AsyncSessionLocal() as db:
+        await seed_knowledge_profiles(db)
     flush_task = asyncio.create_task(flush_loop())
     yield
     flush_task.cancel()
