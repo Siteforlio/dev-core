@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from app.services.interview_engine import InterviewEngine
 
 
@@ -15,14 +15,20 @@ async def test_create_session_returns_session_with_questions():
     mock_orchestrator = AsyncMock()
     mock_orchestrator.generate_questions.return_value = ["Q1?", "Q2?", "Q3?"]
 
-    engine = InterviewEngine(db=mock_db, orchestrator=mock_orchestrator)
-    engine._persona_engine = _mock_persona_engine()
-    result = await engine.create_session("user1", "Google", "SWE", ["behavioral", "technical"])
+    with patch("app.services.interview_engine.ContextAssembler") as MockCA:
+        MockCA.return_value.assemble = AsyncMock(return_value={
+            "knowledge_profile": {}, "jd_analysis": {},
+            "graph_context": {}, "user_weak_dimensions": [],
+        })
+        engine = InterviewEngine(db=mock_db, orchestrator=mock_orchestrator)
+        engine._persona_engine = _mock_persona_engine()
+        result = await engine.create_session("user1", "Google", "SWE", ["behavioral", "technical"])
 
     assert result["company"] == "Google"
     assert len(result["questions"]) == 3
     assert result["current_round"] == "behavioral"
     assert result["remaining_rounds"] == ["technical"]
+    assert result["career_track"] == "technology"  # default value
 
 
 async def test_submit_answer_stores_moment_and_grade():

@@ -1,3 +1,4 @@
+import hashlib
 import uuid
 from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -5,6 +6,7 @@ from sqlalchemy import select, func
 from app.models.pg.session import InterviewSession, Round, RoundMoment
 from app.services.llm_orchestrator import LLMOrchestrator
 from app.services.persona_engine import PersonaEngine
+from app.services.context_assembler import ContextAssembler
 from app.core.exceptions import SessionNotFoundError
 
 PASS_THRESHOLD = 6.0   # score >= this → passed
@@ -27,12 +29,21 @@ class InterviewEngine:
         company: str,
         role: str,
         round_types: list[str],
+        career_track: str = "technology",
+        level: str = "mid_level",
+        interview_stage: str = "hr_interview",
+        jd_text: str | None = None,
+        manager_name: str | None = None,
     ) -> dict:
         session = InterviewSession(
             id=str(uuid.uuid4()),
             user_id=user_id,
             company=company,
             role=role,
+            career_track=career_track,
+            level=level,
+            interview_stage=interview_stage,
+            jd_hash=hashlib.sha256(jd_text.encode()).hexdigest() if jd_text else None,
         )
         self.db.add(session)
 
@@ -41,11 +52,18 @@ class InterviewEngine:
         self.db.add(round_)
         await self.db.commit()
 
-        graph_context = await self._persona_engine.get_graph_context(
-            company=company, round_type=first_round_type
+        assembler = ContextAssembler(db=self.db)
+        context = await assembler.assemble(
+            user_id=user_id, company=company, role=role,
+            career_track=career_track, level=level,
+            interview_stage=interview_stage, jd_text=jd_text,
+            manager_name=manager_name,
         )
+
         questions = await self.orchestrator.generate_questions(
-            company=company, role=role, round_type=first_round_type, graph_context=graph_context
+            company=company, role=role, round_type=first_round_type,
+            graph_context=context["graph_context"],
+            knowledge_context=context["knowledge_profile"],
         )
         persona = await self._persona_engine.build(
             company=company, role=role, round_type=first_round_type
@@ -56,6 +74,8 @@ class InterviewEngine:
             "round_id": round_.id,
             "company": company,
             "role": role,
+            "career_track": career_track,
+            "level": level,
             "current_round": first_round_type,
             "remaining_rounds": round_types[1:],
             "questions": questions,

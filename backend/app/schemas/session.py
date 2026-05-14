@@ -6,6 +6,11 @@ class CreateSessionRequest(BaseModel):
     company: str
     role: str
     round_types: list[str]
+    career_track: str = "technology"
+    level: str = "mid_level"
+    interview_stage: str = "hr_interview"
+    jd_text: str | None = None
+    manager_name: str | None = None
 
 
 class SessionResponse(BaseModel):

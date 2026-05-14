@@ -30,6 +30,11 @@ async def create_session(
         company=body.company,
         role=body.role,
         round_types=body.round_types,
+        career_track=body.career_track,
+        level=body.level,
+        interview_stage=body.interview_stage,
+        jd_text=body.jd_text,
+        manager_name=body.manager_name,
     )
     return {"data": session, "error": None}
 
