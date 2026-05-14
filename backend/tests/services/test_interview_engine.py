@@ -111,7 +111,6 @@ async def test_submit_answer_follow_up_moments_not_counted_toward_total():
 @pytest.mark.asyncio
 async def test_submit_answer_time_budget_forces_last():
     """expired time budget forces round completion regardless of question count"""
-    from datetime import datetime, timedelta
     mock_db = AsyncMock()
     mock_db.add = MagicMock()
 
@@ -184,3 +183,39 @@ async def test_submit_answer_passed_derived_from_score():
         result = await engine.submit_answer("s1", "r1", "Q?", "A.", total_questions=5)
 
     assert result["passed"] is True  # 5.0 >= PASS_THRESHOLD (5.0)
+
+
+@pytest.mark.asyncio
+async def test_submit_answer_follow_up_suppressed_at_80_percent_budget():
+    """follow_up is suppressed when time_elapsed >= 80% of budget"""
+    from unittest.mock import patch
+    mock_db = AsyncMock()
+    mock_db.add = MagicMock()
+    mock_round = MagicMock(
+        id="r1", type="behavioral",
+        started_at=datetime(2026, 1, 1, 0, 0, 0),
+        time_budget_seconds=1800,
+    )
+    mock_session = MagicMock(company="Google", role="SWE")
+    results = [
+        MagicMock(**{"scalar_one_or_none.return_value": mock_round}),
+        MagicMock(**{"scalar_one_or_none.return_value": mock_session}),
+        MagicMock(**{"scalar.return_value": 2}),  # not last
+    ]
+    mock_db.execute = AsyncMock(side_effect=results)
+
+    mock_orchestrator = AsyncMock()
+    mock_orchestrator.grade_answer.return_value = {
+        "score": 5.5, "what_worked": "ok", "what_was_missing": "gap",
+        "stronger_version": "", "follow_up": "Can you elaborate?",
+        "factual_errors": [], "confidence_signal": "hesitant",
+    }
+
+    engine = InterviewEngine(db=mock_db, orchestrator=mock_orchestrator)
+    # 85% of 1800s = 1530s elapsed
+    with patch("app.services.interview_engine._utcnow",
+               return_value=datetime(2026, 1, 1, 0, 25, 30)):  # 25m30s = 1530s
+        result = await engine.submit_answer("s1", "r1", "Q?", "A.", total_questions=5)
+
+    # follow_up should be suppressed even though LLM returned one
+    assert result["follow_up"] is None

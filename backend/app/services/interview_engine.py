@@ -151,6 +151,7 @@ class InterviewEngine:
             is_followup=is_followup,
         )
         self.db.add(moment)
+        await self.db.flush()  # ensure new moment is visible to COUNT query
 
         # Count only non-followup answers toward prepared question total
         count_result = await self.db.execute(
@@ -172,7 +173,7 @@ class InterviewEngine:
 
         if is_last:
             round_complete = True
-            round_passed = grade["passed"] and grade["score"] > FAIL_THRESHOLD
+            round_passed = grade["passed"]  # already derived from PASS_THRESHOLD above
             round_.grade = grade["score"]
             round_.passed = round_passed
             round_.completed_at = _utcnow()
@@ -214,7 +215,9 @@ class InterviewEngine:
                     actual_duration_seconds=actual_duration,
                 )
                 round_.evaluation = evaluation
-            except Exception:
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).exception("evaluate_candidate failed: %s", exc)
                 evaluation = {
                     "hire_recommendation": "borderline",
                     "confidence_rating": "low",
