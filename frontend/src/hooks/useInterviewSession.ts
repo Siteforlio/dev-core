@@ -6,11 +6,29 @@ const API = 'http://localhost:8000/api/v1'
 export function useInterviewSession() {
   const setSession = useInterviewStore((s) => s.setSession)
 
-  const startSession = async (company: string, role: string, rounds: string[]) => {
+  const startSession = async (
+    company: string,
+    role: string,
+    rounds: string[],
+    careerTrack: string = '',
+    level: string = '',
+    interviewStage: string = '',
+    jdText?: string,
+    managerName?: string,
+  ) => {
     const res = await apiFetch(`${API}/interview-sessions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ company, role, round_types: rounds }),
+      body: JSON.stringify({
+        company,
+        role,
+        round_types: rounds,
+        career_track: careerTrack,
+        level,
+        interview_stage: interviewStage,
+        jd_text: jdText || null,
+        manager_name: managerName || null,
+      }),
     })
     const { data } = await res.json()
     setSession(
@@ -25,6 +43,9 @@ export function useInterviewSession() {
       },
       data.remaining_rounds ?? [],
       data.persona,
+      data.career_track ?? careerTrack,
+      data.level ?? level,
+      data.interview_stage ?? interviewStage,
     )
     return data
   }

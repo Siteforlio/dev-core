@@ -4,7 +4,7 @@ import { useInterviewSession } from '../hooks/useInterviewSession'
 import { useJobHunterStore } from '../store/jobHunterStore'
 import { useJobHunter } from '../hooks/useJobHunter'
 import Sidebar from '../components/job-hunter/Sidebar'
-import CompanySelector from '../components/interview/CompanySelector'
+import SessionSetupForm from '../components/interview/SessionSetupForm'
 import CampaignList from '../components/job-hunter/CampaignList'
 import CampaignForm from '../components/job-hunter/CampaignForm'
 import CampaignProfileBuilder from '../components/job-hunter/CampaignProfileBuilder'
@@ -21,8 +21,6 @@ export default function Dashboard() {
   const { startSession } = useInterviewSession()
 
   const [activeModule, setActiveModule] = useState<Module>('interview')
-  const [interviewStarting, setInterviewStarting] = useState(false)
-  const [interviewError, setInterviewError] = useState('')
   const [showSessionSetup, setShowSessionSetup] = useState(false)
 
   const {
@@ -45,17 +43,6 @@ export default function Dashboard() {
       .catch(() => {})
       .finally(() => setLoadingCampaigns(false))
   }, [activeModule, activeView])
-
-  const handleInterviewSelect = async (company: string, role: string, rounds: string[]) => {
-    setInterviewStarting(true)
-    setInterviewError('')
-    try {
-      await startSession(company, role, rounds.length > 0 ? rounds : ['HR', 'behavioral', 'technical'])
-    } catch {
-      setInterviewError('Failed to start session. Is the backend running?')
-      setInterviewStarting(false)
-    }
-  }
 
   const handleCampaignCreated = (campaign: Campaign) => {
     setCampaigns((prev) => [campaign, ...prev])
@@ -195,47 +182,39 @@ export default function Dashboard() {
           {activeModule === 'interview' ? (
             /* ── Interview Prep ── */
             <div className="flex h-full items-center justify-center p-8">
-              {interviewStarting ? (
-                <div className="text-gray-400 flex flex-col items-center gap-3">
-                  <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-                  <span className="text-sm">Generating your interview session…</span>
+              <div className="flex flex-col items-center gap-6">
+                <SessionSetupForm />
+                <div className="flex items-center gap-3 w-full max-w-sm">
+                  <div className="flex-1 h-px" style={{ background: 'rgba(34,211,238,0.08)' }} />
+                  <span className="text-[10px] font-mono uppercase tracking-[0.18em]" style={{ color: 'rgba(34,211,238,0.3)' }}>or</span>
+                  <div className="flex-1 h-px" style={{ background: 'rgba(34,211,238,0.08)' }} />
                 </div>
-              ) : (
-                <div className="flex flex-col items-center gap-6">
-                  {interviewError && <p className="text-red-400 text-sm">{interviewError}</p>}
-                  <CompanySelector onSelect={handleInterviewSelect} />
-                  <div className="flex items-center gap-3 w-full max-w-sm">
-                    <div className="flex-1 h-px" style={{ background: 'rgba(34,211,238,0.08)' }} />
-                    <span className="text-[10px] font-mono uppercase tracking-[0.18em]" style={{ color: 'rgba(34,211,238,0.3)' }}>or</span>
-                    <div className="flex-1 h-px" style={{ background: 'rgba(34,211,238,0.08)' }} />
-                  </div>
-                  <button
-                    onClick={() => setShowSessionSetup(true)}
-                    className="flex items-center gap-2.5 px-6 py-2.5 rounded-lg transition-all duration-150 w-full max-w-sm justify-center"
-                    style={{
-                      background: 'rgba(34,211,238,0.07)',
-                      border: '1px solid rgba(34,211,238,0.2)',
-                      color: '#22d3ee',
-                      fontFamily: 'monospace',
-                      fontSize: '11px',
-                      fontWeight: 600,
-                      letterSpacing: '0.14em',
-                      textTransform: 'uppercase',
-                    }}
-                    onMouseEnter={e => {
-                      e.currentTarget.style.background = 'rgba(34,211,238,0.13)'
-                      e.currentTarget.style.borderColor = 'rgba(34,211,238,0.38)'
-                    }}
-                    onMouseLeave={e => {
-                      e.currentTarget.style.background = 'rgba(34,211,238,0.07)'
-                      e.currentTarget.style.borderColor = 'rgba(34,211,238,0.2)'
-                    }}
-                  >
-                    <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
-                    Start DevCore Session
-                  </button>
-                </div>
-              )}
+                <button
+                  onClick={() => setShowSessionSetup(true)}
+                  className="flex items-center gap-2.5 px-6 py-2.5 rounded-lg transition-all duration-150 w-full max-w-sm justify-center"
+                  style={{
+                    background: 'rgba(34,211,238,0.07)',
+                    border: '1px solid rgba(34,211,238,0.2)',
+                    color: '#22d3ee',
+                    fontFamily: 'monospace',
+                    fontSize: '11px',
+                    fontWeight: 600,
+                    letterSpacing: '0.14em',
+                    textTransform: 'uppercase',
+                  }}
+                  onMouseEnter={e => {
+                    e.currentTarget.style.background = 'rgba(34,211,238,0.13)'
+                    e.currentTarget.style.borderColor = 'rgba(34,211,238,0.38)'
+                  }}
+                  onMouseLeave={e => {
+                    e.currentTarget.style.background = 'rgba(34,211,238,0.07)'
+                    e.currentTarget.style.borderColor = 'rgba(34,211,238,0.2)'
+                  }}
+                >
+                  <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+                  Start DevCore Session
+                </button>
+              </div>
             </div>
           ) : activeModule === 'settings' ? (
             /* ── Settings ── */
