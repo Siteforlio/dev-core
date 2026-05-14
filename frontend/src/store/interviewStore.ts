@@ -14,6 +14,7 @@ interface Round {
   currentQuestionIndex: number
   passed?: boolean
   feedbackResult?: FeedbackResult
+  timeBudgetSeconds: number
 }
 
 interface InterviewState {

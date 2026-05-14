@@ -173,6 +173,7 @@ export default function InterviewSession({ token }: Props) {
             type: d.current_round,
             questions: d.questions,
             currentQuestionIndex: 0,
+            timeBudgetSeconds: d.time_budget_seconds ?? 1800,
           },
           d.persona,
           remainingRounds.slice(1)

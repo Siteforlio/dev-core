@@ -40,6 +40,7 @@ export function useInterviewSession() {
         type: data.current_round,
         questions: data.questions,
         currentQuestionIndex: 0,
+        timeBudgetSeconds: data.time_budget_seconds ?? 1800,
       },
       data.remaining_rounds ?? [],
       data.persona,
@@ -55,7 +56,13 @@ export function useInterviewSession() {
     roundId: string,
     question: string,
     answer: string,
-    opts?: { totalQuestions?: number; emotionState?: string },
+    opts?: {
+      totalQuestions?: number
+      emotionState?: string
+      timeTakenSeconds?: number
+      rewriteCount?: number
+      isFollowup?: boolean
+    },
   ) => {
     const res = await apiFetch(`${API}/interview-sessions/${sessionId}/answer`, {
       method: 'POST',
@@ -66,6 +73,9 @@ export function useInterviewSession() {
         answer,
         total_questions: opts?.totalQuestions ?? 5,
         emotion_state: opts?.emotionState ?? null,
+        time_taken_seconds: opts?.timeTakenSeconds ?? null,
+        rewrite_count: opts?.rewriteCount ?? 0,
+        is_followup: opts?.isFollowup ?? false,
       }),
     })
     return (await res.json()).data
