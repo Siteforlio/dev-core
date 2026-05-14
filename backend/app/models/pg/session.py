@@ -15,6 +15,10 @@ class InterviewSession(Base):
     role: Mapped[str] = mapped_column(String(255), nullable=False)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    career_track: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    level: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    interview_stage: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    jd_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 class Round(Base):
     __tablename__ = "rounds"

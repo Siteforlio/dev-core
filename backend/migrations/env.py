@@ -31,6 +31,8 @@ from app.models.pg.job_hunter import (
     EmailEvent,
     CalendarEvent,
 )
+from app.models.pg.knowledge import KnowledgeProfile
+from app.models.pg.progress import UserProgress
 
 target_metadata = Base.metadata
 
