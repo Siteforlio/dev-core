@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useAuthStore } from '../store/authStore'
 import { useInterviewSession } from '../hooks/useInterviewSession'
 import { useJobHunterStore } from '../store/jobHunterStore'
@@ -23,6 +23,7 @@ export default function Dashboard() {
 
   const [activeModule, setActiveModule] = useState<Module>('interview')
   const [showSessionSetup, setShowSessionSetup] = useState(false)
+  const sessionFormRef = useRef<HTMLDivElement>(null)
 
   const {
     activeView,
@@ -184,7 +185,7 @@ export default function Dashboard() {
               <div className="flex gap-8 w-full max-w-5xl">
                 <div style={{ flex: '0 0 440px' }}>
                   <div className="flex flex-col items-center gap-6">
-                    <SessionSetupForm />
+                    <div ref={sessionFormRef}><SessionSetupForm /></div>
                     <div className="flex items-center gap-3 w-full max-w-sm">
                       <div className="flex-1 h-px" style={{ background: 'rgba(34,211,238,0.08)' }} />
                       <span className="text-[10px] font-mono uppercase tracking-[0.18em]" style={{ color: 'rgba(34,211,238,0.3)' }}>or</span>
@@ -218,7 +219,7 @@ export default function Dashboard() {
                   </div>
                 </div>
                 <div className="flex-1 min-w-0">
-                  <ProgressDashboard onStartNew={() => {}} />
+                  <ProgressDashboard onStartNew={() => sessionFormRef.current?.scrollIntoView({ behavior: 'smooth' })} />
                 </div>
               </div>
             </div>

@@ -4,7 +4,7 @@ import { apiFetch } from '../lib/apiFetch'
 
 const API = 'http://localhost:8000/api/v1'
 
-interface ProgressSummary {
+export interface ProgressSummary {
   dimensions: Record<string, number>
   total_sessions: number
   average_score: number
