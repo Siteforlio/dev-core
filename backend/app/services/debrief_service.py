@@ -1,10 +1,11 @@
 import io
 import json
+import re
 from collections import Counter
 from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-import anthropic
+import openai
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
@@ -19,22 +20,25 @@ from app.services.community_pipeline import CommunityPipeline
 class DebriefService:
     def __init__(self, db: AsyncSession):
         self.db = db
-        self._client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
-
-    async def _call_claude(self, prompt: str) -> dict:
-        msg = await self._client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=1024,
-            messages=[{"role": "user", "content": prompt}],
+        self._client = openai.AsyncOpenAI(
+            api_key=settings.deepseek_api_key,
+            base_url="https://api.deepseek.com",
         )
-        raw = msg.content[0].text
+
+    async def _call_llm(self, prompt: str) -> dict:
+        response = await self._client.chat.completions.create(
+            model="deepseek-reasoner",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=1024,
+        )
+        raw = response.choices[0].message.content
         try:
             return json.loads(raw)
         except json.JSONDecodeError:
-            import re
             m = re.search(r'\{.*\}', raw, re.DOTALL)
             return json.loads(m.group()) if m else {
-                "overall_score": 5.0, "strengths": [], "improvements": [], "recommendation": raw[:200]
+                "overall_score": 5.0, "strengths": [], "improvements": [],
+                "recommendation": raw[:200]
             }
 
     async def _get_moments(self, round_id: str) -> list:
@@ -82,7 +86,7 @@ class DebriefService:
             "Return a JSON debrief:\n"
             '{"overall_score": 7.5, "strengths": ["..."], "improvements": ["..."], "recommendation": "..."}'
         )
-        analysis = await self._call_claude(prompt)
+        analysis = await self._call_llm(prompt)
 
         # Stage anonymized data for community pipeline (fire-and-forget)
         try:
