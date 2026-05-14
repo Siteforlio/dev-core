@@ -29,8 +29,13 @@ Four layers of change:
 
 | Column | Type | Description |
 |---|---|---|
-| `started_at` | `DateTime`, default utcnow | Set when the round is created |
-| `time_budget_seconds` | `Integer`, nullable | Max allowed seconds for this round type |
+| `started_at` | `DateTime`, default utcnow | Set by SQLAlchemy column default when the round row is created — no call-site change needed in `create_session` or `advance_to_next_round` |
+| `time_budget_seconds` | `Integer`, nullable | Max allowed seconds for this round type — set explicitly when creating `Round` |
+| `evaluation` | `JSONB`, nullable | Holistic evaluation result stored when round closes |
+
+**Total new columns: 6** (3 on `RoundMoment`, 3 on `Round`).
+
+Note: `started_at` on `Round` is distinct from the existing `started_at` on `InterviewSession` — they are different tables with no ORM conflict.
 
 ### Time budgets (server-side constants in `interview_engine.py`)
 
@@ -51,9 +56,17 @@ ROUND_TIME_BUDGETS = {
 DEFAULT_TIME_BUDGET = 1800
 ```
 
+`time_budget_seconds` is looked up from this dict when creating a `Round` and stored on the row:
+```python
+budget = ROUND_TIME_BUDGETS.get(round_type, DEFAULT_TIME_BUDGET)
+round_ = Round(id=..., session_id=..., type=round_type, time_budget_seconds=budget)
+```
+
+This applies in both `create_session` and `advance_to_next_round`.
+
 ### Alembic migration
 
-One migration: `add_behavioral_signal_columns` — adds all five new columns across two tables.
+One migration: `add_behavioral_signal_columns` — adds all **six** new columns across two tables.
 
 ---
 
@@ -83,29 +96,29 @@ Rewrite classification:
 - `1` → "rewrote answer once — minor hesitation"
 - `2+` → "rewrote answer {n} times — candidate appears uncertain"
 
-Prompt persona:
-> "You are a senior interviewer at {company}. You are direct, fair, and brutally honest. You do not inflate scores. A score of 7 means genuinely good. A score of 5 means mediocre. A score of 3 means poor. You check factual accuracy — if the candidate says something demonstrably false, you note it and it lowers the score significantly."
-
 Return schema:
 ```json
 {
   "score": 6.5,
-  "passed": true,
   "what_worked": "One clear sentence.",
   "what_was_missing": "One clear sentence.",
   "stronger_version": "One sentence showing improvement.",
-  "follow_up": "Follow-up question if score < 7 and gap exists, else null",
+  "follow_up": "Follow-up question string if score < 7 and there is a specific gap worth probing, else null",
   "factual_errors": ["List of factual errors found, empty if none"],
   "confidence_signal": "confident | hesitant | uncertain | rushed"
 }
 ```
 
-Pass threshold: score >= 5 (down from 6 — follow-ups compensate for initial weak answers).
-Fail threshold: score <= 3 (immediate round fail, unchanged).
+**Note: `passed` is removed from the LLM return schema.** The engine derives `passed` from `score >= PASS_THRESHOLD` to avoid the dual-check inconsistency. `PASS_THRESHOLD` changes from 6.0 to 5.0.
+
+Pass threshold: `PASS_THRESHOLD = 5.0` (down from 6.0 — follow-ups compensate for initial weak answers).
+Fail threshold: `FAIL_THRESHOLD = 3.0` (unchanged — immediate round fail).
+
+The engine sets `grade["passed"] = grade["score"] >= PASS_THRESHOLD` after receiving the LLM result.
 
 #### `evaluate_candidate` — new method
 
-Called once when a round closes (last question answered or time expired). Receives the full round transcript including follow-ups, timing data per moment, and rewrite counts.
+Called once when a round closes (last prepared question answered or time budget expired). Receives the full round transcript including follow-ups, timing data per moment, and rewrite counts.
 
 ```python
 async def evaluate_candidate(
@@ -132,55 +145,134 @@ Returns:
 }
 ```
 
-This result is stored on the `Round` record (as JSON in a new `evaluation` JSONB column) and returned in the `submit_answer` response when `round_complete=true`.
+This result is stored in the `Round.evaluation` JSONB column and returned in the `submit_answer` response when `round_complete=true`.
 
 #### `react_to_rewrite` — new method
-
-Called when frontend sends a behavioral signal.
 
 ```python
 async def react_to_rewrite(self, company: str, role: str, rewrite_count: int) -> str
 ```
 
-Returns a 1-sentence spoken reaction (e.g. "Take your time, there's no rush." or "I notice you're reconsidering — that's fine, just walk me through your thinking."). Uses `deepseek-chat` (fast model).
+Returns a 1-sentence spoken reaction. Uses `deepseek-chat` (fast model).
 
 ### `InterviewEngine.submit_answer` — upgraded
 
-New parameters: `time_taken_seconds: int | None`, `rewrite_count: int = 0`.
+New signature:
+```python
+async def submit_answer(
+    self,
+    session_id: str,
+    round_id: str,
+    question: str,
+    answer: str,
+    total_questions: int = 5,
+    emotion_state: str | None = None,
+    time_taken_seconds: int | None = None,
+    rewrite_count: int = 0,
+    is_followup: bool = False,
+) -> dict
+```
 
-New logic:
-1. Derive `time_elapsed = (utcnow - round.started_at).total_seconds()`
-2. Check `time_elapsed >= round.time_budget_seconds` → if so, force `is_last = True` regardless of answer count
-3. Pass `time_taken_seconds` and `rewrite_count` to `grade_answer`
-4. Store `is_followup`, `time_taken_seconds`, `rewrite_count` on the new `RoundMoment` columns
-5. If `round_complete`, call `evaluate_candidate` with all moments for that round
-6. The `follow_up` field from `grade_answer` is passed back to the frontend only if `time_elapsed < 0.8 * round.time_budget_seconds`; otherwise it is suppressed
+New logic (in order):
 
-Return schema gains:
+1. Look up `round_` and `session` as before
+2. Derive `time_elapsed = (_utcnow() - round_.started_at).total_seconds()` — use `_utcnow()` (the module-local naive helper) to match the stored naive datetime and avoid timezone arithmetic errors
+3. Check `time_elapsed >= round_.time_budget_seconds` → if so, force `is_last = True`
+4. **Follow-up counting**: the `is_last` check uses only **non-followup** answers:
+   ```python
+   count_result = await self.db.execute(
+       select(func.count()).select_from(RoundMoment).where(
+           RoundMoment.round_id == round_id,
+           RoundMoment.is_followup == False,  # noqa: E712
+       )
+   )
+   prepared_count = count_result.scalar()
+   is_last = is_last or (prepared_count >= total_questions)
+   ```
+   Follow-up moments are stored and graded but do not count toward the 5-question completion check.
+5. Pass `time_taken_seconds` and `rewrite_count` to `grade_answer`
+6. Engine sets `grade["passed"] = grade["score"] >= PASS_THRESHOLD`
+7. Store `RoundMoment` with new columns: `time_taken_seconds`, `rewrite_count`, `is_followup`
+8. If `round_complete`: fetch all moments for the round, call `evaluate_candidate`, store result in `round_.evaluation`
+9. Suppress `follow_up` in response if `time_elapsed >= 0.8 * round_.time_budget_seconds`
+
+Full return schema:
 ```json
 {
+  "score": 7.0,
+  "passed": true,
+  "what_worked": "...",
+  "what_was_missing": "...",
+  "stronger_version": "...",
   "follow_up": "string | null",
-  "evaluation": { ... },  // only present when round_complete=true
-  "time_remaining_seconds": 1240,
-  "confidence_signal": "confident | hesitant | uncertain | rushed"
+  "confidence_signal": "confident | hesitant | uncertain | rushed",
+  "factual_errors": [],
+  "round_complete": false,
+  "round_passed": null,
+  "evaluation": null,
+  "time_remaining_seconds": 1240
+}
+```
+
+`evaluation` is populated only when `round_complete=true`. `time_remaining_seconds = max(0, round_.time_budget_seconds - time_elapsed)`.
+
+### `InterviewEngine.create_session` and `advance_to_next_round` — updated
+
+Both must pass `time_budget_seconds` when creating `Round`:
+```python
+budget = ROUND_TIME_BUDGETS.get(round_type, DEFAULT_TIME_BUDGET)
+round_ = Round(id=str(uuid.uuid4()), session_id=session.id, type=round_type, time_budget_seconds=budget)
+```
+
+Both return `time_budget_seconds` in their response dict:
+```python
+return {
+    ...existing fields...,
+    "time_budget_seconds": budget,
 }
 ```
 
 ### New endpoint: `POST /interview-sessions/{id}/behavioral-signal`
 
-Request:
-```json
-{ "signal": "rewrite", "rewrite_count": 2 }
+```python
+@router.post("/{session_id}/behavioral-signal")
+async def behavioral_signal(
+    session_id: str,
+    body: BehavioralSignalRequest,
+    user_id: str = Depends(get_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    # Look up session to get company and role
+    result = await db.execute(select(InterviewSession).where(InterviewSession.id == session_id))
+    session = result.scalar_one_or_none()
+    if not session:
+        return {"data": {"reaction": ""}, "error": None}
+    orchestrator = LLMOrchestrator()
+    reaction = await orchestrator.react_to_rewrite(
+        company=session.company, role=session.role, rewrite_count=body.rewrite_count
+    )
+    return {"data": {"reaction": reaction}, "error": None}
 ```
 
-Response:
-```json
-{ "reaction": "Take your time, there's no rush." }
+Auth: `Depends(get_user_id)` is required (same as all other session endpoints).
+
+### Updated `sessions.py` router call for `submit_answer`
+
+```python
+result = await engine.submit_answer(
+    session_id=session_id,
+    round_id=body.round_id,
+    question=body.question,
+    answer=body.answer,
+    total_questions=body.total_questions,
+    emotion_state=body.emotion_state,
+    time_taken_seconds=body.time_taken_seconds,
+    rewrite_count=body.rewrite_count,
+    is_followup=body.is_followup,
+)
 ```
 
-This endpoint calls `LLMOrchestrator.react_to_rewrite()` and returns immediately. Fire-and-forget from the frontend — no awaiting required for UX.
-
-### `AnswerRequest` schema — new fields
+### Schema changes
 
 ```python
 class AnswerRequest(BaseModel):
@@ -192,11 +284,49 @@ class AnswerRequest(BaseModel):
     time_taken_seconds: Optional[int] = None
     rewrite_count: int = 0
     is_followup: bool = False
+
+class BehavioralSignalRequest(BaseModel):
+    signal: str  # "rewrite"
+    rewrite_count: int = 1
 ```
 
 ---
 
 ## Section 3: Frontend Changes
+
+### `interviewStore.ts`
+
+The `Round` interface gains:
+```typescript
+interface Round {
+  id: string
+  type: string
+  questions: string[]
+  currentQuestionIndex: number
+  passed?: boolean
+  feedbackResult?: FeedbackResult
+  timeBudgetSeconds: number  // NEW — carried from session start / advance response
+}
+```
+
+`setSession` accepts `timeBudgetSeconds` and stores it on the round object. `advanceRound` similarly carries `timeBudgetSeconds` from the advance response.
+
+### `useInterviewSession.ts`
+
+`startSession` maps `data.time_budget_seconds` into the round object passed to `setSession`.
+
+`submitAnswer` extended options:
+```typescript
+opts?: {
+  totalQuestions?: number
+  emotionState?: string
+  timeTakenSeconds?: number
+  rewriteCount?: number
+  isFollowup?: boolean
+}
+```
+
+POST body includes `time_taken_seconds`, `rewrite_count`, `is_followup`.
 
 ### `InterviewSession.tsx`
 
@@ -205,7 +335,6 @@ class AnswerRequest(BaseModel):
 ```typescript
 const questionStartTimeRef = useRef<number>(Date.now())
 
-// Reset on every new question (including follow-ups)
 useEffect(() => {
   questionStartTimeRef.current = Date.now()
 }, [question])
@@ -224,13 +353,15 @@ const handleAnswerChange = (newValue: string) => {
   const dropped = prevAnswerLengthRef.current - newValue.length
   if (dropped >= 40) {
     rewriteCountRef.current += 1
-    // Fire behavioral signal (non-blocking)
-    apiFetch(`${API}/interview-sessions/${sessionId}/behavioral-signal`, {
+    apiFetch(`/api/v1/interview-sessions/${sessionId}/behavioral-signal`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ signal: 'rewrite', rewrite_count: rewriteCountRef.current }),
     }).then(r => r.json()).then(j => {
-      if (j.data?.reaction) setAvatarReaction(j.data.reaction)
+      if (j.data?.reaction) {
+        setAvatarReaction(j.data.reaction)
+        setTimeout(() => setAvatarReaction(null), 8000)
+      }
     }).catch(() => {})
   }
   prevAnswerLengthRef.current = newValue.length
@@ -238,47 +369,71 @@ const handleAnswerChange = (newValue: string) => {
 }
 ```
 
+Reset `prevAnswerLengthRef.current = 0` and `rewriteCountRef.current = 0` after each submit.
+
 #### Avatar reaction for rewrites
 
-New state `avatarReaction: string | null` — displayed in the avatar panel, auto-cleared after 8 seconds. Same pattern as existing `codeReaction`.
+New state `avatarReaction: string | null`. Displayed in the avatar panel alongside `isSpeaking`. Auto-cleared after 8 seconds (set in the `.then` above).
 
 #### Follow-up injection
 
-New state: `followUpQuestion: string | null` and `isFollowUp: boolean`.
+New component state:
+```typescript
+const [followUpQuestion, setFollowUpQuestion] = useState<string | null>(null)
+const [isFollowUp, setIsFollowUp] = useState(false)
+```
 
-After receiving `result.follow_up` from a graded answer:
-- If not null: set `followUpQuestion = result.follow_up`, `isFollowUp = true`
-- On "Next →" click: if `followUpQuestion` is set, display it as the current question with a "↩ Follow-up" label; do NOT call `nextQuestion()` on the store
-- After the follow-up is submitted: clear `followUpQuestion`, `isFollowUp`, then call `nextQuestion()` as normal
+After receiving graded result:
+- If `result.follow_up` is not null/empty: `setFollowUpQuestion(result.follow_up)`, `setIsFollowUp(true)`
+- Display logic: `const question = followUpQuestion ?? currentRound.questions[currentRound.currentQuestionIndex]`
+- Label: show `"↩ Follow-up"` badge above question box when `isFollowUp === true`
 
-Follow-up answers are submitted with `is_followup: true` in the `AnswerRequest`.
+On "Next →" click:
+```typescript
+if (followUpQuestion) {
+  // Follow-up was just answered — clear it and advance prepared index
+  setFollowUpQuestion(null)
+  setIsFollowUp(false)
+  nextQuestion()  // advance prepared question index as normal
+} else if (!roundComplete) {
+  nextQuestion()
+} else {
+  // round over — existing logic
+}
+```
+
+Follow-up answers submitted with `isFollowup: true` and same `total_questions` as the prepared round (backend ignores follow-ups in its count check).
 
 #### Time warning banner
 
-Session start response includes `time_budget_seconds` per round. Track `roundStartTime = Date.now()` on round creation. A `useEffect` polling every 30 seconds checks elapsed time:
-- `> 80%`: amber banner "Interview ending soon"
-- `> 95%`: red banner "Time almost up — submitting your current answer shortly"
-- `= 100%`: auto-submit if answer is non-empty, or skip if empty
-
-#### Submit payload
-
+Derive from store:
 ```typescript
-await submitAnswer(sessionId, roundId, question, answer, {
-  totalQuestions,
-  emotionState: undefined,
-  timeTakenSeconds,
-  rewriteCount: rewriteCountRef.current,
-  isFollowup: isFollowUp,
-})
+const timeBudgetSeconds = currentRound?.timeBudgetSeconds ?? 1800
 ```
 
-### `useInterviewSession.ts`
+Track round start time in a ref:
+```typescript
+const roundStartTimeRef = useRef<number>(Date.now())
+// Reset when round changes (round id changes):
+useEffect(() => { roundStartTimeRef.current = Date.now() }, [currentRound?.id])
+```
 
-`submitAnswer` passes `time_taken_seconds`, `rewrite_count`, `is_followup` in the POST body.
+Poll every 30s:
+```typescript
+useEffect(() => {
+  const interval = setInterval(() => {
+    const elapsed = (Date.now() - roundStartTimeRef.current) / 1000
+    const pct = elapsed / timeBudgetSeconds
+    if (pct >= 1.0 && answer.trim()) handleSubmit()
+    else if (pct >= 0.95) setTimeWarning('red')
+    else if (pct >= 0.80) setTimeWarning('amber')
+    else setTimeWarning(null)
+  }, 30_000)
+  return () => clearInterval(interval)
+}, [timeBudgetSeconds, answer])
+```
 
-### `interviewStore.ts`
-
-`setSession` and session start response carries `time_budget_seconds` for the current round.
+Banner renders above the question box when `timeWarning` is not null.
 
 ---
 
@@ -287,17 +442,17 @@ await submitAnswer(sessionId, roundId, question, answer, {
 ### Grading prompt (brutal honesty)
 
 ```
-You are a senior interviewer at {company} evaluating a {role} candidate.
+You are a senior interviewer at {company} evaluating a {role} candidate in a {round_type} interview.
 
 You are direct, fair, and brutally honest. You do not inflate scores to be encouraging.
 Scoring guide:
 - 9-10: Exceptional. Would hire immediately.
 - 7-8: Good. Meets bar for this role.
-- 5-6: Mediocre. Passes but has gaps.
-- 3-4: Poor. Significant gaps or errors.
+- 5-6: Mediocre. Passes but has clear gaps.
+- 3-4: Poor. Significant gaps, weak structure, or factual errors.
 - 1-2: Unacceptable. Wrong facts, no structure, or completely off-topic.
 
-Factual accuracy: If the candidate states something demonstrably false (e.g. incorrect technical claims, impossible scenarios), note it explicitly and lower the score accordingly.
+Factual accuracy: If the candidate states something demonstrably false, note it explicitly and lower the score.
 
 Behavioral context:
 {timing_note}
@@ -306,9 +461,12 @@ Behavioral context:
 Question: {question}
 Candidate answer: {answer}
 
-Return JSON only:
-{"score": 6.5, "passed": true, "what_worked": "...", "what_was_missing": "...", "stronger_version": "...", "follow_up": "...", "factual_errors": [], "confidence_signal": "..."}
+Return JSON only — no other text:
+{"score": 6.5, "what_worked": "...", "what_was_missing": "...", "stronger_version": "...", "follow_up": null, "factual_errors": [], "confidence_signal": "confident"}
 ```
+
+Note: `passed` is NOT in the LLM response — the engine derives it from `score >= PASS_THRESHOLD`.
+`follow_up` should be `null` (not the string "null") when no follow-up is warranted.
 
 ### Holistic evaluation prompt
 
@@ -318,54 +476,59 @@ You are the hiring manager at {company}. A candidate just completed a {round_typ
 Full transcript with behavioral data:
 {transcript_with_timing}
 
-Time used: {actual_duration_seconds}s of {time_budget_seconds}s allowed.
+Time used: {actual_duration}s of {budget}s allowed.
 
-Evaluate the candidate holistically. Consider:
-- The quality and depth of their answers across all questions
+Evaluate holistically. Consider:
+- Answer quality and depth across all prepared questions
 - Follow-up performance (did they recover from weak initial answers?)
-- Consistency — were they strong early and weak later, or the reverse?
-- Confidence signals — response times, rewrites, hesitation patterns
-- Factual accuracy across the session
-- Whether you got enough signal to make a hire decision
+- Consistency across the session
+- Confidence signals: response times, rewrites, hesitation
+- Factual accuracy
+- Whether you have enough signal to make a hire decision
 
-Be honest and direct. Do not hedge.
+Be honest and direct. Do not hedge. A "borderline" means you genuinely cannot decide.
 
 Return JSON only:
-{"hire_recommendation": "...", "confidence_rating": "...", "overall_score": 7.2, "summary": "...", "strengths": [...], "concerns": [...], "time_management": "..."}
+{"hire_recommendation": "yes", "confidence_rating": "medium", "overall_score": 6.8, "summary": "Two sentences.", "strengths": [...], "concerns": [...], "time_management": "adequate"}
 ```
 
 ---
 
 ## Error Handling
 
-- `react_to_rewrite` failure → silent, no UI impact (fire-and-forget)
-- `evaluate_candidate` failure → fall back to average of moment scores, `hire_recommendation = "borderline"`, log error
-- Time budget enforcement is backend-only — frontend auto-submit is best-effort; backend enforces `time_elapsed >= budget → force last`
-- Follow-up suppressed server-side when time > 80% — client doesn't need to know the threshold
+- `react_to_rewrite` failure → silent (fire-and-forget, `catch(() => {})` in frontend)
+- `evaluate_candidate` failure → fall back to average score of moments, `hire_recommendation = "borderline"`, store fallback in `round_.evaluation`, log error
+- `round_.started_at` is always set by column default — if somehow null, skip time budget enforcement (treat as no budget)
+- Time budget enforcement is backend-authoritative — frontend auto-submit is best-effort
+- Follow-ups suppressed server-side when time > 80% — client does not need to know the threshold
 
 ---
 
 ## Testing
 
-- Unit tests for `grade_answer` with timing/rewrite params: verify confidence_signal and follow_up fields
-- Unit test for `evaluate_candidate`: mock moments, verify hire_recommendation in valid enum
-- Unit test for timing classification thresholds (< 10s, 10–120s, 120–180s, > 180s)
-- Unit test for time budget enforcement in `submit_answer`: mock `round.started_at` to be near-expired
-- Frontend: TypeScript check passes; rewrite detection logic tested with simulated textarea events
+- Unit test `grade_answer` with `time_taken_seconds < 10`: verify `confidence_signal == "rushed"`
+- Unit test `grade_answer` with `time_taken_seconds > 180`: verify timing note in prompt, `confidence_signal` is not "confident"
+- Unit test `grade_answer` with `rewrite_count = 3`: verify rewrite note in prompt
+- Unit test `grade_answer` does NOT return `passed` field — engine derives it
+- Unit test `evaluate_candidate`: mock moments, verify `hire_recommendation` in valid enum
+- Unit test `submit_answer` follow-up counting: 3 prepared + 2 follow-up moments → `prepared_count = 3`, not 5 → round not complete
+- Unit test time budget enforcement: mock `round_.started_at` 30 minutes ago with 1800s budget → `is_last = True`
+- Unit test `react_to_rewrite`: mock session lookup, verify reaction string returned
+- Frontend: `npx tsc --noEmit` passes; rewrite detection threshold (≥40 chars dropped) verified with unit test
 
 ---
 
 ## Files Changed
 
 ### Backend
-- `backend/app/models/pg/session.py` — add 5 new columns
-- `backend/migrations/versions/<hash>_add_behavioral_signal_columns.py` — new migration
-- `backend/app/services/llm_orchestrator.py` — upgrade `grade_answer`, add `evaluate_candidate`, add `react_to_rewrite`
-- `backend/app/services/interview_engine.py` — upgrade `submit_answer`, add time budget logic, call `evaluate_candidate`
+- `backend/app/models/pg/session.py` — add 6 new columns (`RoundMoment`: 3, `Round`: 3)
+- `backend/migrations/versions/<hash>_add_behavioral_signal_columns.py` — new migration (6 columns)
+- `backend/app/services/llm_orchestrator.py` — upgrade `grade_answer` (remove `passed`, add behavioral params), add `evaluate_candidate`, add `react_to_rewrite`
+- `backend/app/services/interview_engine.py` — upgrade `submit_answer` (new params, follow-up count logic, time budget, `evaluate_candidate` call), upgrade `create_session` and `advance_to_next_round` (set `time_budget_seconds` on round, return it)
 - `backend/app/schemas/session.py` — upgrade `AnswerRequest`, add `BehavioralSignalRequest`
-- `backend/app/api/v1/sessions.py` — add behavioral signal endpoint
+- `backend/app/api/v1/sessions.py` — add behavioral signal endpoint (with auth), pass new fields through `submit_answer` router call
 
 ### Frontend
-- `frontend/src/components/interview/InterviewSession.tsx` — timer, rewrite detection, follow-up flow, time banner
-- `frontend/src/hooks/useInterviewSession.ts` — pass new fields in submit
-- `frontend/src/store/interviewStore.ts` — carry `time_budget_seconds`
+- `frontend/src/store/interviewStore.ts` — add `timeBudgetSeconds` to `Round` interface, carry through `setSession` and `advanceRound`
+- `frontend/src/hooks/useInterviewSession.ts` — map `time_budget_seconds` from response; pass `timeTakenSeconds`, `rewriteCount`, `isFollowup` in submit
+- `frontend/src/components/interview/InterviewSession.tsx` — timer tracking, rewrite detection, avatar reaction, follow-up injection, time warning banner, reset refs on submit
