@@ -57,6 +57,15 @@ const inputBase: React.CSSProperties = {
   width: '100%',
 }
 
+const labelStyle: React.CSSProperties = {
+  color: 'rgba(34,211,238,0.45)',
+  fontFamily: 'monospace',
+  fontSize: '10px',
+  fontWeight: 600,
+  textTransform: 'uppercase',
+  letterSpacing: '0.16em',
+}
+
 export default function SessionSetupForm() {
   const { startSession } = useInterviewSession()
   const [company, setCompany] = useState('')
@@ -84,15 +93,6 @@ export default function SessionSetupForm() {
     } finally {
       setLoading(false)
     }
-  }
-
-  const labelStyle: React.CSSProperties = {
-    color: 'rgba(34,211,238,0.45)',
-    fontFamily: 'monospace',
-    fontSize: '10px',
-    fontWeight: 600,
-    textTransform: 'uppercase',
-    letterSpacing: '0.16em',
   }
 
   return (

@@ -81,10 +81,8 @@ export default function Dashboard() {
     selectCampaign(campaignId)
   }
 
-  const handleStartInterviewPrep = (_personaString: string, company: string, _role: string) => {
-    // Switch to interview module and start a session pre-loaded with company context
-    setActiveModule('interview')
-    startSession(company, 'Interview Prep', ['HR']).catch(() => {})
+  const handleStartInterviewPrep = (company: string, role: string) => {
+    startSession(company, role, ['HR'], '', '', '').catch(() => {})
   }
 
   return (
