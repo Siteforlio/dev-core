@@ -45,8 +45,8 @@ class RoundMoment(Base):
     emotion_state: Mapped[str | None] = mapped_column(String(50), nullable=True)
     ai_reaction: Mapped[str | None] = mapped_column(Text, nullable=True)
     time_taken_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    rewrite_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    is_followup: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    rewrite_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    is_followup: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
 
 class InterviewProfile(Base):
     __tablename__ = "interview_profiles"
