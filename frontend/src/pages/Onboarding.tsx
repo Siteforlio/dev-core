@@ -36,7 +36,7 @@ function UnderlineField({
   )
 }
 
-export default function Onboarding({ onGoToLogin }: { onGoToLogin: () => void }) {
+export default function Onboarding({ onGoToLogin, onRegistered }: { onGoToLogin: () => void; onRegistered?: () => void }) {
   const [name, setName]       = useState('')
   const [email, setEmail]     = useState('')
   const [password, setPassword] = useState('')
@@ -64,6 +64,7 @@ export default function Onboarding({ onGoToLogin }: { onGoToLogin: () => void })
       if (!res.ok) { setError(body.error?.message ?? 'Registration failed'); return }
       const { access_token, refresh_token, user_id, name: userName, language_pref } = body.data
       setAuth(access_token, refresh_token, user_id, userName, language_pref)
+      onRegistered?.()
     } catch {
       setError('Could not reach the server.')
     } finally {

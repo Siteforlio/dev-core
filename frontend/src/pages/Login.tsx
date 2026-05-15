@@ -18,7 +18,7 @@ function Particle({ x, delay, duration }: { x: number; delay: number; duration: 
   )
 }
 
-export default function Login({ onGoToRegister }: { onGoToRegister: () => void }) {
+export default function Login({ onGoToRegister, onLoggedIn }: { onGoToRegister: () => void; onLoggedIn?: () => void }) {
   const [email, setEmail]             = useState('')
   const [password, setPassword]       = useState('')
   const [showPass, setShowPass]       = useState(false)
@@ -43,6 +43,7 @@ export default function Login({ onGoToRegister }: { onGoToRegister: () => void }
       if (!res.ok) { setError(body.error?.message ?? 'Login failed'); return }
       const { access_token, refresh_token, user_id, name, language_pref } = body.data
       setAuth(access_token, refresh_token, user_id, name, language_pref)
+      onLoggedIn?.()
     } catch {
       setError('Could not reach the server.')
     } finally {
