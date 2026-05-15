@@ -1,56 +1,109 @@
-import { useEffect, useRef, useState } from 'react'
+import { CharacterDef } from './InterviewerCharacters'
 
 interface Props {
-  sessionId: string | null
-  persona: string
+  character: CharacterDef
   isSpeaking: boolean
 }
 
-export default function AvatarPanel({ sessionId, persona, isSpeaking }: Props) {
-  const wsRef = useRef<WebSocket | null>(null)
-  const [connected, setConnected] = useState(false)
+const WAVEFORM_HEIGHTS = [3, 9, 13, 7, 11, 5, 9]
 
-  useEffect(() => {
-    if (!sessionId) return
-    const ws = new WebSocket(`ws://localhost:8000/api/v1/ws/avatar/${sessionId}`)
-    wsRef.current = ws
-    ws.onopen = () => setConnected(true)
-    ws.onclose = () => setConnected(false)
-    return () => ws.close()
-  }, [sessionId])
-
+export default function AvatarPanel({ character, isSpeaking }: Props) {
   return (
-    <div className="flex flex-col items-center justify-center bg-gray-900 rounded-xl overflow-hidden w-full h-full min-h-64 relative">
-      {/* Simli will attach a <video> here via their SDK in a future integration */}
-      {/* For now: animated avatar placeholder */}
-      <div className="relative flex items-center justify-center">
-        {/* Face */}
-        <div
-          className={`w-36 h-36 rounded-full bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center shadow-2xl transition-transform duration-300 ${
-            isSpeaking ? 'scale-105' : 'scale-100'
-          }`}
-        >
-          <span className="text-6xl select-none">🧑‍💼</span>
+    <div style={{
+      width: '100%',
+      aspectRatio: '3 / 4',
+      background: character.bg,
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 10,
+      position: 'relative',
+      overflow: 'hidden',
+    }}>
+      {/* Subtle desk/environment gradient at bottom */}
+      <div style={{
+        position: 'absolute', bottom: 0, left: 0, right: 0, height: '35%',
+        background: 'linear-gradient(to top, rgba(0,0,0,0.3), transparent)',
+        pointerEvents: 'none',
+      }} />
+
+      {/* Face circle */}
+      <div style={{ position: 'relative', width: 64, height: 64 }}>
+        <div style={{
+          width: 64, height: 64,
+          borderRadius: '50%',
+          overflow: 'hidden',
+          border: '1.5px solid rgba(255,255,255,0.12)',
+        }}>
+          <character.Face />
         </div>
+
         {/* Speaking pulse rings */}
         {isSpeaking && (
           <>
-            <div className="absolute w-44 h-44 rounded-full border-2 border-blue-400 opacity-60 animate-ping" />
-            <div className="absolute w-52 h-52 rounded-full border border-indigo-400 opacity-30 animate-ping" style={{ animationDelay: '150ms' }} />
+            <div style={{
+              position: 'absolute', inset: -5, borderRadius: '50%',
+              border: '1.5px solid rgba(255,255,255,0.2)',
+              animation: 'avatarRing 1.6s ease-in-out infinite',
+            }} />
+            <div style={{
+              position: 'absolute', inset: -10, borderRadius: '50%',
+              border: '1px solid rgba(255,255,255,0.08)',
+              animation: 'avatarRing 1.6s ease-in-out 0.4s infinite',
+            }} />
           </>
         )}
       </div>
 
-      {/* Persona label */}
-      <p className="mt-4 text-xs text-gray-400 italic text-center px-4 leading-relaxed max-w-xs">
-        {persona || 'Hiring Manager'}
-      </p>
-
-      {/* Connection dot */}
-      <div className="absolute top-3 right-3 flex items-center gap-1.5">
-        <div className={`w-2 h-2 rounded-full ${connected ? 'bg-green-400' : 'bg-gray-600'}`} />
-        <span className="text-xs text-gray-500">{connected ? 'Live' : 'Ready'}</span>
+      {/* Waveform — only when speaking */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 2.5, height: 16,
+        opacity: isSpeaking ? 1 : 0.2,
+        transition: 'opacity 0.4s',
+      }}>
+        {WAVEFORM_HEIGHTS.map((h, i) => (
+          <div key={i} style={{
+            width: 2.5,
+            height: isSpeaking ? h : 3,
+            borderRadius: 3,
+            background: 'rgba(255,255,255,0.45)',
+            transition: 'height 0.3s ease',
+            animation: isSpeaking ? `avatarWave 1.3s ease-in-out ${i * 0.1}s infinite` : 'none',
+          }} />
+        ))}
       </div>
+
+      {/* Name tag */}
+      <div style={{
+        position: 'absolute', bottom: 0, left: 0, right: 0,
+        background: 'rgba(0,0,0,0.5)',
+        backdropFilter: 'blur(4px)',
+        padding: '5px 8px',
+        fontSize: 10, fontWeight: 600,
+        color: 'rgba(255,255,255,0.65)',
+        textAlign: 'center',
+        letterSpacing: '0.05em',
+        borderTop: '1px solid rgba(255,255,255,0.06)',
+        lineHeight: 1.3,
+      }}>
+        <div>{character.name}</div>
+        <div style={{ fontSize: 8, color: 'rgba(255,255,255,0.3)', fontWeight: 400, marginTop: 1 }}>
+          {character.title}
+        </div>
+      </div>
+
+      {/* CSS keyframes injected once */}
+      <style>{`
+        @keyframes avatarRing {
+          0%, 100% { transform: scale(1); opacity: 0.8; }
+          50%       { transform: scale(1.1); opacity: 0.2; }
+        }
+        @keyframes avatarWave {
+          0%, 100% { transform: scaleY(0.4); opacity: 0.5; }
+          50%       { transform: scaleY(1);   opacity: 0.9; }
+        }
+      `}</style>
     </div>
   )
 }

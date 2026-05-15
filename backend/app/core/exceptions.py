@@ -1,5 +1,9 @@
+import logging
+import traceback
 from fastapi import Request
 from fastapi.responses import JSONResponse
+
+logger = logging.getLogger(__name__)
 
 
 class DevCoreException(Exception):
@@ -69,7 +73,8 @@ def register_exception_handlers(app):
 
     @app.exception_handler(Exception)
     async def generic_exception_handler(request: Request, exc: Exception):
+        logger.error("Unhandled exception on %s %s:\n%s", request.method, request.url.path, traceback.format_exc())
         return JSONResponse(
             status_code=500,
-            content={"data": None, "error": {"code": "INTERNAL_ERROR", "message": "An unexpected error occurred"}}
+            content={"data": None, "error": {"code": "INTERNAL_ERROR", "message": str(exc)}}
         )
