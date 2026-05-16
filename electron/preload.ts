@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     maximize: () => ipcRenderer.invoke('window:maximize'),
     close:    () => ipcRenderer.invoke('window:close'),
   },
+  splashDone: () => ipcRenderer.invoke('app:splash-done'),
   devcore: {
     getStatus:            () => ipcRenderer.invoke('devcore:session:status'),
     listDevices:          () => ipcRenderer.invoke('devcore:devices:list'),

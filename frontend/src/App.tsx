@@ -16,6 +16,8 @@ export default function App() {
 
   /* Splash → login or dashboard */
   const handleSplashDone = (authenticated: boolean) => {
+    // Signal Electron to create the overlay window now that splash is done
+    ;(window as any).electronAPI?.splashDone?.()
     setScreen(authenticated ? 'dashboard' : 'login')
   }
 

@@ -29,6 +29,8 @@ function createWindow() {
     width: 1280,
     height: 800,
     frame: false,
+    backgroundColor: '#020810',   // prevents white flash before React mounts
+    show: false,                   // revealed via ready-to-show below
     icon: path.join(PROJECT_ROOT, 'frontend', 'public', 'devcore.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -37,6 +39,9 @@ function createWindow() {
       sandbox: false,
     },
   })
+
+  win.once('ready-to-show', () => win.show())
+
   if (process.env.NODE_ENV === 'development') {
     win.loadURL('http://localhost:5173')
   } else {
@@ -301,10 +306,17 @@ ipcMain.handle('window:maximize', () => {
 })
 ipcMain.handle('window:close', () => BrowserWindow.getFocusedWindow()?.close())
 
+// Renderer signals splash done → create the overlay window for the first time
+let _overlayCreated = false
+ipcMain.handle('app:splash-done', () => {
+  if (_overlayCreated) return
+  _overlayCreated = true
+  createOverlayWindow()
+})
+
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null)
-  createWindow()          // existing main window
-  createOverlayWindow()   // new overlay window
+  createWindow()          // main app window (overlay deferred until splash-done IPC)
   _startDeviceWatcher()   // hot-plug detection
 })
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
