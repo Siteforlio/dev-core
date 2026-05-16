@@ -31,6 +31,7 @@ export function useInterviewSession() {
       }),
     })
     const { data } = await res.json()
+    const isSkillsTask = data.current_round === 'skills_task' || data.current_round === 'technical'
     setSession(
       data.session_id,
       data.company,
@@ -38,9 +39,11 @@ export function useInterviewSession() {
       {
         id: data.round_id,
         type: data.current_round,
-        questions: data.questions,
+        questions: data.questions ?? [],
         currentQuestionIndex: 0,
         timeBudgetSeconds: data.time_budget_seconds ?? 1800,
+        task: data.task ?? null,
+        skillsPhase: isSkillsTask ? 'task' : undefined,
       },
       data.remaining_rounds ?? [],
       data.persona,
@@ -81,5 +84,28 @@ export function useInterviewSession() {
     return (await res.json()).data
   }
 
-  return { startSession, submitAnswer }
+  const reportCheatSignal = async (
+    sessionId: string,
+    roundId: string,
+    signalType: string,
+    extra?: { pasteChars?: number; durationSeconds?: number; charsPerSecond?: number },
+  ) => {
+    try {
+      await apiFetch(`${API}/interview-sessions/${sessionId}/cheat-signal`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          round_id: roundId,
+          signal_type: signalType,
+          paste_chars: extra?.pasteChars ?? null,
+          duration_seconds: extra?.durationSeconds ?? null,
+          chars_per_second: extra?.charsPerSecond ?? null,
+        }),
+      })
+    } catch {
+      // non-critical — fire and forget
+    }
+  }
+
+  return { startSession, submitAnswer, reportCheatSignal }
 }

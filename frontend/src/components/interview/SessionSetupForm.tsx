@@ -37,10 +37,10 @@ const STAGES = [
 const ROUND_MAP: Record<string, string[]> = {
   phone_screen: ['behavioral'],
   hr_interview: ['behavioral'],
-  hiring_manager: ['behavioral', 'technical'],
-  skills_domain: ['technical'],
-  panel_interview: ['behavioral', 'technical'],
-  case_presentation: ['behavioral', 'technical'],
+  hiring_manager: ['behavioral', 'skills_task'],
+  skills_domain: ['skills_task'],
+  panel_interview: ['behavioral', 'skills_task'],
+  case_presentation: ['behavioral', 'skills_task'],
   final_executive: ['behavioral'],
   offer_negotiation: ['behavioral'],
 }

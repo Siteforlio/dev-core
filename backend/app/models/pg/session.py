@@ -33,6 +33,8 @@ class Round(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime, default=utcnow, nullable=True)
     time_budget_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     evaluation: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    cheating_signals: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    task_brief: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
 class RoundMoment(Base):
     __tablename__ = "round_moments"

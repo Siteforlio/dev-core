@@ -221,6 +221,161 @@ class LLMOrchestrator:
         )
         return await self._call_llm(prompt)
 
+    async def generate_skills_task(
+        self,
+        company: str,
+        role: str,
+        career_track: str,
+        level: str,
+        jd_text: str | None = None,
+        graph_context: dict | None = None,
+        knowledge_context: dict | None = None,
+    ) -> dict:
+        """Generate a hands-on skills task for a skills_task round."""
+        TECH_TRACKS = {"technology", "data_science", "product", "design"}
+        input_type = "code" if career_track in TECH_TRACKS else "text"
+
+        context_parts = []
+        if graph_context:
+            context_parts.append(f"Company context: {json.dumps(graph_context)}")
+        if knowledge_context:
+            context_parts.append(f"Role knowledge: {json.dumps(knowledge_context)}")
+        if jd_text:
+            context_parts.append(f"Job description excerpt: {jd_text[:600]}")
+        context_note = "\n".join(context_parts) or "Use general industry knowledge."
+
+        tech_note = (
+            'Set "language" to the primary programming language for the role (e.g. "python", "ruby", "javascript"). '
+            'Set "starter_code" to a realistic but incomplete code snippet the candidate should complete/fix.'
+            if input_type == "code"
+            else 'Set "language" to null and "starter_code" to null.'
+        )
+
+        prompt = (
+            f"You are a senior hiring manager at {company} designing a practical skills assessment for a {role} candidate "
+            f"at {level} level in the {career_track} track.\n\n"
+            f"{context_note}\n\n"
+            "Design a realistic, hands-on task that directly tests day-to-day job skills — NOT trivia or quiz questions.\n"
+            "The task must be completable in 60-90 minutes.\n\n"
+            f"Input type: {input_type}. {tech_note}\n\n"
+            "Return JSON only:\n"
+            '{\n'
+            '  "title": "Short task title",\n'
+            '  "brief": "Clear, detailed task description (3-5 sentences). Tell the candidate exactly what to do.",\n'
+            f'  "input_type": "{input_type}",\n'
+            '  "language": null,\n'
+            '  "starter_code": null,\n'
+            '  "evaluation_criteria": ["criterion 1", "criterion 2", "criterion 3"],\n'
+            '  "time_hint": "60 minutes"\n'
+            '}'
+        )
+        raw = await self._call_llm(prompt)
+        return self._parse_json(raw, {
+            "title": "Skills Assessment",
+            "brief": "Complete the assigned task demonstrating your core skills for this role.",
+            "input_type": input_type,
+            "language": None,
+            "starter_code": None,
+            "evaluation_criteria": ["correctness", "clarity", "completeness"],
+            "time_hint": "60 minutes",
+        })
+
+    async def grade_skills_task(
+        self,
+        task_brief: dict,
+        submission: str,
+        career_track: str,
+        role: str,
+        level: str,
+    ) -> dict:
+        """Grade a skills_task Phase 1 submission and generate the first follow-up question."""
+        criteria = "\n".join(f"- {c}" for c in task_brief.get("evaluation_criteria", []))
+        prompt = (
+            f"You are a senior evaluator at a top company grading a {role} ({level}) skills assessment.\n\n"
+            f"Task: {task_brief.get('title', 'Skills Assessment')}\n"
+            f"Brief: {task_brief.get('brief', '')}\n\n"
+            f"Evaluation criteria:\n{criteria}\n\n"
+            f"Candidate submission:\n{submission}\n\n"
+            "Grade honestly using the scoring scale:\n"
+            "- 9-10: Exceptional, production-ready\n"
+            "- 7-8: Good, meets bar with minor gaps\n"
+            "- 5-6: Mediocre, functional but has clear weaknesses\n"
+            "- 3-4: Poor, significant issues\n"
+            "- 1-2: Unacceptable\n\n"
+            "Then generate the FIRST follow-up question to probe their understanding — "
+            "ask them to explain a specific decision they made, or a weakness you noticed.\n\n"
+            "Return JSON only:\n"
+            '{"score": 6.5, "what_worked": "One sentence.", "what_was_missing": "One sentence.", '
+            '"stronger_version": "One sentence.", "first_followup": "Specific probing question?", '
+            '"factual_errors": [], "confidence_signal": "confident"}\n\n'
+            "confidence_signal: confident | hesitant | uncertain | rushed"
+        )
+        raw = await self._call_llm(prompt)
+        return self._parse_json(raw, {
+            "score": 5.0,
+            "what_worked": "",
+            "what_was_missing": "Could not grade submission.",
+            "stronger_version": "",
+            "first_followup": "Can you walk me through the key decisions you made in your solution?",
+            "factual_errors": [],
+            "confidence_signal": "uncertain",
+        })
+
+    async def decide_followup(
+        self,
+        task_brief: dict,
+        submission: str,
+        conversation: list[dict],
+        time_remaining_pct: float,
+        career_track: str,
+        evaluation_criteria: list[str],
+    ) -> str | None:
+        """Decide whether to ask another follow-up question or stop.
+
+        Returns a follow-up question string, or None if the session should end.
+        """
+        if time_remaining_pct <= 0.10:
+            return None
+
+        transcript = "\n".join(
+            f"{'Interviewer' if m.get('role') == 'interviewer' else 'Candidate'}: {m.get('content', '')}"
+            for m in conversation
+        )
+        criteria_covered = "\n".join(f"- {c}" for c in evaluation_criteria)
+        prompt = (
+            f"You are evaluating a {career_track} candidate's skills task explanation.\n\n"
+            f"Task: {task_brief.get('title', '')}\n"
+            f"Brief: {task_brief.get('brief', '')}\n\n"
+            f"Evaluation criteria you must cover:\n{criteria_covered}\n\n"
+            f"Conversation so far:\n{transcript}\n\n"
+            f"Time remaining: {int(time_remaining_pct * 100)}% of budget.\n\n"
+            "Based on what has been discussed, decide:\n"
+            "1. Are there important evaluation criteria still uncovered?\n"
+            "2. Is there a specific weakness or vague answer worth probing deeper?\n"
+            "3. Do you have enough signal to evaluate the candidate?\n\n"
+            "If you should ask another follow-up, return a specific probing question as a plain string.\n"
+            "If you have enough signal (all criteria covered, or candidate has shown consistent quality/weakness), "
+            "return the JSON: {\"stop\": true}\n\n"
+            "Return ONLY the question string OR the JSON — nothing else."
+        )
+        raw = await self._call_llm(prompt)
+        raw = raw.strip().strip('"')
+        # Detect stop signal
+        if "stop" in raw.lower() and len(raw) < 50:
+            try:
+                parsed = json.loads(raw)
+                if parsed.get("stop"):
+                    return None
+            except (json.JSONDecodeError, AttributeError):
+                pass
+        # If it looks like a question, return it
+        if len(raw) > 10 and "?" in raw:
+            return raw
+        # Default: keep going if time remains
+        if time_remaining_pct > 0.3:
+            return "Can you tell me more about how you approached the most challenging part of this task?"
+        return None
+
     async def react_to_code(self, code_snapshot: str, question: str, company: str) -> str:
         prompt = (
             f"You are a technical interviewer at {company}.\n"

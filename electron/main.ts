@@ -251,6 +251,18 @@ ipcMain.handle('devcore:manual:ask', async (_e, payload: { text: string; mode: s
   }
 })
 
+ipcMain.handle('devcore:screenshot:clear', async () => {
+  const { getActiveWs } = await import('./audio')
+  const sock = getActiveWs()
+  if (sock && sock.readyState === 1) {
+    sock.send(JSON.stringify({ type: 'screenshot_clear' }))
+  }
+  const overlayWin = getOverlayWindow()
+  if (overlayWin && !overlayWin.isDestroyed()) {
+    overlayWin.webContents.send('devcore:screenshot:count', { count: 0 })
+  }
+})
+
 ipcMain.handle('devcore:outcome:ask', async (_e, payload: { outcome: string }) => {
   const activeWs = getActiveWs()
   if (activeWs && activeWs.readyState === 1) {

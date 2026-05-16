@@ -1,4 +1,4 @@
-import { CharacterDef } from './InterviewerCharacters'
+import type { CharacterDef } from './InterviewerCharacters'
 
 interface Props {
   character: CharacterDef

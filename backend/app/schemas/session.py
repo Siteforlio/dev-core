@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Any
 from pydantic import BaseModel
 
 
@@ -13,6 +13,16 @@ class CreateSessionRequest(BaseModel):
     manager_name: str | None = None
 
 
+class SkillsTaskSchema(BaseModel):
+    title: str
+    brief: str
+    input_type: str  # "code" | "text"
+    language: Optional[str] = None
+    starter_code: Optional[str] = None
+    evaluation_criteria: list[str] = []
+    time_hint: str = "60 minutes"
+
+
 class SessionResponse(BaseModel):
     session_id: str
     round_id: str
@@ -21,7 +31,9 @@ class SessionResponse(BaseModel):
     current_round: str
     remaining_rounds: list[str]
     questions: list[str]
+    task: Optional[SkillsTaskSchema] = None
     persona: str
+    time_budget_seconds: Optional[int] = None
 
 
 class AnswerRequest(BaseModel):
@@ -37,6 +49,14 @@ class AnswerRequest(BaseModel):
 
 class BehavioralSignalRequest(BaseModel):
     rewrite_count: int = 1
+
+
+class CheatSignalRequest(BaseModel):
+    round_id: str
+    signal_type: str          # "paste" | "focus_lost" | "velocity_spike" | "tab_switch"
+    paste_chars: Optional[int] = None
+    duration_seconds: Optional[float] = None
+    chars_per_second: Optional[float] = None
 
 
 class AdvanceRoundRequest(BaseModel):

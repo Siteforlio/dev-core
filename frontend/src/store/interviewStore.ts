@@ -7,6 +7,16 @@ interface FeedbackResult {
   passed: boolean
 }
 
+export interface SkillsTask {
+  title: string
+  brief: string
+  input_type: 'code' | 'text'
+  language: string | null
+  starter_code: string | null
+  evaluation_criteria: string[]
+  time_hint: string
+}
+
 interface Round {
   id: string
   type: string
@@ -15,6 +25,9 @@ interface Round {
   passed?: boolean
   feedbackResult?: FeedbackResult
   timeBudgetSeconds: number
+  task?: SkillsTask | null
+  /** Phase for skills_task rounds: 'task' (Phase 1) or 'followup' (Phase 2) */
+  skillsPhase?: 'task' | 'followup'
 }
 
 interface InterviewState {
@@ -45,6 +58,8 @@ interface InterviewState {
   advanceRound: (round: Round, persona: string, remainingRounds: string[]) => void
   setRoundFailed: (failed: boolean) => void
   completeSession: () => void
+  /** Transition a skills_task round from Phase 1 to Phase 2 follow-ups */
+  setSkillsPhase: (phase: 'task' | 'followup', followupQuestion?: string) => void
   reset: () => void
 }
 
@@ -74,6 +89,16 @@ export const useInterviewStore = create<InterviewState>((set) => ({
     set({ currentRound: round, persona, remainingRounds, roundFailed: false }),
   setRoundFailed: (failed) => set({ roundFailed: failed }),
   completeSession: () => set({ sessionComplete: true }),
+  setSkillsPhase: (phase, followupQuestion) =>
+    set((s) => {
+      if (!s.currentRound) return s
+      const updated: Round = { ...s.currentRound, skillsPhase: phase }
+      if (phase === 'followup' && followupQuestion) {
+        updated.questions = [followupQuestion]
+        updated.currentQuestionIndex = 0
+      }
+      return { currentRound: updated }
+    }),
   reset: () =>
     set({ sessionId: null, company: '', role: '', currentRound: null, remainingRounds: [], persona: '', careerTrack: '', level: '', interviewStage: '', sessionComplete: false, roundFailed: false }),
 }))

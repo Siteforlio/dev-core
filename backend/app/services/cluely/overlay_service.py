@@ -4,6 +4,7 @@ from starlette.websockets import WebSocketDisconnect, WebSocketState
 from app.core.security import decode_token
 from app.core.exceptions import BertClassifierError, LLMRateLimitedError
 from app.services.cluely.audio_service import AudioService, parse_audio_frame
+from app.services.cluely.vision_service import VisionService
 from app.services.cluely.context_manager import ContextManager
 from app.services.cluely.bert_classifier import BertClassifier
 from app.services.cluely.speaker_diarizer import SpeakerDiarizer
@@ -41,6 +42,7 @@ class OverlayService:
     def __init__(self):
         self._audio   = AudioService()
         self._llm     = LLMService()
+        self._vision  = VisionService()
         self._last_trigger = 0.0
         # ask_rate: {session_id: (count, window_start_timestamp)}
         self._ask_rate: dict[str, tuple[int, float]] = {}
@@ -127,6 +129,12 @@ class OverlayService:
                         agent: AssessmentAgent | None = session_ctx.get("_assessment_agent")
                         if agent:
                             asyncio.create_task(agent.handle_assessment_trigger(data))
+                    elif mtype == "screenshot_frame":
+                        await self._handle_screenshot(ws, data, session_ctx)
+                    elif mtype == "screenshot_clear":
+                        sid = session_ctx.get("_session_id", "")
+                        self._vision.clear_buffer(sid)
+                        await _safe_send(ws, {"type": "screenshot_cleared"})
                     elif mtype == "outcome_pill_ask":
                         await self._handle_outcome_pill_ask(ws, data, session_ctx, rag, ctx_mgr, repo)
         except WebSocketDisconnect as e:
@@ -699,6 +707,55 @@ class OverlayService:
 
     # ------------------------------------------------------------------
     # Manual ask — tool-augmented via ChatAgent
+    # ------------------------------------------------------------------
+    # Screenshot handler
+    # ------------------------------------------------------------------
+
+    async def _handle_screenshot(self, ws: WebSocket, data: dict, session_ctx: dict) -> None:
+        sid = session_ctx.get("_session_id", "anon")
+        image_b64 = data.get("image_b64", "")
+
+        if not image_b64:
+            await _safe_send(ws, {"type": "error", "code": "INVALID_REQUEST", "message": "image_b64 required"})
+            return
+
+        # Add to buffer
+        buf_size = self._vision.add_screenshot(sid, image_b64)
+
+        # Tell the overlay how many screenshots are buffered
+        await _safe_send(ws, {"type": "screenshot_buffered", "count": buf_size})
+
+        # Analyze immediately — all buffered images together
+        mode = session_ctx.get("assessmentMode") or session_ctx.get("_assessment_mode")
+        extra_context = None
+        ctx_parts = []
+        if session_ctx.get("job_title"):
+            ctx_parts.append(f"Role: {session_ctx['job_title']}")
+        if session_ctx.get("company"):
+            ctx_parts.append(f"Company: {session_ctx['company']}")
+        if ctx_parts:
+            extra_context = ", ".join(ctx_parts)
+
+        await _safe_send(ws, {"type": "status", "state": "thinking", "latency_ms": 0})
+
+        result = await self._vision.analyze(sid, mode=mode, extra_context=extra_context)
+
+        if result["text"]:
+            # Stream the response token by token via suggestion events
+            words = result["text"].split(" ")
+            for i, word in enumerate(words):
+                delta = word if i == 0 else " " + word
+                await _safe_send(ws, {"type": "suggestion_delta", "delta": delta, "done": False})
+            await _safe_send(ws, {"type": "suggestion_end", "done": True})
+
+        await _safe_send(ws, {
+            "type": "screenshot_result",
+            "needs_more": result["needs_more"],
+            "buffer_size": result["buffer_size"],
+            "cleared": result["cleared"],
+        })
+        await _safe_send(ws, {"type": "status", "state": "listening", "latency_ms": 0})
+
     # ------------------------------------------------------------------
 
     async def _handle_manual_ask(self, ws, data: dict, session_ctx: dict, rag, ctx_mgr=None, repo=None):

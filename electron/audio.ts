@@ -94,6 +94,19 @@ function forwardToOverlay(frame: Record<string, unknown>) {
         explanation: frame.explanation,
       })
       break
+    case 'screenshot_buffered':
+      win.webContents.send('devcore:screenshot:count', { count: frame.count })
+      break
+    case 'screenshot_cleared':
+      win.webContents.send('devcore:screenshot:count', { count: 0 })
+      break
+    case 'screenshot_result':
+      win.webContents.send('devcore:screenshot:result', {
+        needsMore:  frame.needs_more,
+        bufferSize: frame.buffer_size,
+        cleared:    frame.cleared,
+      })
+      break
   }
 }
 
@@ -552,3 +565,50 @@ export function stopAudioCapture() {
 }
 
 export function getActiveWs() { return ws }
+
+/**
+ * Capture a screenshot of the primary display and send it to the backend
+ * over the active WebSocket as a screenshot_frame message.
+ * Returns the buffer count reported by the backend (via the reply message),
+ * or -1 if the WS is not open or capture fails.
+ */
+export async function captureAndSendScreenshot(): Promise<number> {
+  const sock = ws
+  if (!sock || sock.readyState !== 1) {
+    console.warn('[devcore-screenshot] No active WS — ignoring')
+    return -1
+  }
+
+  try {
+    // desktopCapturer is only available in the main process — this function
+    // runs in the main process via IPC (see main.ts), so it's fine.
+    const { desktopCapturer, screen } = await import('electron')
+    const { width, height } = screen.getPrimaryDisplay().bounds
+
+    const sources = await desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: { width, height },
+    })
+
+    const primary = sources[0]
+    if (!primary) {
+      console.warn('[devcore-screenshot] No screen source found')
+      return -1
+    }
+
+    // thumbnail is a NativeImage — convert to base64 PNG
+    const png = primary.thumbnail.toPNG()
+    const b64 = png.toString('base64')
+
+    sock.send(JSON.stringify({
+      type: 'screenshot_frame',
+      image_b64: b64,
+    }))
+
+    console.log(`[devcore-screenshot] Sent ${Math.round(b64.length / 1024)} KB`)
+    return 0  // actual buffer count comes back async via WS message → overlay
+  } catch (err) {
+    console.error('[devcore-screenshot] Capture failed:', err)
+    return -1
+  }
+}

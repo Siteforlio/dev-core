@@ -19,7 +19,7 @@ type PanelMode = 'none' | 'apply' | 'tracking'
 interface Props {
   campaignId: string
   onBack: () => void
-  onStartInterviewPrep: (personaString: string, company: string, role: string) => void
+  onStartInterviewPrep: (company: string, role: string) => void
   onGoToSettings?: () => void
 }
 
@@ -163,7 +163,7 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
     setBridgeLoading(applicationId)
     try {
       const ctx = await getInterviewContext(campaignId, applicationId)
-      onStartInterviewPrep(ctx.personaString, ctx.company, ctx.role)
+      onStartInterviewPrep(ctx.company, ctx.role)
     } finally {
       setBridgeLoading(null)
     }

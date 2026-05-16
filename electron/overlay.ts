@@ -1,4 +1,4 @@
-import { BrowserWindow, globalShortcut, app, screen } from 'electron'
+import { BrowserWindow, globalShortcut, app, screen, ipcMain } from 'electron'
 import path from 'path'
 import Store = require('electron-store')
 
@@ -128,6 +128,12 @@ export function createOverlayWindow(): BrowserWindow {
     if (overlayWin && !overlayWin.isDestroyed()) _applyStealthMode(overlayWin)
   })
 
+  // Windows resets WDA_EXCLUDEFROMCAPTURE whenever the window transitions from
+  // hidden → visible. Re-apply on every 'show' event to keep stealth intact.
+  overlayWin.on('show', () => {
+    if (overlayWin && !overlayWin.isDestroyed()) _applyStealthMode(overlayWin)
+  })
+
   if (process.env.NODE_ENV === 'development') {
     overlayWin.loadURL('http://localhost:5173/overlay.html')
   } else {
@@ -172,10 +178,15 @@ export function setOverlayContentBounds(bounds: { x: number; y: number; width: n
 }
 
 function registerHotkeys(win: BrowserWindow) {
-  // Show/hide
+  // Show/hide — re-apply stealth on every show because Windows resets
+  // SetWindowDisplayAffinity when a window is hidden and re-shown.
   const registeredSpace = globalShortcut.register('CommandOrControl+Shift+Space', () => {
-    if (win.isVisible()) win.hide()
-    else win.show()
+    if (win.isVisible()) {
+      win.hide()
+    } else {
+      win.show()
+      _applyStealthMode(win)
+    }
   })
   if (!registeredSpace) console.warn('[devcore-overlay] Failed to register hotkey: CommandOrControl+Shift+Space')
 
@@ -206,6 +217,25 @@ function registerHotkeys(win: BrowserWindow) {
     win.webContents.send('devcore:status', { state: 'thinking', latencyMs: 0 })
   })
   if (!registeredR) console.warn('[devcore-overlay] Failed to register hotkey: CommandOrControl+Shift+R')
+
+  // Screenshot capture (Ctrl+Shift+S)
+  const registeredSnap = globalShortcut.register('CommandOrControl+Shift+S', async () => {
+    const { captureAndSendScreenshot } = await import('./audio')
+    await captureAndSendScreenshot()
+    // Visual flash on the pill — send hotkey event so renderer can animate
+    win.webContents.send('devcore:hotkey', { action: 'screenshot' })
+  })
+  if (!registeredSnap) console.warn('[devcore-overlay] Failed to register hotkey: CommandOrControl+Shift+S')
+
+  // Clear screenshot buffer (Ctrl+Shift+X)
+  const registeredClear = globalShortcut.register('CommandOrControl+Shift+X', () => {
+    const sock = require('./audio').getActiveWs?.()
+    if (sock && sock.readyState === 1) {
+      sock.send(JSON.stringify({ type: 'screenshot_clear' }))
+    }
+    win.webContents.send('devcore:screenshot:count', { count: 0 })
+  })
+  if (!registeredClear) console.warn('[devcore-overlay] Failed to register hotkey: CommandOrControl+Shift+X')
 
   // Start session (Ctrl+Shift+Enter)
   const registeredStart = globalShortcut.register('CommandOrControl+Shift+Return', () => {

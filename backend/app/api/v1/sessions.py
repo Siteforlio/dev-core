@@ -5,11 +5,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.security import decode_token
-from app.schemas.session import CreateSessionRequest, AnswerRequest, AdvanceRoundRequest, BehavioralSignalRequest
+from app.schemas.session import CreateSessionRequest, AnswerRequest, AdvanceRoundRequest, BehavioralSignalRequest, CheatSignalRequest
 from app.services.llm_orchestrator import LLMOrchestrator
 from app.services.interview_engine import InterviewEngine
 from app.services.debrief_service import DebriefService
-from app.models.pg.session import InterviewSession
+from app.models.pg.session import InterviewSession, Round
 
 router = APIRouter(prefix="/interview-sessions", tags=["sessions"])
 bearer = HTTPBearer()
@@ -103,6 +103,38 @@ async def behavioral_signal(
         rewrite_count=body.rewrite_count,
     )
     return {"data": {"reaction": reaction}, "error": None}
+
+
+@router.post("/{session_id}/cheat-signal")
+async def record_cheat_signal(
+    session_id: str,
+    body: CheatSignalRequest,
+    user_id: str = Depends(get_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    # Verify round belongs to this session/user
+    result = await db.execute(
+        select(Round).join(
+            InterviewSession, Round.session_id == InterviewSession.id
+        ).where(
+            Round.id == body.round_id,
+            InterviewSession.id == session_id,
+            InterviewSession.user_id == user_id,
+        )
+    )
+    if not result.scalar_one_or_none():
+        return {"data": None, "error": "round not found"}
+
+    orchestrator = LLMOrchestrator()
+    engine = InterviewEngine(db=db, orchestrator=orchestrator)
+    await engine.record_cheat_signal(
+        round_id=body.round_id,
+        signal_type=body.signal_type,
+        paste_chars=body.paste_chars,
+        duration_seconds=body.duration_seconds,
+        chars_per_second=body.chars_per_second,
+    )
+    return {"data": {"recorded": True}, "error": None}
 
 
 @router.get("/{session_id}/debrief")

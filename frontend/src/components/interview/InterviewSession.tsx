@@ -3,9 +3,11 @@ import { useInterviewStore } from '../../store/interviewStore'
 import { useInterviewSession } from '../../hooks/useInterviewSession'
 import { useVoice } from '../../hooks/useVoice'
 import AvatarPanel from './AvatarPanel'
-import FeedbackStrip, { EmotionState } from './FeedbackStrip'
+import FeedbackStrip from './FeedbackStrip'
+import type { EmotionState } from './FeedbackStrip'
 import DebriefReport from './DebriefReport'
 import CodeEditor from './CodeEditor'
+import SkillsTaskEditor from './SkillsTaskEditor'
 import { pickCharacter } from './InterviewerCharacters'
 
 interface Props {
@@ -85,6 +87,7 @@ export default function InterviewSession({ token }: Props) {
     reset,
     setRoundResult,
     nextQuestion,
+    setSkillsPhase,
   } = useInterviewStore()
 
   const { submitAnswer } = useInterviewSession()
@@ -111,6 +114,7 @@ export default function InterviewSession({ token }: Props) {
   const [timeWarning, setTimeWarning] = useState<'amber' | 'red' | null>(null)
 
   // ── Video call UI state ──
+  const [briefingDone, setBriefingDone] = useState(false)
   const [cameraOn, setCameraOn] = useState(true)
   const [faceAnalysisEnabled, setFaceAnalysisEnabled] = useState(false)
   const [textMode, setTextMode] = useState(false)
@@ -135,10 +139,9 @@ export default function InterviewSession({ token }: Props) {
   const qIndex = currentRound?.currentQuestionIndex ?? 0
   const totalQuestions = currentRound?.questions.length ?? 0
   const isLeetcode = currentRound?.type === 'leetcode'
+  const isSkillsTask = (currentRound?.type === 'skills_task' || currentRound?.type === 'technical') && currentRound?.task != null
   const activeQuestion = followUpQuestion ?? question
   const character = sessionId ? pickCharacter(sessionId, level) : undefined
-  const allRoundTypes = currentRound ? [currentRound.type, ...remainingRounds] : []
-  const roundIndex = 0  // current is always index 0 in allRoundTypes
   const timerColor = timerPct >= 95 ? '#ef4444' : timerPct >= 80 ? '#f59e0b' : 'rgba(255,255,255,0.4)'
 
   // ── Effects ──
@@ -252,6 +255,75 @@ export default function InterviewSession({ token }: Props) {
     )
   }
 
+  // ── Pre-session briefing ──
+  if (!briefingDone) {
+    const budgetMins = Math.round((currentRound.timeBudgetSeconds ?? 1800) / 60)
+    const roundLabel = currentRound.type.charAt(0).toUpperCase() + currentRound.type.slice(1)
+    return (
+      <div style={{
+        height: '100vh', background: '#0a0a0d', color: 'white',
+        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+        gap: 0, fontFamily: 'inherit',
+      }}>
+        {/* Character preview */}
+        {character && (
+          <div style={{ width: 100, borderRadius: 12, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.08)', marginBottom: 32, boxShadow: '0 8px 32px rgba(0,0,0,0.6)' }}>
+            <AvatarPanel character={character} isSpeaking={false} />
+          </div>
+        )}
+
+        {/* Company / role */}
+        <div style={{ fontSize: 13, color: '#4a5168', marginBottom: 6, letterSpacing: '0.04em' }}>
+          {company} · {role}
+        </div>
+
+        {/* Round type */}
+        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#3b82f6', marginBottom: 28 }}>
+          {roundLabel} Interview
+        </div>
+
+        {/* Time + encouragement */}
+        <div style={{
+          background: '#12131a', border: '1px solid #1e2330',
+          borderRadius: 14, padding: '28px 36px',
+          textAlign: 'center', maxWidth: 400,
+          marginBottom: 32,
+        }}>
+          <div style={{ fontSize: 36, fontWeight: 700, color: '#f1f5f9', marginBottom: 4 }}>
+            {budgetMins} min
+          </div>
+          <div style={{ fontSize: 13, color: '#4a5168', marginBottom: 20 }}>
+            allocated for this session
+          </div>
+          <div style={{ fontSize: 14, color: '#94a3b8', lineHeight: 1.7 }}>
+            Take a breath. Answer naturally — there are no trick questions,
+            just a conversation. You've prepared for this.
+          </div>
+        </div>
+
+        {/* Join button */}
+        <button
+          onClick={() => setBriefingDone(true)}
+          style={{
+            background: '#ffffff', color: '#0f0f13',
+            border: 'none', borderRadius: 10,
+            padding: '13px 36px', fontSize: 14, fontWeight: 700,
+            cursor: 'pointer', letterSpacing: '0.02em',
+          }}
+        >
+          I'm ready — Join Interview
+        </button>
+
+        {/* Persona */}
+        {persona && (
+          <div style={{ marginTop: 20, fontSize: 11, color: '#2a2d3a', fontStyle: 'italic', maxWidth: 340, textAlign: 'center' }}>
+            {persona}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   // ── Handlers ──
 
   const handleAnswerChange = (newValue: string) => {
@@ -318,6 +390,46 @@ export default function InterviewSession({ token }: Props) {
   }
   handleSubmitRef.current = handleSubmit
 
+  // Phase 1 submission for skills_task
+  const handleSkillsTaskSubmit = async (submission: string) => {
+    if (!currentRound?.task) return
+    setLoading(true)
+    const timeTakenSeconds = Math.floor((Date.now() - roundStartTimeRef.current) / 1000)
+    const result = await submitAnswer(sessionId!, currentRound.id, currentRound.task.title, submission, {
+      totalQuestions: 1,
+      emotionState: emotion?.emotion,
+      timeTakenSeconds,
+      rewriteCount: 0,
+      isFollowup: false,
+    })
+    setRoundResult(result.passed, {
+      what_worked: result.what_worked,
+      what_was_missing: result.what_was_missing,
+      stronger_version: result.stronger_version,
+      passed: result.passed,
+    })
+    if (result.round_complete) {
+      setFeedback({
+        what_worked: result.what_worked,
+        what_was_missing: result.what_was_missing,
+        stronger_version: result.stronger_version,
+        passed: result.passed,
+        roundComplete: true,
+        roundPassed: result.round_passed ?? null,
+        followUp: null,
+        evaluation: result.evaluation ?? null,
+      })
+      // Stay on task view to show feedback before advancing
+    } else if (result.follow_up) {
+      // Transition to Phase 2 follow-up interview
+      setSkillsPhase('followup', result.follow_up)
+      setFollowUpQuestion(result.follow_up)
+      setIsFollowUp(true)
+      speak(result.follow_up)
+    }
+    setLoading(false)
+  }
+
   const handleMic = async () => {
     if (isRecording) {
       const transcript = await stopRecording()
@@ -373,13 +485,16 @@ export default function InterviewSession({ token }: Props) {
         const d = json.data
         setFollowUpQuestion(null)
         setIsFollowUp(false)
+        const nextIsSkillsTask = d.current_round === 'skills_task' || d.current_round === 'technical'
         advanceRound(
           {
             id: d.round_id,
             type: d.current_round,
-            questions: d.questions,
+            questions: d.questions ?? [],
             currentQuestionIndex: 0,
             timeBudgetSeconds: d.time_budget_seconds ?? 1800,
+            task: d.task ?? null,
+            skillsPhase: nextIsSkillsTask ? 'task' : undefined,
           },
           d.persona,
           remainingRounds.slice(1)
@@ -405,7 +520,7 @@ export default function InterviewSession({ token }: Props) {
       padding: '0 16px',
       gap: 8,
     }}>
-      {/* Left — timer + round info */}
+      {/* Left — timer + round type only */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <span style={{ ...chip, color: timerPct >= 95 ? '#f87171' : timerPct >= 80 ? '#fbbf24' : '#c4c9d8' }}>
           ⏱ {formatTime(timeRemaining)}
@@ -413,14 +528,6 @@ export default function InterviewSession({ token }: Props) {
         <span style={chip}>
           {currentRound.type.charAt(0).toUpperCase() + currentRound.type.slice(1)}
         </span>
-        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-          {allRoundTypes.map((r, i) => (
-            <div key={i} title={r} style={{
-              width: 7, height: 7, borderRadius: '50%',
-              background: i === roundIndex ? '#3b82f6' : '#2a2d3a',
-            }} />
-          ))}
-        </div>
       </div>
 
       {/* Center — main action buttons */}
@@ -546,10 +653,6 @@ export default function InterviewSession({ token }: Props) {
           }} />
         </button>
 
-        {/* Q counter */}
-        <span style={{ ...chip, color: '#4a5168' }}>
-          Q {qIndex + 1}/{totalQuestions}
-        </span>
       </div>
 
       <style>{`
@@ -564,6 +667,85 @@ export default function InterviewSession({ token }: Props) {
       `}</style>
     </div>
   )
+
+  // ── SKILLS TASK LAYOUT (Phase 1) ──────────────────────────────────────────
+  if (isSkillsTask && currentRound.skillsPhase === 'task' && currentRound.task) {
+    return (
+      <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#0f1117', color: 'white', overflow: 'hidden' }}>
+        {/* Timer bar */}
+        <div style={{ height: 3, background: 'rgba(255,255,255,0.06)', flexShrink: 0 }}>
+          <div style={{ height: '100%', width: `${timerPct}%`, background: timerColor, transition: 'width 1s linear, background 0.5s' }} />
+        </div>
+
+        {/* Top bar */}
+        <div style={{
+          height: 44, flexShrink: 0, background: '#0e0f14',
+          borderBottom: '1px solid rgba(255,255,255,0.06)',
+          display: 'flex', alignItems: 'center',
+          padding: '0 16px', gap: 10,
+        }}>
+          <span style={{ ...chip, color: timerPct >= 95 ? '#f87171' : timerPct >= 80 ? '#fbbf24' : '#c4c9d8' }}>
+            ⏱ {formatTime(timeRemaining)}
+          </span>
+          <span style={{ ...chip, color: '#7c85f0' }}>Skills Assessment</span>
+          <div style={{ flex: 1 }} />
+          {/* Camera toggle in top bar for enforcement */}
+          <button
+            onClick={() => setCameraOn((v) => !v)}
+            style={{
+              ...ctrlBtn,
+              background: cameraOn ? '#1a1d28' : 'rgba(239,68,68,0.1)',
+              color: cameraOn ? '#94a3b8' : '#f87171',
+              border: cameraOn ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(239,68,68,0.2)',
+            }}
+            title={cameraOn ? 'Camera on' : 'Camera off — required'}
+          >
+            {cameraOn ? '📷' : '🚫'}
+          </button>
+          {/* User camera pip */}
+          {cameraOn && (
+            <div style={{ width: 60, height: 44, borderRadius: 6, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.08)', flexShrink: 0 }}>
+              <video ref={userCamRef} autoPlay muted playsInline style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            </div>
+          )}
+          {character && (
+            <div style={{ width: 36, borderRadius: 6, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.07)', flexShrink: 0 }}>
+              <AvatarPanel character={character} isSpeaking={isSpeaking} />
+            </div>
+          )}
+          <button onClick={reset} title="End interview" style={{ ...ctrlBtn, background: 'rgba(239,68,68,0.08)', color: '#f87171', border: '1px solid rgba(239,68,68,0.12)' }}>■</button>
+        </div>
+
+        {/* Task editor — fills remaining height */}
+        <div style={{ flex: 1, overflow: 'hidden', minHeight: 0 }}>
+          {!feedback ? (
+            <SkillsTaskEditor
+              task={currentRound.task}
+              sessionId={sessionId!}
+              roundId={currentRound.id}
+              cameraOn={cameraOn}
+              onSubmit={handleSkillsTaskSubmit}
+              disabled={loading}
+            />
+          ) : (
+            // Phase 1 round-complete feedback (edge case)
+            <div style={{ padding: 32, display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 600 }}>
+              <div style={{ background: feedback.passed ? 'rgba(22,101,52,0.5)' : 'rgba(127,29,29,0.5)', border: `1px solid ${feedback.passed ? 'rgba(34,197,94,0.25)' : 'rgba(239,68,68,0.25)'}`, borderRadius: 10, padding: '16px 20px', fontSize: 13, lineHeight: 1.6 }}>
+                {feedback.what_worked && <p style={{ color: '#86efac', margin: '0 0 8px' }}><strong>✓ Worked: </strong>{feedback.what_worked}</p>}
+                {feedback.what_was_missing && <p style={{ color: '#fde68a', margin: '0 0 8px' }}><strong>△ Missing: </strong>{feedback.what_was_missing}</p>}
+                {feedback.stronger_version && <p style={{ color: '#93c5fd', margin: 0 }}><strong>→ Stronger: </strong>{feedback.stronger_version}</p>}
+              </div>
+              <button onClick={handleNext} disabled={advancing} style={{ background: '#fff', color: '#0f0f13', border: 'none', borderRadius: 8, padding: '10px 28px', fontWeight: 600, fontSize: 13, cursor: 'pointer', alignSelf: 'flex-start' }}>
+                {advancing ? 'Loading…' : 'Continue →'}
+              </button>
+            </div>
+          )}
+        </div>
+
+        <FeedbackStrip active={!sessionComplete && !roundFailed} enabled={faceAnalysisEnabled} sharedStream={cameraOn ? userStreamRef.current : null} onEmotionChange={setEmotion} />
+      </div>
+    )
+  }
 
   // ── LEETCODE LAYOUT ────────────────────────────────────────────────────────
   if (isLeetcode) {

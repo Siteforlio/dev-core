@@ -94,6 +94,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.on('devcore:session:mode', handler)
       return () => ipcRenderer.removeListener('devcore:session:mode', handler)
     },
+    // Screenshot buffer count updates
+    onScreenshotCount: (cb: (p: { count: number }) => void): (() => void) => {
+      const handler = (_e: unknown, p: { count: number }) => cb(p)
+      ipcRenderer.on('devcore:screenshot:count', handler)
+      return () => ipcRenderer.removeListener('devcore:screenshot:count', handler)
+    },
+    onScreenshotResult: (cb: (p: { needsMore: boolean; bufferSize: number; cleared: boolean }) => void): (() => void) => {
+      const handler = (_e: unknown, p: { needsMore: boolean; bufferSize: number; cleared: boolean }) => cb(p)
+      ipcRenderer.on('devcore:screenshot:result', handler)
+      return () => ipcRenderer.removeListener('devcore:screenshot:result', handler)
+    },
     // Trigger assessment agent from UI
     assessmentTrigger: (payload: { action: string; text?: string }) =>
       ipcRenderer.invoke('devcore:assessment:trigger', payload),
@@ -102,7 +113,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
         'devcore:suggestion','devcore:transcript','devcore:status','devcore:error',
         'devcore:hotkey','devcore:outcome','devcore:devices:changed','devcore:session:title',
         'devcore:tool:event','devcore:agent:thinking','devcore:agent:guidance','devcore:agent:solution',
-        'devcore:session:mode',
+        'devcore:session:mode','devcore:screenshot:count','devcore:screenshot:result',
       ].forEach(ch => ipcRenderer.removeAllListeners(ch))
     },
   },
