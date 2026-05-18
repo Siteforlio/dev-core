@@ -36,24 +36,20 @@ const MODE_STYLE: Record<
 const BAR_COUNT = 6
 const MIN_H = 2
 const MAX_H = 18
-
-// Frequency bin indices to sample — spread across low/mid/high speech range
 const BIN_PICKS = [2, 5, 9, 14, 20, 28]
 
-function useAudioBars(active: boolean, micDeviceId: number | null) {
+function useAudioBars(active: boolean) {
   const [bars, setBars] = useState<number[]>(Array(BAR_COUNT).fill(MIN_H))
-  const rafRef  = useRef<number | null>(null)
-  const ctxRef  = useRef<AudioContext | null>(null)
-  const analyserRef = useRef<AnalyserNode | null>(null)
-  const streamRef = useRef<MediaStream | null>(null)
+  const rafRef     = useRef<number | null>(null)
+  const ctxRef     = useRef<AudioContext | null>(null)
+  const streamRef  = useRef<MediaStream | null>(null)
 
   useEffect(() => {
     if (!active) {
-      // Tear down
       rafRef.current && cancelAnimationFrame(rafRef.current)
       streamRef.current?.getTracks().forEach(t => t.stop())
       ctxRef.current?.close()
-      rafRef.current = analyserRef.current = ctxRef.current = streamRef.current = null
+      rafRef.current = ctxRef.current = streamRef.current = null
       setBars(Array(BAR_COUNT).fill(MIN_H))
       return
     }
@@ -62,13 +58,8 @@ function useAudioBars(active: boolean, micDeviceId: number | null) {
 
     async function start() {
       try {
-        const constraints: MediaStreamConstraints = {
-          audio: micDeviceId != null
-            ? { deviceId: { exact: String(micDeviceId) } }
-            : true,
-          video: false,
-        }
-        const stream = await navigator.mediaDevices.getUserMedia(constraints)
+        // No device ID — always use default mic, avoids naudiodon integer vs browser string ID mismatch
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
         if (!alive) { stream.getTracks().forEach(t => t.stop()); return }
 
         streamRef.current = stream
@@ -76,25 +67,22 @@ function useAudioBars(active: boolean, micDeviceId: number | null) {
         ctxRef.current = ctx
         const analyser = ctx.createAnalyser()
         analyser.fftSize = 128
-        analyser.smoothingTimeConstant = 0.55
-        analyserRef.current = analyser
+        analyser.smoothingTimeConstant = 0.6
         ctx.createMediaStreamSource(stream).connect(analyser)
 
         const data = new Uint8Array(analyser.frequencyBinCount)
-
         function tick() {
           if (!alive) return
           analyser.getByteFrequencyData(data)
-          const next = BIN_PICKS.map(idx => {
-            const raw = data[Math.min(idx, data.length - 1)] / 255  // 0–1
+          setBars(BIN_PICKS.map(idx => {
+            const raw = data[Math.min(idx, data.length - 1)] / 255
             return Math.round(MIN_H + raw * (MAX_H - MIN_H))
-          })
-          setBars(next)
+          }))
           rafRef.current = requestAnimationFrame(tick)
         }
         tick()
-      } catch {
-        // No mic permission or device unavailable — fall back to idle bars
+      } catch (e) {
+        console.warn('[bars] getUserMedia failed:', e)
         setBars(Array(BAR_COUNT).fill(MIN_H))
       }
     }
@@ -105,22 +93,22 @@ function useAudioBars(active: boolean, micDeviceId: number | null) {
       rafRef.current && cancelAnimationFrame(rafRef.current)
       streamRef.current?.getTracks().forEach(t => t.stop())
       ctxRef.current?.close()
-      rafRef.current = analyserRef.current = ctxRef.current = streamRef.current = null
+      rafRef.current = ctxRef.current = streamRef.current = null
     }
-  }, [active, micDeviceId])
+  }, [active])
 
   return bars
 }
 
 export function ListeningPill() {
-  const { state, micDeviceId, assessmentMode } = useOverlayStore()
+  const { state, assessmentMode } = useOverlayStore()
 
   const isActive       = state !== 'idle'
   const isThinking     = state === 'thinking'
   const isReconnecting = state === 'reconnecting'
   const isListening    = isActive && !isThinking && !isReconnecting
 
-  const bars = useAudioBars(isListening, micDeviceId)
+  const bars = useAudioBars(isListening)
 
   const modeKey = assessmentMode ?? 'standard'
   const style   = MODE_STYLE[modeKey]

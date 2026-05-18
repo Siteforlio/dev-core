@@ -148,8 +148,8 @@ function _startPythonLoopback(deviceId: number, rate: number, channels: number):
     // VAD state — rate/channels may be updated when Python signals READY
     const FRAME_MS         = 30
     const SPEECH_THRESHOLD = 0.004
-    const SILENCE_FLUSH    = 20
-    let MIN_BYTES          = rate * 0.2 * 2
+    const SILENCE_FLUSH    = 10
+    let MIN_BYTES          = rate * 0.15 * 2
     let FRAME_BYTES        = Math.floor(rate * FRAME_MS / 1000) * channels * 2
 
     let rawBuf       = Buffer.alloc(0)
@@ -388,8 +388,8 @@ function _openWebSocket(
     // VAD parameters
     const FRAME_MS             = 30      // RMS measured per this window
     const SPEECH_RMS_THRESHOLD = 0.004  // above = speech
-    const SILENCE_FRAMES_FLUSH = 20     // ~600ms pause → flush utterance
-    const MIN_SPEECH_BYTES     = TARGET_RATE * 0.2 * 2  // 200ms minimum utterance
+    const SILENCE_FRAMES_FLUSH = 10     // ~300ms pause → flush utterance
+    const MIN_SPEECH_BYTES     = TARGET_RATE * 0.15 * 2  // 150ms minimum utterance
     const MIC_GAIN             = 4.0    // software boost for quiet headset mics
 
     function resampleTo16k(buf: Buffer, fromRate: number): Buffer {
@@ -491,6 +491,14 @@ function _openWebSocket(
               const resampled = resampleTo16k(mono, captureRate)
               const boosted   = gain !== 1.0 ? applyGain(resampled, gain) : resampled
               const rms       = frameRms(boosted)
+
+              // Feed RMS to the overlay waveform bars (mic only, every frame)
+              if (streamId === 0x01) {
+                const win = getOverlayWindow()
+                if (win && !win.isDestroyed()) {
+                  win.webContents.send('devcore:audio:level', { rms })
+                }
+              }
 
               if (rms >= SPEECH_RMS_THRESHOLD) {
                 speechBuf    = Buffer.concat([speechBuf, boosted])

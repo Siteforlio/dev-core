@@ -280,10 +280,14 @@ class OverlayService:
             logger.error("[repo] create_session failed: %s", e)
 
         # RAG index (background)
+        # - If a project_root is set (live coding mode): index the whole codebase with Semble
+        # - Otherwise fall back to indexing any attached files (documents, resumes, etc.)
         rag = RagService()
+        project_root = ctx.get("projectRoot") or ctx.get("project_root")
         files = ctx.get("files", [])
-        if files:
-            task = asyncio.create_task(rag.build_index(files))
+        index_targets = [project_root] if project_root else files
+        if index_targets:
+            task = asyncio.create_task(rag.build_index(index_targets))
             task.add_done_callback(
                 lambda t: logger.error("RAG build failed: %s", t.exception()) if t.exception() else None
             )

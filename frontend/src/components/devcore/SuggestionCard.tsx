@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useOverlayStore } from '../../store/overlayStore'
-import { getFreshToken } from '../../lib/apiFetch'
 import { AudioSourcePicker } from './AudioSourcePicker'
 import { MarkdownMessage } from './MarkdownMessage'
 import type { AssessmentMode, SessionContext } from '../../types/devcore'
@@ -223,6 +222,63 @@ const EMPTY_CONTEXT: SessionContext = {
 // Module-level token cache — persists across renders in the overlay process
 let _overlayToken: string | null = null
 
+/** Read token from localStorage (overlay's persisted auth store). */
+function _readStoredTokens(): { access: string | null; refresh: string | null } {
+  try {
+    const raw = localStorage.getItem('auth')
+    if (!raw) return { access: null, refresh: null }
+    const state = JSON.parse(raw)?.state ?? {}
+    return { access: state.accessToken ?? null, refresh: state.refreshToken ?? null }
+  } catch { return { access: null, refresh: null } }
+}
+
+function _writeAccessToken(token: string) {
+  try {
+    const raw = localStorage.getItem('auth')
+    if (!raw) return
+    const parsed = JSON.parse(raw)
+    if (parsed?.state) { parsed.state.accessToken = token; localStorage.setItem('auth', JSON.stringify(parsed)) }
+  } catch {}
+}
+
+function _isExpired(token: string): boolean {
+  try {
+    const exp = JSON.parse(atob(token.split('.')[1])).exp * 1000
+    return Date.now() >= exp - 30_000
+  } catch { return true }
+}
+
+let _overlayRefreshing: Promise<string | null> | null = null
+
+async function getOverlayToken(): Promise<string | null> {
+  // 1. Use cached if still valid
+  if (_overlayToken && !_isExpired(_overlayToken)) return _overlayToken
+
+  // 2. Read from localStorage
+  const { access, refresh } = _readStoredTokens()
+  if (access && !_isExpired(access)) { _overlayToken = access; return access }
+
+  // 3. Need a refresh
+  if (!refresh) { _overlayToken = null; return null }
+
+  if (!_overlayRefreshing) {
+    _overlayRefreshing = (async () => {
+      try {
+        const res = await fetch('http://localhost:8000/api/v1/auth/refresh', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${refresh}` },
+        })
+        if (!res.ok) { _overlayToken = null; return null }
+        const { data } = await res.json()
+        _overlayToken = data.access_token
+        _writeAccessToken(data.access_token)
+        return _overlayToken
+      } catch { _overlayToken = null; return null }
+    })().finally(() => { _overlayRefreshing = null })
+  }
+  return _overlayRefreshing
+}
+
 const AI_PENDING_ID = '__ai_pending__'
 
 export function SuggestionCard() {
@@ -256,16 +312,7 @@ export function SuggestionCard() {
   // Check auth on mount and whenever localStorage changes (e.g. user logs in from main window)
   useEffect(() => {
     const check = async () => {
-      const t = _overlayToken ?? await getFreshToken()
-      if (!t) {
-        try {
-          const raw = localStorage.getItem('auth')
-          if (raw) {
-            const stored = JSON.parse(raw)?.state?.accessToken ?? null
-            if (stored) { _overlayToken = stored; setAuthed(true); return }
-          }
-        } catch {}
-      }
+      const t = await getOverlayToken()
       setAuthed(!!t)
     }
     check()
@@ -355,14 +402,7 @@ export function SuggestionCard() {
   }, [messages])
 
   const fetchRecentSessions = async () => {
-    // Try cached token, then auth store, then direct localStorage read (overlay file:// origin)
-    let t = _overlayToken ?? await getFreshToken()
-    if (!t) {
-      try {
-        const raw = localStorage.getItem('auth')
-        if (raw) t = JSON.parse(raw)?.state?.accessToken ?? null
-      } catch {}
-    }
+    const t = await getOverlayToken()
     if (!t) return
     try {
       const r = await fetch('http://localhost:8000/api/v1/cluely/sessions?limit=10', {
@@ -384,9 +424,8 @@ export function SuggestionCard() {
   }, [sessionPickerOpen])
 
   const handleStart = async () => {
-    const t = _overlayToken ?? await getFreshToken()
+    const t = await getOverlayToken()
     if (!t) return
-    _overlayToken = t
 
     if (lastSessionRef.current) {
       // Reconnect to the same session — messages + transcript already in state, don't clear them
@@ -413,9 +452,8 @@ export function SuggestionCard() {
   const handleResumeSession = async (session: any) => {
     setSessionPickerOpen(false)
     lastSessionRef.current = null  // explicit pick — don't auto-resume on next start
-    const t = _overlayToken ?? await getFreshToken()
+    const t = await getOverlayToken()
     if (!t) return
-    _overlayToken = t
     setSessionId(session.id)
     setSessionTitle(session.title)
 

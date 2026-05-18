@@ -95,6 +95,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
       return () => ipcRenderer.removeListener('devcore:session:mode', handler)
     },
     // Screenshot buffer count updates
+    onAudioLevel: (cb: (p: { rms: number }) => void): (() => void) => {
+      const handler = (_e: unknown, p: { rms: number }) => cb(p)
+      ipcRenderer.on('devcore:audio:level', handler)
+      return () => ipcRenderer.removeListener('devcore:audio:level', handler)
+    },
     onScreenshotCount: (cb: (p: { count: number }) => void): (() => void) => {
       const handler = (_e: unknown, p: { count: number }) => cb(p)
       ipcRenderer.on('devcore:screenshot:count', handler)
@@ -114,6 +119,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
         'devcore:hotkey','devcore:outcome','devcore:devices:changed','devcore:session:title',
         'devcore:tool:event','devcore:agent:thinking','devcore:agent:guidance','devcore:agent:solution',
         'devcore:session:mode','devcore:screenshot:count','devcore:screenshot:result',
+        'devcore:audio:level',
       ].forEach(ch => ipcRenderer.removeAllListeners(ch))
     },
   },

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { useOverlaySession } from '../../hooks/useOverlaySession'
 import { useOverlayStore } from '../../store/overlayStore'
 import { useAuthStore } from '../../store/authStore'
-import { apiFetch } from '../../lib/apiFetch'
+import { apiFetch, getFreshToken } from '../../lib/apiFetch'
 import type { SessionContext, AssessmentMode } from '../../types/devcore'
 
 type SourceTab = 'job' | 'calendar' | 'describe'
@@ -147,9 +147,11 @@ export function SessionSetup({ onClose }: { onClose: () => void }) {
         assessmentMode: assessmentMode,
         projectRoot:    assessmentMode === 'live' ? projectRoot.trim() : undefined,
       }
+      const freshToken = await getFreshToken()
+      if (!freshToken) return  // clearAuth already called → app redirects to login
       const id = crypto.randomUUID()
       setStoreMode(assessmentMode)
-      await startSession({ sessionId: id, context: ctx, audioSource, micDeviceId, sysDeviceId, token: token ?? '' })
+      await startSession({ sessionId: id, context: ctx, audioSource, micDeviceId, sysDeviceId, token: freshToken })
       onClose()
     } catch (err) {
       console.error('[devcore] startSession failed:', err)

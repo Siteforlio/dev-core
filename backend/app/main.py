@@ -7,6 +7,20 @@ import sys
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
+# Windows does not allow symlinks without Developer Mode enabled.
+# Patch HuggingFace Hub to copy files instead of symlinking so Semble's
+# model2vec download works without requiring elevated privileges.
+if sys.platform == "win32":
+    try:
+        import shutil, os
+        import huggingface_hub.file_download as _hf_fd
+        def _hf_copy_instead_of_symlink(src: str, dst: str, new_blob: bool = False) -> None:
+            if not os.path.exists(dst):
+                shutil.copy2(src, dst)
+        _hf_fd._create_symlink = _hf_copy_instead_of_symlink
+    except Exception:
+        pass
+
 # Ensure uvicorn access log is always visible regardless of reload mode
 logging.getLogger("uvicorn.access").setLevel(logging.INFO)
 logging.getLogger("uvicorn.access").propagate = True

@@ -33,6 +33,7 @@ from app.models.pg.job_hunter import (
 )
 from app.models.pg.knowledge import KnowledgeProfile
 from app.models.pg.progress import UserProgress
+from app.models.pg.cluely_session import CluelySession, CluelyTranscriptLine, CluelyInteraction
 
 target_metadata = Base.metadata
 

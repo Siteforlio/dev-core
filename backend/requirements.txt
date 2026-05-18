@@ -37,4 +37,5 @@ keybert>=0.8.0
 scikit-learn>=1.4.0
 groq>=0.9.0
 faster-whisper>=1.0.3
+semble>=0.1.8
 resemblyzer>=0.1.1.dev0
