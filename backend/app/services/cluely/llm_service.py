@@ -20,12 +20,13 @@ class LLMService:
         Resume and JD are injected so every response is grounded in the user's
         actual background.
         """
-        job_title   = context.get("job_title", "this role")
-        company     = context.get("company", "this company")
-        resume_text = context.get("resume_text", "")[:600]
-        jd_text     = context.get("jd_text", "")[:400]
+        job_title     = context.get("job_title", "this role")
+        company       = context.get("company", "this company")
+        resume_text   = context.get("resume_text", "")[:600]
+        jd_text       = context.get("jd_text", "")[:400]
+        extra_context = context.get("extra_context", "")
 
-        return (
+        base = (
             f"You are speaking AS the candidate in a live job interview for {job_title} at {company}. "
             "Answer every question in the first person, naturally and confidently, as if you are the candidate speaking aloud. "
             "Draw directly from the resume and job description provided — use specific experiences, projects, and skills. "
@@ -34,6 +35,9 @@ class LLMService:
             f"Resume: {resume_text}. "
             f"Job description: {jd_text}."
         )
+        if extra_context:
+            base += f"\n\nADDITIONAL CONTEXT DOCUMENTS (use these to inform your answers):\n{extra_context}"
+        return base
 
     def _build_context_block(
         self,

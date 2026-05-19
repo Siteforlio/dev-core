@@ -220,6 +220,9 @@ class ChatAgent:
             parts.append(f"Session context: {role or 'unknown role'} at {company or 'unknown company'}.")
         if mode:
             parts.append(f"Session mode: {mode}.")
+        extra_context = self._ctx.get("extra_context", "")
+        if extra_context:
+            parts.append(f"ADDITIONAL CONTEXT DOCUMENTS:\n{extra_context}")
         parts.append(
             "File tools accept absolute paths directly (e.g. C:\\Users\\...\\file.txt or /home/user/file.txt). "
             "If the user mentions a file path in their message, extract it and use the file tool immediately — "

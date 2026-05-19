@@ -279,15 +279,32 @@ class OverlayService:
         except Exception as e:
             logger.error("[repo] create_session failed: %s", e)
 
+        # Read any attached context files and store content directly in ctx
+        # so they are injected into every LLM system prompt (up to 3000 chars each,
+        # max 3 files, concatenated under extra_context).
+        files = ctx.get("files", [])
+        if files:
+            extra_parts: list[str] = []
+            for fpath in files[:3]:
+                try:
+                    from pathlib import Path as _Path
+                    p = _Path(fpath).expanduser().resolve()
+                    if p.is_file() and p.stat().st_size < 2 * 1024 * 1024:  # skip >2MB
+                        text = p.read_text(encoding="utf-8", errors="ignore")[:3000]
+                        extra_parts.append(f"--- {p.name} ---\n{text}")
+                        logger.info("[session] Loaded context file: %s (%d chars)", p.name, len(text))
+                except Exception as e:
+                    logger.warning("[session] Could not read context file %s: %s", fpath, e)
+            if extra_parts:
+                ctx["extra_context"] = "\n\n".join(extra_parts)
+
         # RAG index (background)
         # - If a project_root is set (live coding mode): index the whole codebase with Semble
-        # - Otherwise fall back to indexing any attached files (documents, resumes, etc.)
+        # - Otherwise skip (document files are now read directly into extra_context above)
         rag = RagService()
         project_root = ctx.get("projectRoot") or ctx.get("project_root")
-        files = ctx.get("files", [])
-        index_targets = [project_root] if project_root else files
-        if index_targets:
-            task = asyncio.create_task(rag.build_index(index_targets))
+        if project_root:
+            task = asyncio.create_task(rag.build_index([project_root]))
             task.add_done_callback(
                 lambda t: logger.error("RAG build failed: %s", t.exception()) if t.exception() else None
             )

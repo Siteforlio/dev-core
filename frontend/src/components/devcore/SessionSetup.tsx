@@ -143,7 +143,7 @@ export function SessionSetup({ onClose }: { onClose: () => void }) {
         company:        tab === 'job' ? selectedJobData?.company ?? '' : '',
         resumeText:     tab === 'job' ? selectedJobData?.resumeText ?? '' : '',
         jdText:         tab === 'job' ? selectedJobData?.jdText ?? '' : description,
-        files,
+        files: files.filter(f => f.trim()),
         assessmentMode: assessmentMode,
         projectRoot:    assessmentMode === 'live' ? projectRoot.trim() : undefined,
       }
@@ -248,6 +248,41 @@ export function SessionSetup({ onClose }: { onClose: () => void }) {
               <p className="font-mono text-[12px] text-white/40">Connect a CalDAV calendar in Settings to see upcoming events.</p>
             </div>
           )}
+
+          {/* Context files — paths to docs/notes to inject into AI context */}
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <p className="font-mono text-[11px] uppercase tracking-widest text-white/40">Context files <span className="text-white/20">(optional, max 3)</span></p>
+              {files.length < 3 && (
+                <button
+                  onClick={() => setFiles(f => [...f, ''])}
+                  className="font-mono text-[10px] text-white/30 hover:text-white/60 transition-colors"
+                >+ add file</button>
+              )}
+            </div>
+            {files.length === 0 && (
+              <p className="font-mono text-[11px] text-white/20 italic">e.g. C:\Users\me\pitch.md — AI will read and use the full content</p>
+            )}
+            {files.map((f, i) => (
+              <div key={i} className="flex items-center gap-2 mb-1.5">
+                <div className="flex-1 bg-white/[0.02] border border-white/[0.07] rounded-lg px-3 py-1.5 focus-within:border-violet-400/30 transition-all">
+                  <input
+                    type="text"
+                    value={f}
+                    onChange={e => setFiles(prev => prev.map((p, j) => j === i ? e.target.value : p))}
+                    placeholder="Absolute file path…"
+                    className="w-full bg-transparent border-none outline-none text-[11px] text-white/70 placeholder-white/20 font-mono"
+                    spellCheck={false}
+                    autoComplete="off"
+                  />
+                </div>
+                <button
+                  onClick={() => setFiles(prev => prev.filter((_, j) => j !== i))}
+                  className="text-white/20 hover:text-white/50 transition-colors font-mono text-[12px]"
+                >✕</button>
+              </div>
+            ))}
+          </div>
 
           {/* Confirmation strip */}
           <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-emerald-400/15 bg-emerald-400/5">

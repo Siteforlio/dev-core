@@ -298,11 +298,13 @@ function _openWebSocket(
         type: 'session_start',
         session_id: sessionId,
         context: {
-          job_title:   (context as any).jobTitle   ?? '',
-          company:     (context as any).company    ?? '',
-          resume_text: (context as any).resumeText ?? '',
-          jd_text:     (context as any).jdText     ?? '',
-          files:       (context as any).files      ?? [],
+          job_title:       (context as any).jobTitle       ?? '',
+          company:         (context as any).company        ?? '',
+          resume_text:     (context as any).resumeText     ?? '',
+          jd_text:         (context as any).jdText         ?? '',
+          files:           (context as any).files          ?? [],
+          assessmentMode:  (context as any).assessmentMode ?? null,
+          projectRoot:     (context as any).projectRoot    ?? null,
         },
       }))
     } catch (e) {
