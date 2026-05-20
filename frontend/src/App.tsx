@@ -11,8 +11,14 @@ type Screen = 'splash' | 'login' | 'register' | 'dashboard'
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>('splash')
-  const token     = useAuthStore((s) => s.accessToken)
-  const sessionId = useInterviewStore((s) => s.sessionId)
+  const token          = useAuthStore((s) => s.accessToken)
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
+  const sessionId      = useInterviewStore((s) => s.sessionId)
+
+  // Redirect to login whenever auth is cleared (logout, token expiry)
+  if (screen === 'dashboard' && !isAuthenticated) {
+    setScreen('login')
+  }
 
   /* Splash → login or dashboard */
   const handleSplashDone = (authenticated: boolean) => {

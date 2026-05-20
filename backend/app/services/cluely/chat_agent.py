@@ -209,13 +209,16 @@ class ChatAgent:
         jd_text       = self._ctx.get("jd_text", "")[:400]
         extra_context = self._ctx.get("extra_context", "")
 
-        # If there's an active interview context, speak AS the candidate.
+        # If there's any session context, speak AS the candidate.
         # The user is asking questions mid-interview — answers should be in their voice.
-        if company or role or resume_text:
+        if company or role or resume_text or extra_context:
+            role_str = f"for {role} " if role else ""
+            company_str = f"at {company} " if company else ""
+            context_str = f"for {role_str}{company_str}".strip() or "in a live session"
             parts = [
-                f"You are speaking AS the candidate in a live job interview for {role or 'this role'} at {company or 'this company'}. "
+                f"You are speaking AS the candidate {context_str}. "
                 "Answer every question in the first person, naturally and confidently, as if you are the candidate speaking aloud. "
-                "Draw directly from the resume and job description provided. "
+                "Draw on any context documents, resume, or job description provided. "
                 "Sound human: conversational, not textbook. No bullet points unless explicitly asked. "
                 "You also have tools available (terminal, web search, file read/write, screen capture) — "
                 "use them when the request requires real information or action.",
