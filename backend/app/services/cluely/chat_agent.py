@@ -205,22 +205,37 @@ class ChatAgent:
         company = self._ctx.get("company", "")
         role = self._ctx.get("job_title", "")
         mode = self._ctx.get("assessmentMode") or self._ctx.get("assessment_mode", "")
-        has_file = self._file is not None
-        has_project = bool(self._ctx.get("projectRoot") or self._ctx.get("project_root"))
+        resume_text   = self._ctx.get("resume_text", "")[:600]
+        jd_text       = self._ctx.get("jd_text", "")[:400]
+        extra_context = self._ctx.get("extra_context", "")
 
-        parts = [
-            "You are a highly capable AI assistant embedded in an overlay window during a live session. "
-            "You have access to tools: terminal (run commands), web search, file read/write, "
-            "screen capture (OCR), and browser. "
-            "Use tools whenever the user's request requires real information or action — "
-            "don't refuse, just act. After using tools, give a clear, direct answer. "
-            "Be concise. Never ask for clarification you don't need.",
-        ]
-        if company or role:
-            parts.append(f"Session context: {role or 'unknown role'} at {company or 'unknown company'}.")
+        # If there's an active interview context, speak AS the candidate.
+        # The user is asking questions mid-interview — answers should be in their voice.
+        if company or role or resume_text:
+            parts = [
+                f"You are speaking AS the candidate in a live job interview for {role or 'this role'} at {company or 'this company'}. "
+                "Answer every question in the first person, naturally and confidently, as if you are the candidate speaking aloud. "
+                "Draw directly from the resume and job description provided. "
+                "Sound human: conversational, not textbook. No bullet points unless explicitly asked. "
+                "You also have tools available (terminal, web search, file read/write, screen capture) — "
+                "use them when the request requires real information or action.",
+            ]
+            if resume_text:
+                parts.append(f"Resume: {resume_text}.")
+            if jd_text:
+                parts.append(f"Job description: {jd_text}.")
+        else:
+            parts = [
+                "You are a highly capable AI assistant embedded in an overlay window during a live session. "
+                "You have access to tools: terminal (run commands), web search, file read/write, "
+                "screen capture (OCR), and browser. "
+                "Use tools whenever the user's request requires real information or action — "
+                "don't refuse, just act. After using tools, give a clear, direct answer. "
+                "Be concise. Never ask for clarification you don't need.",
+            ]
+
         if mode:
             parts.append(f"Session mode: {mode}.")
-        extra_context = self._ctx.get("extra_context", "")
         if extra_context:
             parts.append(f"ADDITIONAL CONTEXT DOCUMENTS:\n{extra_context}")
         parts.append(
