@@ -1,7 +1,9 @@
+import asyncio
 import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 from app.core.cache import get_redis
 from app.core.security import decode_token
+from app.core import ws_registry
 
 router = APIRouter(tags=["job-hunter-ws"])
 logger = logging.getLogger(__name__)
@@ -20,6 +22,7 @@ async def campaign_activity_feed(
         await websocket.close(code=1008)  # Policy Violation
         return
 
+    ws_registry.register(asyncio.current_task())
     await websocket.accept()
     r = await get_redis()
     pubsub = r.pubsub()
@@ -34,7 +37,7 @@ async def campaign_activity_feed(
                     await websocket.send_text(data)
                 except Exception:
                     break  # client disconnected — exit cleanly
-    except WebSocketDisconnect:
+    except (WebSocketDisconnect, asyncio.CancelledError):
         pass
     except Exception:
         pass  # shutdown or network error — exit silently

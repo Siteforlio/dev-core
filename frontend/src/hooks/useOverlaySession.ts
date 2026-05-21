@@ -31,6 +31,9 @@ export function useOverlaySession() {
     const removeTranscript = api.onTranscript(({ speaker, text, seq }: { speaker: 'interviewer' | 'user'; text: string; seq: number }) => {
       store.addTranscript({ speaker, text, seq })
     })
+    const removeTranscriptWord = api.onTranscriptWord?.((p: { speaker: 'interviewer' | 'user'; text: string }) => {
+      console.log(`[word] [${p.speaker}] ${p.text}`)
+    })
     const removeError = api.onError?.((p: { code: string; message: string }) => {
       store.setError(p)
     })
@@ -49,6 +52,7 @@ export function useOverlaySession() {
     return () => {
       removeSessionMode?.()
       removeTranscript?.()
+      removeTranscriptWord?.()
       removeError?.()
       removeToolEvent?.()
       removeAgentThinking?.()

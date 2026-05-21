@@ -2,6 +2,7 @@ import * as naudiodon from 'naudiodon'
 import WebSocket from 'ws'
 import path from 'path'
 import { spawn, ChildProcess } from 'child_process'
+import { Worker } from 'worker_threads'
 import { getOverlayWindow } from './overlay'
 
 const PROJECT_ROOT = path.join(__dirname, '..')
@@ -48,6 +49,12 @@ function forwardToOverlay(frame: Record<string, unknown>) {
         speaker: frame.speaker,
         text: frame.text,
         seq: frame.seq,
+      })
+      break
+    case 'transcript_word':
+      win.webContents.send('devcore:transcript:word', {
+        speaker: frame.speaker,
+        text: frame.text,
       })
       break
     case 'status':
@@ -128,6 +135,11 @@ export function startAudioCapture(
 function _stopStreams(reason?: string) {
   if (reason) console.log(`[devcore-audio] _stopStreams called: ${reason}`)
   else console.log(`[devcore-audio] _stopStreams called`, new Error().stack?.split('\n')[2]?.trim())
+  // Terminate any attached DSP workers before stopping the stream
+  for (const stream of [micInput, sysInput]) {
+    const worker = stream && (stream as any)._dspWorker
+    if (worker) { try { worker.terminate() } catch { /* already gone */ } }
+  }
   try { micInput?.quit() } catch { /* already stopped */ }
   try { sysInput?.quit() } catch { /* already stopped */ }
   if (sysProc) { try { sysProc.kill() } catch { /* already dead */ }; sysProc = null }
@@ -394,50 +406,6 @@ function _openWebSocket(
     const MIN_SPEECH_BYTES     = TARGET_RATE * 0.15 * 2  // 150ms minimum utterance
     const MIC_GAIN             = 4.0    // software boost for quiet headset mics
 
-    function resampleTo16k(buf: Buffer, fromRate: number): Buffer {
-      if (fromRate === TARGET_RATE) return buf
-      const ratio = fromRate / TARGET_RATE
-      const inSamples = buf.length / 2
-      const outSamples = Math.floor(inSamples / ratio)
-      const out = Buffer.alloc(outSamples * 2)
-      for (let i = 0; i < outSamples; i++) {
-        const srcIdx = Math.min(Math.round(i * ratio), inSamples - 1)
-        out.writeInt16LE(buf.readInt16LE(srcIdx * 2), i * 2)
-      }
-      return out
-    }
-
-    function stereoToMono(buf: Buffer): Buffer {
-      const frames = Math.floor(buf.length / 4)
-      const out = Buffer.alloc(frames * 2)
-      for (let i = 0; i < frames; i++) {
-        const l = buf.readInt16LE(i * 4)
-        const r = buf.readInt16LE(i * 4 + 2)
-        out.writeInt16LE(Math.round((l + r) / 2), i * 2)
-      }
-      return out
-    }
-
-    function applyGain(buf: Buffer, gain: number): Buffer {
-      const out = Buffer.alloc(buf.length)
-      for (let i = 0; i < buf.length; i += 2) {
-        const s = Math.max(-32768, Math.min(32767, Math.round(buf.readInt16LE(i) * gain)))
-        out.writeInt16LE(s, i)
-      }
-      return out
-    }
-
-    function frameRms(buf: Buffer): number {
-      const samples = buf.length / 2
-      if (samples === 0) return 0
-      let sumSq = 0
-      for (let i = 0; i < samples; i++) {
-        const s = buf.readInt16LE(i * 2) / 32768.0
-        sumSq += s * s
-      }
-      return Math.sqrt(sumSq / samples)
-    }
-
     function sendChunk(pcm: Buffer, streamId: 0x01 | 0x02) {
       const sock = ws
       if (!sock || sock.readyState !== 1) return
@@ -448,6 +416,10 @@ function _openWebSocket(
       try { sock.send(Buffer.concat([header, pcm])) } catch { /* socket closed mid-send */ }
     }
 
+    // Resolve the compiled worker path. In development ts-node runs from source;
+    // in the packaged app the worker is compiled alongside the main process.
+    const WORKER_PATH = path.join(__dirname, 'audio-worker.js')
+
     function startStream(deviceId: number, streamId: 0x01 | 0x02): naudiodon.IoStreamRead | null {
       const deviceInfo = naudiodon.getDevices().find((d: any) => d.id === deviceId) as any
       const maxCh: number = deviceInfo?.maxInputChannels ?? 2
@@ -457,14 +429,7 @@ function _openWebSocket(
 
       for (const captureRate of CANDIDATE_RATES) {
         try {
-          // VAD state per stream
-          let rawBuf       = Buffer.alloc(0)
-          let speechBuf    = Buffer.alloc(0)  // accumulated 16kHz mono speech
-          let silentFrames = 0
-          let inSpeech     = false
-
-          const FRAME_SAMPLES_RAW = Math.floor((captureRate * FRAME_MS) / 1000)
-          const FRAME_BYTES_RAW   = FRAME_SAMPLES_RAW * CHANNELS * 2
+          const FRAME_BYTES_RAW = Math.floor((captureRate * FRAME_MS) / 1000) * CHANNELS * 2
 
           const input = naudiodon.AudioIO({
             inOptions: {
@@ -476,58 +441,42 @@ function _openWebSocket(
             }
           })
 
+          // Spawn a dedicated worker thread for all DSP (resample, VAD, gain)
+          const worker = new Worker(WORKER_PATH)
+          worker.postMessage({ type: 'init', channels: CHANNELS, captureRate, gain, streamId, isMic })
+
+          worker.on('message', (msg: { type: string; rms?: number; buf?: ArrayBuffer; streamId?: number }) => {
+            if (msg.type === 'audio_level' && msg.rms !== undefined) {
+              const win = getOverlayWindow()
+              if (win && !win.isDestroyed()) {
+                win.webContents.send('devcore:audio:level', { rms: msg.rms })
+              }
+            } else if (msg.type === 'speech_chunk' && msg.buf) {
+              sendChunk(Buffer.from(msg.buf), streamId)
+            }
+          })
+
+          worker.on('error', (err: Error) => {
+            console.error('[devcore-audio] worker error:', err.message)
+          })
+
           input.on('data', (chunk: Buffer) => {
-            if (!ws || ws.readyState !== 1) {
-              rawBuf = speechBuf = Buffer.alloc(0)
-              silentFrames = 0; inSpeech = false
-              return
-            }
-            rawBuf = Buffer.concat([rawBuf, chunk])
-
-            // Process complete 30ms frames
-            while (rawBuf.length >= FRAME_BYTES_RAW) {
-              const frame = rawBuf.subarray(0, FRAME_BYTES_RAW)
-              rawBuf = rawBuf.subarray(FRAME_BYTES_RAW)
-
-              const mono      = CHANNELS === 2 ? stereoToMono(frame) : Buffer.from(frame)
-              const resampled = resampleTo16k(mono, captureRate)
-              const boosted   = gain !== 1.0 ? applyGain(resampled, gain) : resampled
-              const rms       = frameRms(boosted)
-
-              // Feed RMS to the overlay waveform bars (mic only, every frame)
-              if (streamId === 0x01) {
-                const win = getOverlayWindow()
-                if (win && !win.isDestroyed()) {
-                  win.webContents.send('devcore:audio:level', { rms })
-                }
-              }
-
-              if (rms >= SPEECH_RMS_THRESHOLD) {
-                speechBuf    = Buffer.concat([speechBuf, boosted])
-                silentFrames = 0
-                inSpeech     = true
-              } else if (inSpeech) {
-                // Include trailing silence frames for natural speech boundaries
-                speechBuf    = Buffer.concat([speechBuf, boosted])
-                silentFrames++
-                if (silentFrames >= SILENCE_FRAMES_FLUSH) {
-                  // Pause detected — send utterance if long enough
-                  if (speechBuf.length >= MIN_SPEECH_BYTES) {
-                    sendChunk(speechBuf, streamId)
-                  }
-                  speechBuf    = Buffer.alloc(0)
-                  silentFrames = 0
-                  inSpeech     = false
-                }
-              }
-            }
+            if (!ws || ws.readyState !== 1) return
+            // Transfer the raw audio to the worker — zero-copy via ArrayBuffer transfer
+            const ab = chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength)
+            worker.postMessage({ type: 'frame', buf: ab }, [ab as ArrayBuffer])
           })
 
           input.on('error', (err: Error) => {
             console.error('[devcore-audio] stream error:', err.message)
+            worker.terminate()
           })
+
+          // Attach the worker to the stream so stopAudioCapture can terminate it
+          ;(input as any)._dspWorker = worker
+
           input.start()
-          console.log(`[devcore-audio] Device ${deviceId} (${isMic ? 'mic' : 'system'}) VAD started @ ${captureRate} Hz gain=${gain}`)
+          console.log(`[devcore-audio] Device ${deviceId} (${isMic ? 'mic' : 'system'}) started @ ${captureRate} Hz gain=${gain} (worker DSP)`)
           return input
         } catch (err) {
           console.warn(`[devcore-audio] Device ${deviceId} rejected ${captureRate} Hz:`, (err as Error).message)

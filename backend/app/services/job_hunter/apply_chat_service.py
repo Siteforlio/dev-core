@@ -119,7 +119,7 @@ class ApplyChatService:
 
     async def _get_profile(self, user_id: str) -> JobHunterProfile | None:
         result = await self.db.execute(
-            select(JobHunterProfile).where(JobHunterProfile.user_id == user_id)
+            select(JobHunterProfile).where(JobHunterProfile.user_id == user_id, JobHunterProfile.deleted_at.is_(None))
         )
         return result.scalar_one_or_none()
 

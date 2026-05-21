@@ -77,6 +77,19 @@ class SessionRepository:
         await self._db.commit()
         logger.info("[repo] session created | id=%s type=%s", session_id, session_type)
 
+    async def get_session_owner(self, session_id: str) -> str | None:
+        """Return the user_id that owns session_id, or None if it doesn't exist."""
+        try:
+            result = await self._db.execute(
+                text("SELECT user_id FROM cluely_sessions WHERE id = :id"),
+                {"id": session_id},
+            )
+            row = result.fetchone()
+            return str(row.user_id) if row else None
+        except Exception as e:
+            logger.warning("[repo] get_session_owner failed: %s", e)
+            return None
+
     async def record_tool_used(self, session_id: str, tool: str) -> None:
         """Append a tool name to the tools_used JSON array if not already present."""
         try:

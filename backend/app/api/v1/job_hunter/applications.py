@@ -74,6 +74,7 @@ async def get_application_detail(
             Application.id == application_id,
             Application.campaign_id == campaign_id,
             Application.user_id == user_id,
+            Application.deleted_at.is_(None),
         )
     )
     row = result.first()
@@ -129,6 +130,7 @@ async def patch_application_status(
             Application.id == application_id,
             Application.campaign_id == campaign_id,
             Application.user_id == user_id,
+            Application.deleted_at.is_(None),
         )
     )
     app = result.scalar_one_or_none()
@@ -166,6 +168,7 @@ async def generate_cover_letter(
             Application.id == application_id,
             Application.campaign_id == campaign_id,
             Application.user_id == user_id,
+            Application.deleted_at.is_(None),
         )
     )
     row = result.first()
@@ -210,6 +213,7 @@ async def apply_chat(
             Application.id == application_id,
             Application.campaign_id == campaign_id,
             Application.user_id == user_id,
+            Application.deleted_at.is_(None),
         )
     )
     row = result.first()
@@ -244,6 +248,7 @@ async def open_in_chrome(
             Application.id == application_id,
             Application.campaign_id == campaign_id,
             Application.user_id == user_id,
+            Application.deleted_at.is_(None),
         )
     )
     row = result.first()
@@ -297,6 +302,7 @@ async def get_tracking_status(
             Application.id == application_id,
             Application.campaign_id == campaign_id,
             Application.user_id == user_id,
+            Application.deleted_at.is_(None),
         )
     )
     row = result.first()

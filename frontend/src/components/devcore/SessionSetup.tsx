@@ -232,12 +232,12 @@ export function SessionSetup({ onClose }: { onClose: () => void }) {
           )}
           {tab === 'describe' && (
             <div className="flex flex-col gap-2">
-              <p className="font-mono text-[11px] uppercase tracking-widest text-white/40">Describe the interview</p>
+              <p className="font-mono text-[11px] uppercase tracking-widest text-white/40">Describe the session</p>
               <div className="bg-white/[0.025] border border-white/[0.07] rounded-lg p-3 focus-within:border-[rgba(34,211,238,0.25)] transition-all">
                 <textarea
                   value={description}
                   onChange={e => setDescription(e.target.value)}
-                  placeholder="e.g. Senior backend role at Stripe, system design round..."
+                  placeholder="e.g. Sales pitch to Acme Corp, investor meeting, technical interview at Stripe..."
                   className="w-full bg-transparent border-none outline-none resize-none text-[12px] text-white/90 placeholder-white/20 leading-relaxed min-h-[80px]"
                 />
               </div>

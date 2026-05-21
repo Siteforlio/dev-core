@@ -1,5 +1,43 @@
-from typing import Optional, Any
-from pydantic import BaseModel
+from typing import Optional, Literal
+from pydantic import BaseModel, field_validator
+
+
+# ── JSONB field schemas ───────────────────────────────────────────────────────
+
+class EvaluationResult(BaseModel):
+    """Shape of Round.evaluation JSONB — produced by llm_orchestrator.evaluate_candidate."""
+    hire_recommendation: Literal["strong_yes", "yes", "borderline", "no", "strong_no"] = "borderline"
+    confidence_rating: Literal["high", "medium", "low", "erratic"] = "low"
+    overall_score: float = 5.0
+    summary: str = ""
+    strengths: list[str] = []
+    concerns: list[str] = []
+    time_management: Literal["efficient", "adequate", "slow", "over_time"] = "adequate"
+
+    @field_validator("overall_score", mode="before")
+    @classmethod
+    def clamp_score(cls, v):
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            return 5.0
+        return max(0.0, min(10.0, v))
+
+    @field_validator("strengths", "concerns", mode="before")
+    @classmethod
+    def coerce_list(cls, v):
+        if isinstance(v, list):
+            return [str(i) for i in v]
+        return []
+
+
+class CheatSignal(BaseModel):
+    """One entry in Round.cheating_signals JSONB list."""
+    type: str
+    ts: str
+    paste_chars: Optional[int] = None
+    duration_seconds: Optional[float] = None
+    chars_per_second: Optional[float] = None
 
 
 class CreateSessionRequest(BaseModel):

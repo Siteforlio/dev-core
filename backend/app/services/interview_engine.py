@@ -1,4 +1,5 @@
 import hashlib
+import logging
 import uuid
 from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,6 +9,36 @@ from app.services.llm_orchestrator import LLMOrchestrator
 from app.services.persona_engine import PersonaEngine
 from app.services.context_assembler import ContextAssembler
 from app.core.exceptions import SessionNotFoundError
+from app.schemas.session import EvaluationResult, CheatSignal, SkillsTaskSchema
+
+_log = logging.getLogger(__name__)
+
+
+def _validate_evaluation(raw: dict) -> dict:
+    """Validate and coerce a raw evaluation dict into the known schema."""
+    try:
+        return EvaluationResult.model_validate(raw).model_dump()
+    except Exception as exc:
+        _log.warning("[engine] evaluation validation failed: %s — storing as-is", exc)
+        return raw
+
+
+def _validate_task_brief(raw: dict) -> dict:
+    """Validate a task_brief dict against SkillsTaskSchema."""
+    try:
+        return SkillsTaskSchema.model_validate(raw).model_dump()
+    except Exception as exc:
+        _log.warning("[engine] task_brief validation failed: %s — storing as-is", exc)
+        return raw
+
+
+def _validate_cheat_signal(raw: dict) -> dict | None:
+    """Validate one cheat signal entry; returns None if invalid."""
+    try:
+        return CheatSignal.model_validate(raw).model_dump(exclude_none=True)
+    except Exception as exc:
+        _log.warning("[engine] cheat_signal validation failed: %s — skipping entry", exc)
+        return None
 
 PASS_THRESHOLD = 5.0   # score >= this → passed
 FAIL_THRESHOLD = 3.0   # score <= this on last question → immediate fail
@@ -107,7 +138,7 @@ class InterviewEngine:
                 knowledge_context=context["knowledge_profile"],
             )
             # Persist task brief on the round so follow-up handler can access it
-            round_.task_brief = task
+            round_.task_brief = _validate_task_brief(task)
             await self.db.commit()
             result["task"] = task
         else:
@@ -216,7 +247,7 @@ class InterviewEngine:
             round_.passed = round_passed
             round_.completed_at = _utcnow()
             evaluation = await self._run_evaluation(session, round_, round_id, question, answer, grade, time_elapsed, time_budget)
-            round_.evaluation = evaluation
+            round_.evaluation = _validate_evaluation(evaluation)
         else:
             round_.grade = grade["score"]
 
@@ -347,7 +378,7 @@ class InterviewEngine:
             evaluation = await self._run_evaluation(
                 session, round_, round_.id, question, answer, grade, time_elapsed, time_budget
             )
-            round_.evaluation = evaluation
+            round_.evaluation = _validate_evaluation(evaluation)
         else:
             round_.grade = grade["score"]
 
@@ -453,7 +484,9 @@ class InterviewEngine:
         if chars_per_second is not None:
             signal["chars_per_second"] = chars_per_second
 
-        signals.append(signal)
+        validated = _validate_cheat_signal(signal)
+        if validated is not None:
+            signals.append(validated)
         round_.cheating_signals = signals
         await self.db.commit()
 
@@ -486,7 +519,7 @@ class InterviewEngine:
                 career_track=session.career_track or "technology",
                 level=session.level or "mid_level",
             )
-            round_.task_brief = task
+            round_.task_brief = _validate_task_brief(task)
             await self.db.commit()
             result["task"] = task
         else:

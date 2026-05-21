@@ -50,14 +50,112 @@ function createWindow() {
 }
 
 let _lastToken: string = ''
+let _lastRefreshToken: string = ''
+let _refreshingToken: Promise<{ accessToken: string; refreshToken: string } | null> | null = null
+
+const BACKEND_HTTP = 'http://localhost:8000'
+
+/** Decode JWT exp claim without a library. Returns expiry ms or 0 on error. */
+function _jwtExpiry(token: string): number {
+  try {
+    const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString())
+    return (payload.exp ?? 0) * 1000
+  } catch { return 0 }
+}
+
+/** Refresh tokens directly from main process — no renderer involvement. */
+async function _doRefresh(): Promise<{ accessToken: string; refreshToken: string } | null> {
+  if (!_lastRefreshToken) return null
+  try {
+    const { net } = await import('electron')
+    const req = net.request({
+      method: 'POST',
+      url: `${BACKEND_HTTP}/api/v1/auth/refresh`,
+    })
+    return await new Promise<{ accessToken: string; refreshToken: string } | null>((resolve) => {
+      req.setHeader('Authorization', `Bearer ${_lastRefreshToken}`)
+      req.setHeader('Content-Type', 'application/json')
+      let body = ''
+      req.on('response', (res) => {
+        res.on('data', (chunk) => { body += chunk.toString() })
+        res.on('end', () => {
+          try {
+            if (res.statusCode !== 200) { resolve(null); return }
+            const data = JSON.parse(body)?.data
+            const accessToken: string = data?.access_token ?? ''
+            // Capture rotated refresh token (replay attack protection — server issues new JTI each time)
+            const refreshToken: string = data?.refresh_token ?? ''
+            if (accessToken) _lastToken = accessToken
+            if (refreshToken) _lastRefreshToken = refreshToken
+            resolve(accessToken ? { accessToken, refreshToken } : null)
+          } catch { resolve(null) }
+        })
+      })
+      req.on('error', () => resolve(null))
+      req.end()
+    })
+  } catch { return null }
+}
 
 ipcMain.handle('auth:get:token', () => _lastToken || null)
 
+// Store refresh token from renderer so main process can refresh independently.
+ipcMain.handle('auth:set:refresh', (_e, refreshToken: string) => {
+  if (refreshToken) _lastRefreshToken = refreshToken
+})
+
+// Single refresh path for all windows — deduplicates concurrent attempts.
+// Main process calls backend directly — no renderer/executeJavaScript needed.
+// Returns { accessToken, refreshToken } on success, or null on failure.
+ipcMain.handle('auth:refresh:token', async () => {
+  // Return cached token if still valid (30s buffer)
+  if (_lastToken && Date.now() < _jwtExpiry(_lastToken) - 30_000) {
+    return { accessToken: _lastToken, refreshToken: _lastRefreshToken }
+  }
+  if (_refreshingToken) return _refreshingToken
+  _refreshingToken = _doRefresh().finally(() => { _refreshingToken = null })
+  return _refreshingToken
+})
+
+/** Clamp a string to maxLen characters, return '' if not a string. */
+function _str(v: unknown, maxLen = 4096): string {
+  if (typeof v !== 'string') return ''
+  return v.slice(0, maxLen)
+}
+
+/** Clamp a number to [min, max], return fallback if not a number. */
+function _num(v: unknown, fallback: number, min: number, max: number): number {
+  const n = typeof v === 'number' ? v : fallback
+  return Math.max(min, Math.min(max, n))
+}
+
 ipcMain.handle('devcore:session:start', async (_e, payload) => {
+  if (!payload || typeof payload !== 'object') throw new Error('Invalid payload')
   try {
-    const token: string = payload.token ?? ''
+    const token: string = _str(payload.token, 2048)
     if (token) _lastToken = token
-    startAudioCapture(BACKEND_WS, token, payload.audioSource ?? 'both', payload.sessionId, payload.context ?? {}, payload.micDeviceId ?? null, payload.sysDeviceId ?? null)
+
+    const audioSource = ['mic', 'system', 'both'].includes(payload.audioSource)
+      ? payload.audioSource : 'both'
+    const sessionId = _str(payload.sessionId, 128)
+    const micDeviceId = payload.micDeviceId != null ? _num(payload.micDeviceId, 0, 0, 9999) : null
+    const sysDeviceId = payload.sysDeviceId != null ? _num(payload.sysDeviceId, 0, 0, 9999) : null
+
+    // Sanitise context — whitelist known keys, cap string lengths
+    const rawCtx = payload.context ?? {}
+    const context = {
+      jobTitle:      _str(rawCtx.jobTitle, 256),
+      company:       _str(rawCtx.company, 256),
+      resumeText:    _str(rawCtx.resumeText, 8000),
+      jdText:        _str(rawCtx.jdText, 4000),
+      assessmentMode: _str(rawCtx.assessmentMode, 32) || null,
+      projectRoot:   _str(rawCtx.projectRoot, 512) || null,
+      files: Array.isArray(rawCtx.files)
+        ? (rawCtx.files as unknown[]).slice(0, 3).map((f) => _str(f, 512)).filter(Boolean)
+        : [],
+    }
+
+    startAudioCapture(BACKEND_WS, token, audioSource, sessionId, context, micDeviceId, sysDeviceId)
     // Forward assessment mode to the overlay window so its store stays in sync
     const overlayWin = getOverlayWindow()
     if (overlayWin && !overlayWin.isDestroyed()) {
@@ -104,10 +202,15 @@ ipcMain.handle('devcore:interact:disable', async () => {
 
 // Forward assessment trigger from overlay UI → backend via existing WebSocket
 ipcMain.handle('devcore:assessment:trigger', async (_e, payload: { action: string; text?: string }) => {
+  if (!payload || typeof payload !== 'object') return
   const ws = getActiveWs()
   if (!ws || ws.readyState !== 1) return
   try {
-    ws.send(JSON.stringify({ type: 'assessment_trigger', ...payload }))
+    ws.send(JSON.stringify({
+      type: 'assessment_trigger',
+      action: _str(payload.action, 64),
+      text:   payload.text != null ? _str(payload.text, 2000) : undefined,
+    }))
   } catch (err) {
     console.error('[devcore] assessment:trigger send failed:', err)
   }
@@ -236,14 +339,21 @@ ipcMain.handle('devcore:mic:test', async (_e, payload: { deviceId?: number | nul
 })
 
 ipcMain.handle('devcore:manual:ask', async (_e, payload: { text: string; mode: string; language?: string; history?: { role: string; text: string }[] }) => {
+  if (!payload || typeof payload !== 'object') return
   const activeWs = getActiveWs()
   if (activeWs && activeWs.readyState === 1 /* WebSocket.OPEN */) {
+    const safeHistory = Array.isArray(payload.history)
+      ? payload.history.slice(0, 50).map((h) => ({
+          role: _str(h?.role, 16),
+          text: _str(h?.text, 2000),
+        }))
+      : []
     activeWs.send(JSON.stringify({
       type: 'manual_ask',
-      text: payload.text,
-      mode: payload.mode,
-      language: payload.language ?? 'python',
-      history: payload.history ?? [],
+      text: _str(payload.text, 2000),
+      mode: _str(payload.mode, 32),
+      language: _str(payload.language ?? 'python', 32),
+      history: safeHistory,
     }))
     console.log('[devcore] manual_ask sent to backend')
   } else {
@@ -264,9 +374,10 @@ ipcMain.handle('devcore:screenshot:clear', async () => {
 })
 
 ipcMain.handle('devcore:outcome:ask', async (_e, payload: { outcome: string }) => {
+  if (!payload || typeof payload !== 'object') return
   const activeWs = getActiveWs()
   if (activeWs && activeWs.readyState === 1) {
-    activeWs.send(JSON.stringify({ type: 'outcome_pill_ask', outcome: payload.outcome }))
+    activeWs.send(JSON.stringify({ type: 'outcome_pill_ask', outcome: _str(payload.outcome, 512) }))
   } else {
     console.warn('[devcore] outcome:ask — no active WS, message dropped')
   }

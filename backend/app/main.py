@@ -67,6 +67,12 @@ async def lifespan(app: FastAPI):
         await flush_task
     except asyncio.CancelledError:
         pass
+    # Gracefully drain active WebSocket connections before Redis/process shutdown
+    from app.core import ws_registry
+    await ws_registry.close_all(timeout=10.0)
+    # Clean up Redis connection pool on shutdown
+    from app.core.cache import close_redis
+    await close_redis()
 
 
 app = FastAPI(title="Developer Core API", version="1.0.0", lifespan=lifespan)

@@ -248,35 +248,39 @@ function _isExpired(token: string): boolean {
   } catch { return true }
 }
 
-let _overlayRefreshing: Promise<string | null> | null = null
-
 async function getOverlayToken(): Promise<string | null> {
   // 1. Use cached if still valid
   if (_overlayToken && !_isExpired(_overlayToken)) return _overlayToken
 
   // 2. Read from localStorage
-  const { access, refresh } = _readStoredTokens()
+  const { access } = _readStoredTokens()
   if (access && !_isExpired(access)) { _overlayToken = access; return access }
 
-  // 3. Need a refresh
-  if (!refresh) { _overlayToken = null; return null }
-
-  if (!_overlayRefreshing) {
-    _overlayRefreshing = (async () => {
-      try {
-        const res = await fetch('http://localhost:8000/api/v1/auth/refresh', {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${refresh}` },
-        })
-        if (!res.ok) { _overlayToken = null; return null }
-        const { data } = await res.json()
-        _overlayToken = data.access_token
-        _writeAccessToken(data.access_token)
-        return _overlayToken
-      } catch { _overlayToken = null; return null }
-    })().finally(() => { _overlayRefreshing = null })
-  }
-  return _overlayRefreshing
+  // 3. Delegate refresh to main process — single refresh across all windows, no race
+  try {
+    const result = await (window as any).electronAPI?.refreshToken?.()
+    // result may be { accessToken, refreshToken } (new shape) or string (legacy)
+    const token: string | null = typeof result === 'string' ? result : (result?.accessToken ?? null)
+    const newRefresh: string | null = typeof result === 'object' ? (result?.refreshToken ?? null) : null
+    if (token) {
+      _overlayToken = token
+      _writeAccessToken(token)
+      // Sync rotated refresh token back to the auth store so the next page load uses the new one
+      if (newRefresh) {
+        (window as any).electronAPI?.setRefreshToken?.(newRefresh)
+        try {
+          const { useAuthStore } = await import('@/store/authStore')
+          const state = useAuthStore.getState() as any
+          if (state.refreshToken !== newRefresh) {
+            useAuthStore.setState({ refreshToken: newRefresh })
+          }
+        } catch { /* store may not be available in overlay context */ }
+      }
+    } else {
+      _overlayToken = null
+    }
+    return _overlayToken
+  } catch { _overlayToken = null; return null }
 }
 
 const AI_PENDING_ID = '__ai_pending__'

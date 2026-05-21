@@ -209,33 +209,32 @@ class ChatAgent:
         jd_text       = self._ctx.get("jd_text", "")[:400]
         extra_context = self._ctx.get("extra_context", "")
 
-        # If there's any session context, speak AS the candidate.
-        # The user is asking questions mid-interview — answers should be in their voice.
-        if company or role or resume_text or extra_context:
-            role_str = f"for {role} " if role else ""
-            company_str = f"at {company} " if company else ""
-            context_str = f"for {role_str}{company_str}".strip() or "in a live session"
-            parts = [
-                f"You are speaking AS the candidate {context_str}. "
-                "Answer every question in the first person, naturally and confidently, as if you are the candidate speaking aloud. "
-                "Draw on any context documents, resume, or job description provided. "
-                "Sound human: conversational, not textbook. No bullet points unless explicitly asked. "
-                "You also have tools available (terminal, web search, file read/write, screen capture) — "
-                "use them when the request requires real information or action.",
-            ]
-            if resume_text:
-                parts.append(f"Resume: {resume_text}.")
-            if jd_text:
-                parts.append(f"Job description: {jd_text}.")
+        # Always speak AS the user — first person, in their voice.
+        # Context tells us what situation they're in. No context = general conversation.
+        # The rule is absolute: never answer as an AI, always as the person.
+        if role or company:
+            situation_parts = ["You are in a live job interview"]
+            if role:    situation_parts.append(f"for {role}")
+            if company: situation_parts.append(f"at {company}")
+            situation = " ".join(situation_parts) + "."
+        elif extra_context:
+            situation = "You are in a live session."
         else:
-            parts = [
-                "You are a highly capable AI assistant embedded in an overlay window during a live session. "
-                "You have access to tools: terminal (run commands), web search, file read/write, "
-                "screen capture (OCR), and browser. "
-                "Use tools whenever the user's request requires real information or action — "
-                "don't refuse, just act. After using tools, give a clear, direct answer. "
-                "Be concise. Never ask for clarification you don't need.",
-            ]
+            situation = "You are in a live conversation."
+
+        parts = [
+            f"{situation} "
+            "Speak entirely in the first person as the person being asked — "
+            "naturally, confidently, as if saying this aloud. "
+            "Never identify as an AI. Never say 'as an AI' or 'I can help with that'. "
+            "No bullet points, no preamble, no meta-commentary unless explicitly asked. "
+            "You also have tools (terminal, web search, file read/write, screen capture, browser) — "
+            "use them silently when the request needs real information or action, then speak the answer as yourself.",
+        ]
+        if resume_text:
+            parts.append(f"Resume: {resume_text}.")
+        if jd_text:
+            parts.append(f"Job description: {jd_text}.")
 
         if mode:
             parts.append(f"Session mode: {mode}.")

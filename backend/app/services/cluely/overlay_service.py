@@ -17,11 +17,21 @@ from app.schemas.cluely import TranscriptEntry
 
 logger = logging.getLogger(__name__)
 
-BERT_COOLDOWN       = 0.5    # seconds between BERT triggers
+BERT_COOLDOWN        = 0.5   # seconds between BERT triggers
 SUGGESTION_CACHE_TTL = 300   # 5 minutes — skip LLM for identical questions
-ASK_RATE_LIMIT      = 10     # max manual asks per window
-ASK_RATE_WINDOW     = 60     # seconds
-WS_BATCH_CHARS      = 12     # buffer chars before flushing to WebSocket
+WS_BATCH_CHARS       = 12    # buffer chars before flushing to WebSocket
+
+# Per-message-type rate limits: (max_count, window_seconds)
+_RATE_LIMITS: dict[str, tuple[int, int]] = {
+    "manual_ask":         (10, 60),   # 10 asks/min
+    "screenshot_frame":   (30, 60),   # 30 screenshots/min
+    "assessment_trigger": (20, 60),   # 20 triggers/min
+    "outcome_pill_ask":   (10, 60),   # 10 pill taps/min
+}
+
+# Legacy alias kept for code that still references it
+ASK_RATE_LIMIT = 10
+ASK_RATE_WINDOW = 60
 
 
 async def _empty_list() -> list:
@@ -39,24 +49,42 @@ async def _safe_send(ws: WebSocket, data: dict) -> bool:
 
 
 class OverlayService:
-    def __init__(self):
-        self._audio   = AudioService()
-        self._llm     = LLMService()
-        self._vision  = VisionService()
+    """
+    WebSocket orchestrator for the devcore overlay.
+
+    Dependencies are injectable for testability — pass mocks in tests,
+    omit in production to use the real implementations.
+    """
+
+    def __init__(
+        self,
+        audio_service: AudioService | None = None,
+        llm_service: LLMService | None = None,
+        vision_service: VisionService | None = None,
+    ):
+        self._audio   = audio_service  or AudioService()
+        self._llm     = llm_service    or LLMService()
+        self._vision  = vision_service or VisionService()
         self._last_trigger = 0.0
-        # ask_rate: {session_id: (count, window_start_timestamp)}
-        self._ask_rate: dict[str, tuple[int, float]] = {}
+        # rate tracking: {(session_id, msg_type): (count, window_start)}
+        self._ask_rate: dict[tuple[str, str], tuple[int, float]] = {}
         # recent transcripts for dedup: {session_id: [(timestamp, text), ...]}
         self._recent_texts: dict[str, list[tuple[float, str]]] = {}
         self._DEDUP_WINDOW = 4.0
         self._DEDUP_RATIO  = 0.75
-        try:
-            self._bert = BertClassifier()
-            self._use_bert = True
-        except BertClassifierError:
-            logger.warning("BERT unavailable — using silence detection fallback")
-            self._use_bert = False
-            self._bert = None
+        # BERT classifier — injectable for testing
+        if hasattr(audio_service, '_bert_override'):
+            # test injection path
+            self._bert = audio_service._bert_override  # type: ignore
+            self._use_bert = self._bert is not None
+        else:
+            try:
+                self._bert = BertClassifier()
+                self._use_bert = True
+            except BertClassifierError:
+                logger.warning("BERT unavailable — using silence detection fallback")
+                self._use_bert = False
+                self._bert = None
 
         # One diarizer per service instance; reset() called per session.
         self._diarizer = SpeakerDiarizer()
@@ -125,18 +153,27 @@ class OverlayService:
                     elif mtype == "manual_ask":
                         await self._handle_manual_ask(ws, data, session_ctx, rag, ctx_mgr, repo)
                     elif mtype == "assessment_trigger":
-                        # Route to the assessment agent if one is active for this session
-                        agent: AssessmentAgent | None = session_ctx.get("_assessment_agent")
-                        if agent:
-                            asyncio.create_task(agent.handle_assessment_trigger(data))
+                        sid_rt = session_ctx.get("_session_id", "unknown")
+                        if not self._is_rate_limited(sid_rt, "assessment_trigger"):
+                            agent: AssessmentAgent | None = session_ctx.get("_assessment_agent")
+                            if agent:
+                                asyncio.create_task(agent.handle_assessment_trigger(data))
                     elif mtype == "screenshot_frame":
-                        await self._handle_screenshot(ws, data, session_ctx)
+                        sid_rt = session_ctx.get("_session_id", "unknown")
+                        if not self._is_rate_limited(sid_rt, "screenshot_frame"):
+                            await self._handle_screenshot(ws, data, session_ctx)
+                        else:
+                            await _safe_send(ws, {"type": "error", "code": "RATE_LIMITED", "message": "Too many screenshots"})
                     elif mtype == "screenshot_clear":
                         sid = session_ctx.get("_session_id", "")
                         self._vision.clear_buffer(sid)
                         await _safe_send(ws, {"type": "screenshot_cleared"})
                     elif mtype == "outcome_pill_ask":
-                        await self._handle_outcome_pill_ask(ws, data, session_ctx, rag, ctx_mgr, repo)
+                        sid_rt = session_ctx.get("_session_id", "unknown")
+                        if not self._is_rate_limited(sid_rt, "outcome_pill_ask"):
+                            await self._handle_outcome_pill_ask(ws, data, session_ctx, rag, ctx_mgr, repo)
+                        else:
+                            await _safe_send(ws, {"type": "error", "code": "RATE_LIMITED", "message": "Too many requests"})
         except WebSocketDisconnect as e:
             logger.info("Client disconnected (code=%s)", getattr(e, "code", "?"))
         except RuntimeError as e:
@@ -166,49 +203,76 @@ class OverlayService:
                 sid = session_ctx.get("_session_id")
                 if sid:
                     try:
-                        # Generate AI title + summary from transcript before closing
-                        transcript_buf = session_ctx.get("_transcript_buf", [])
-                        post_summary = None
-                        ai_title = None
-                        if transcript_buf:
-                            full_text = "\n".join(
-                                f"{e.speaker}: {e.text}" for e in transcript_buf
-                            )
-                            try:
-                                from app.services.cluely.deepseek_client import deepseek_generate
-                                ai_title = await deepseek_generate(
-                                    f"Give this interview session a short title (5-7 words max) based on the transcript below. Reply with ONLY the title, no quotes.\n\n{full_text[:1200]}",
-                                    system="You are a concise title generator.",
-                                    temperature=0.3, max_tokens=20,
-                                )
-                                ai_title = ai_title.strip().strip('"').strip("'")
-                                post_summary = await deepseek_generate(
-                                    f"Summarize this interview session in 2-3 sentences. Focus on topics covered and how the candidate performed.\n\n{full_text[:3000]}",
-                                    system="You are a concise interview session summarizer.",
-                                    temperature=0.3, max_tokens=150,
-                                )
-                            except Exception as e:
-                                logger.warning("[repo] AI title/summary failed: %s", e)
-
-                        await repo.end_session(sid, post_summary=post_summary)
-
-                        if ai_title:
-                            try:
-                                from sqlalchemy import text as sa_text
-                                # Only overwrite date-based fallback titles, not context-derived ones
-                                initial = session_ctx.get("_initial_title", "")
-                                needs_ai_title = not initial or initial.startswith("Session ")
-                                if needs_ai_title:
-                                    await repo._db.execute(
-                                        sa_text("UPDATE cluely_sessions SET title = :title WHERE id = :id"),
-                                        {"title": ai_title, "id": sid},
-                                    )
-                                    await repo._db.commit()
-                                    logger.info("[repo] AI title saved: %r", ai_title)
-                            except Exception as e:
-                                logger.warning("[repo] title update failed: %s", e)
+                        # end_session first — guarantees the record is marked ended
+                        # even if the AI title/summary generation below fails or times out
+                        await repo.end_session(sid, post_summary=None)
                     except Exception as e:
                         logger.error("[repo] end_session failed: %s", e)
+
+                    # Fire AI title + summary as a detached background task with a hard
+                    # 15s timeout so a slow LLM never blocks connection teardown.
+                    transcript_buf = session_ctx.get("_transcript_buf", [])
+                    if transcript_buf:
+                        async def _generate_title_summary(
+                            session_id: str,
+                            buf: list,
+                            initial_title: str,
+                        ) -> None:
+                            try:
+                                from app.services.cluely.deepseek_client import deepseek_generate
+                                from sqlalchemy import text as sa_text
+                                from app.core.database import AsyncSessionLocal
+
+                                full_text = "\n".join(f"{e.speaker}: {e.text}" for e in buf)
+                                ai_title, post_summary = None, None
+                                try:
+                                    ai_title = await asyncio.wait_for(
+                                        deepseek_generate(
+                                            f"Give this session a short title (5-7 words max). Reply with ONLY the title, no quotes.\n\n{full_text[:1200]}",
+                                            system="You are a concise title generator.",
+                                            temperature=0.3, max_tokens=20,
+                                        ),
+                                        timeout=10,
+                                    )
+                                    ai_title = ai_title.strip().strip('"').strip("'")
+                                    post_summary = await asyncio.wait_for(
+                                        deepseek_generate(
+                                            f"Summarize this session in 2-3 sentences.\n\n{full_text[:3000]}",
+                                            system="You are a concise session summarizer.",
+                                            temperature=0.3, max_tokens=150,
+                                        ),
+                                        timeout=10,
+                                    )
+                                except asyncio.TimeoutError:
+                                    logger.warning("[repo] AI title/summary timed out")
+                                except Exception as e:
+                                    logger.warning("[repo] AI title/summary failed: %s", e)
+
+                                async with AsyncSessionLocal() as db:
+                                    if post_summary:
+                                        await db.execute(
+                                            sa_text("UPDATE cluely_sessions SET summary = :s WHERE id = :id"),
+                                            {"s": post_summary, "id": session_id},
+                                        )
+                                    needs_ai_title = not initial_title or initial_title.startswith("Session ")
+                                    if ai_title and needs_ai_title:
+                                        await db.execute(
+                                            sa_text("UPDATE cluely_sessions SET title = :title WHERE id = :id"),
+                                            {"title": ai_title, "id": session_id},
+                                        )
+                                        logger.info("[repo] AI title saved: %r", ai_title)
+                                    await db.commit()
+                            except Exception as e:
+                                logger.error("[repo] background title/summary task failed: %s", e)
+
+                        asyncio.create_task(
+                            _generate_title_summary(
+                                sid,
+                                list(transcript_buf),
+                                session_ctx.get("_initial_title", ""),
+                            )
+                        )
+
                 try:
                     await repo._db.close()
                 except Exception:
@@ -226,9 +290,22 @@ class OverlayService:
     async def _start_session(self, ws: WebSocket, data: dict, user_id: str):
         from app.core.cache import get_redis
         from app.core.database import AsyncSessionLocal
+        from app.schemas.cluely import SessionStartRequest
+        from pydantic import ValidationError
 
-        sid = data["session_id"]
-        ctx = data.get("context", {})
+        # Validate and sanitise the incoming payload
+        try:
+            req = SessionStartRequest(
+                session_id=data.get("session_id", ""),
+                context=data.get("context", {}),
+            )
+        except ValidationError as e:
+            logger.warning("[session] Invalid session_start payload: %s", e)
+            await _safe_send(ws, {"type": "error", "code": "INVALID_REQUEST", "message": str(e)})
+            return None, None, {}, None
+
+        sid = req.session_id
+        ctx = req.context.model_dump()
         ctx["_session_id"] = sid
 
         r = await get_redis()
@@ -267,6 +344,17 @@ class OverlayService:
 
         session_type: str | None = ctx.get("assessmentMode") or ctx.get("assessment_mode") or None
         try:
+            # Ownership check: if session already exists, ensure it belongs to this user
+            existing_owner = await repo.get_session_owner(sid)
+            if existing_owner is not None and existing_owner != user_id:
+                logger.warning(
+                    "[security] session_id %s belongs to user %s, rejecting user %s",
+                    sid, existing_owner, user_id,
+                )
+                await _safe_send(ws, {"type": "error", "code": "FORBIDDEN", "message": "Session access denied"})
+                await ws.close(code=4003)
+                return None, None, {}, None
+
             await repo.create_session(
                 session_id=sid,
                 user_id=user_id,
@@ -443,7 +531,13 @@ class OverlayService:
                 # User speaking → check gap against current inferred outcome
                 await self._maybe_trigger_gap(ws, ctx_mgr, rag, session_ctx, text)
 
-            # Utterance buffer
+            # Emit each word individually so the frontend console shows word-by-word
+            words = result.get("words") or []
+            if words:
+                for word in words:
+                    await _safe_send(ws, {"type": "transcript_word", "speaker": speaker, "text": word, "seq": seq})
+
+            # Utterance buffer — uses full text for context/AI
             utterance     = session_ctx.get("_utterance", {})
             schedule_flush = session_ctx.get("_schedule_flush")
             if utterance is not None and schedule_flush is not None:
@@ -779,6 +873,24 @@ class OverlayService:
 
     # ------------------------------------------------------------------
 
+    def _is_rate_limited(self, session_id: str, msg_type: str) -> bool:
+        """
+        Sliding-window rate limiter per (session, message type).
+        Returns True if the caller should be throttled.
+        """
+        limit, window = _RATE_LIMITS.get(msg_type, (0, 60))
+        if limit == 0:
+            return False
+        key = (session_id, msg_type)
+        now = time.time()
+        count, window_start = self._ask_rate.get(key, (0, now))
+        if now - window_start >= window:
+            count, window_start = 0, now
+        if count >= limit:
+            return True
+        self._ask_rate[key] = (count + 1, window_start)
+        return False
+
     async def _handle_manual_ask(self, ws, data: dict, session_ctx: dict, rag, ctx_mgr=None, repo=None):
         text = data.get("text", "")
         if not text:
@@ -786,18 +898,13 @@ class OverlayService:
             return
 
         session_id = session_ctx.get("_session_id", "unknown")
-        now = time.time()
-        count, window_start = self._ask_rate.get(session_id, (0, now))
-        if now - window_start >= ASK_RATE_WINDOW:
-            count, window_start = 0, now
-        if count >= ASK_RATE_LIMIT:
+        if self._is_rate_limited(session_id, "manual_ask"):
             await _safe_send(ws, {
                 "type": "error",
                 "code": "ASK_RATE_LIMITED",
                 "message": f"Maximum {ASK_RATE_LIMIT} asks per minute reached.",
             })
             return
-        self._ask_rate[session_id] = (count + 1, window_start)
 
         rag_chunks = await rag.retrieve(text, k=3) if rag else []
         if ctx_mgr:

@@ -16,27 +16,42 @@ class LLMService:
 
     def _build_system_prompt(self, context: dict) -> str:
         """
-        First-person candidate voice. The AI speaks AS the user, not at them.
-        Resume and JD are injected so every response is grounded in the user's
-        actual background.
+        Universal first-person voice. The AI always speaks AS the user —
+        never as an AI assistant. Context tells it what situation the user
+        is in, but the rule is absolute: always first person, always as them.
         """
-        job_title     = context.get("job_title", "this role")
-        company       = context.get("company", "this company")
+        job_title     = context.get("job_title", "")
+        company       = context.get("company", "")
         resume_text   = context.get("resume_text", "")[:600]
         jd_text       = context.get("jd_text", "")[:400]
         extra_context = context.get("extra_context", "")
 
+        # Determine situation from available context
+        if job_title or company:
+            parts = ["You are in a live job interview"]
+            if job_title: parts.append(f"for {job_title}")
+            if company:   parts.append(f"at {company}")
+            situation = " ".join(parts) + "."
+        elif extra_context:
+            situation = "You are in a live session. Use the context documents below to inform your answers."
+        else:
+            situation = "You are in a live conversation."
+
         base = (
-            f"You are speaking AS the candidate in a live job interview for {job_title} at {company}. "
-            "Answer every question in the first person, naturally and confidently, as if you are the candidate speaking aloud. "
-            "Draw directly from the resume and job description provided — use specific experiences, projects, and skills. "
-            "Sound human: conversational, not textbook. No bullet points, no preamble, no meta-commentary. "
-            "One flowing answer, 2-4 sentences unless the question demands more. "
-            f"Resume: {resume_text}. "
-            f"Job description: {jd_text}."
+            f"{situation} "
+            "Speak entirely in the first person as the person being asked — "
+            "naturally, confidently, as if saying this aloud right now. "
+            "Never identify as an AI. Never say 'as an AI' or 'I can help with that'. "
+            "No bullet points, no preamble, no meta-commentary. "
+            "One flowing answer, 2-4 sentences unless the question demands more."
         )
+
+        if resume_text:
+            base += f"\n\nResume: {resume_text}."
+        if jd_text:
+            base += f"\n\nJob description / context: {jd_text}."
         if extra_context:
-            base += f"\n\nADDITIONAL CONTEXT DOCUMENTS (use these to inform your answers):\n{extra_context}"
+            base += f"\n\nCONTEXT DOCUMENTS (draw from these):\n{extra_context}"
         return base
 
     def _build_context_block(

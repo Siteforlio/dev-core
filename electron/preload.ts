@@ -6,7 +6,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   platform: process.platform,
   auth: authIPC,
   interview: interviewIPC,
-  getAccessToken: () => ipcRenderer.invoke('auth:get:token'),
+  getAccessToken:   () => ipcRenderer.invoke('auth:get:token'),
+  setRefreshToken:  (t: string) => ipcRenderer.invoke('auth:set:refresh', t),
+  refreshToken:     () => ipcRenderer.invoke('auth:refresh:token'),
   window: {
     minimize: () => ipcRenderer.invoke('window:minimize'),
     maximize: () => ipcRenderer.invoke('window:maximize'),
@@ -36,6 +38,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
       const handler = (_e: unknown, p: { speaker: 'interviewer' | 'user'; text: string; seq: number }) => cb(p)
       ipcRenderer.on('devcore:transcript', handler)
       return () => ipcRenderer.removeListener('devcore:transcript', handler)
+    },
+    onTranscriptWord: (cb: (p: { speaker: 'interviewer' | 'user'; text: string }) => void): (() => void) => {
+      const handler = (_e: unknown, p: { speaker: 'interviewer' | 'user'; text: string }) => cb(p)
+      ipcRenderer.on('devcore:transcript:word', handler)
+      return () => ipcRenderer.removeListener('devcore:transcript:word', handler)
     },
     onStatus: (cb: (p: { state: 'listening' | 'thinking' | 'paused' | 'idle' | 'reconnecting'; latencyMs: number }) => void): (() => void) => {
       const handler = (_e: unknown, p: { state: 'listening' | 'thinking' | 'paused' | 'idle' | 'reconnecting'; latencyMs: number }) => cb(p)
@@ -115,7 +122,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('devcore:assessment:trigger', payload),
     removeAllListeners: () => {
       ;[
-        'devcore:suggestion','devcore:transcript','devcore:status','devcore:error',
+        'devcore:suggestion','devcore:transcript','devcore:transcript:word','devcore:status','devcore:error',
         'devcore:hotkey','devcore:outcome','devcore:devices:changed','devcore:session:title',
         'devcore:tool:event','devcore:agent:thinking','devcore:agent:guidance','devcore:agent:solution',
         'devcore:session:mode','devcore:screenshot:count','devcore:screenshot:result',

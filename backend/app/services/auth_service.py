@@ -19,7 +19,9 @@ class AuthService:
         language_pref: str,
         consent_given: bool,
     ) -> User:
-        existing = await self.db.execute(select(User).where(User.email == email))
+        existing = await self.db.execute(
+            select(User).where(User.email == email, User.deleted_at.is_(None))
+        )
         if existing.scalar_one_or_none():
             raise UserAlreadyExistsError()
         user = User(
@@ -45,7 +47,9 @@ class AuthService:
         await self.db.commit()
 
     async def login(self, email: str, password: str) -> dict:
-        result = await self.db.execute(select(User).where(User.email == email))
+        result = await self.db.execute(
+            select(User).where(User.email == email, User.deleted_at.is_(None))
+        )
         user = result.scalar_one_or_none()
         if not user or not verify_password(password, user.hashed_password):
             raise InvalidCredentialsError()

@@ -73,8 +73,14 @@ def register_exception_handlers(app):
 
     @app.exception_handler(Exception)
     async def generic_exception_handler(request: Request, exc: Exception):
-        logger.error("Unhandled exception on %s %s:\n%s", request.method, request.url.path, traceback.format_exc())
+        correlation_id = getattr(request.state, "correlation_id", None)
+        logger.error(
+            "Unhandled exception on %s %s (correlation_id=%s):\n%s",
+            request.method, request.url.path, correlation_id, traceback.format_exc(),
+        )
+        headers = {"X-Correlation-ID": correlation_id} if correlation_id else {}
         return JSONResponse(
             status_code=500,
-            content={"data": None, "error": {"code": "INTERNAL_ERROR", "message": str(exc)}}
+            content={"data": None, "error": {"code": "INTERNAL_ERROR", "message": "An unexpected error occurred"}},
+            headers=headers,
         )

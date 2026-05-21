@@ -39,7 +39,7 @@ class ProfileService:
 
     async def get_profile(self, user_id: str):
         result = await self.db.execute(
-            select(JobHunterProfile).where(JobHunterProfile.user_id == user_id)
+            select(JobHunterProfile).where(JobHunterProfile.user_id == user_id, JobHunterProfile.deleted_at.is_(None))
         )
         return result.scalar_one_or_none()
 
@@ -63,7 +63,7 @@ class ProfileService:
 
     async def upsert_profile(self, user_id: str, data: dict) -> JobHunterProfile:
         result = await self.db.execute(
-            select(JobHunterProfile).where(JobHunterProfile.user_id == user_id)
+            select(JobHunterProfile).where(JobHunterProfile.user_id == user_id, JobHunterProfile.deleted_at.is_(None))
         )
         profile = result.scalar_one_or_none()
         completeness = self.check_completeness(data)
