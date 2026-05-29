@@ -71,7 +71,7 @@ def upgrade() -> None:
     conn.execute(sa.text("SAVEPOINT drop_fk_savepoint"))
     try:
         conn.execute(sa.text(
-            "ALTER TABLE user_progress DROP CONSTRAINT user_progress_session_id_fkey"
+            "ALTER TABLE user_progress DROP CONSTRAINT fk_user_progress_session_id_sessions"
         ))
         conn.execute(sa.text("RELEASE SAVEPOINT drop_fk_savepoint"))
     except Exception:
@@ -82,8 +82,16 @@ def downgrade() -> None:
     op.drop_table('simulation_debriefs')
     op.drop_table('simulation_turns')
     op.drop_table('simulation_sessions')
-    op.create_foreign_key(
-        'user_progress_session_id_fkey',
-        'user_progress', 'sessions',
-        ['session_id'], ['id'],
-    )
+    # Re-add the FK — use a savepoint so it's idempotent if it already exists
+    # (e.g. if upgrade() failed silently and never dropped it).
+    conn = op.get_bind()
+    conn.execute(sa.text("SAVEPOINT restore_fk_savepoint"))
+    try:
+        op.create_foreign_key(
+            'fk_user_progress_session_id_sessions',
+            'user_progress', 'sessions',
+            ['session_id'], ['id'],
+        )
+        conn.execute(sa.text("RELEASE SAVEPOINT restore_fk_savepoint"))
+    except Exception:
+        conn.execute(sa.text("ROLLBACK TO SAVEPOINT restore_fk_savepoint"))
