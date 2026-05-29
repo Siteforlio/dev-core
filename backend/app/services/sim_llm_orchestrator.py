@@ -44,12 +44,15 @@ class SimLLMOrchestrator:
 
     async def _call(self, prompt: str, think: bool = False) -> str:
         model = self._think if think else self._fast
-        response = await self._client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=2048,
-        )
-        return response.choices[0].message.content or ""
+        try:
+            response = await self._client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=2048,
+            )
+            return response.choices[0].message.content or ""
+        except openai.APIError as e:
+            raise RuntimeError(f"LLM call failed: {e}") from e
 
     def _parse_json(self, raw: str, fallback: dict) -> dict:
         if isinstance(raw, dict):
@@ -143,15 +146,26 @@ add a final line: END_SESSION"""
 
         raw = await self._call(prompt)
 
-        # Detect tool call
+        # Extract tool calls — parse each line that starts with {"tool":
         tool_calls: list[ToolCall] = []
-        tool_match = re.search(r'\{"tool":\s*"([^"]+)",\s*"command":\s*"([^"]+)"\}', raw)
-        if tool_match:
-            tool_calls.append(ToolCall(tool=tool_match.group(1), command=tool_match.group(2)))
-            raw = raw[:tool_match.start()].strip() + raw[tool_match.end():].strip()
+        lines = raw.splitlines()
+        non_tool_lines = []
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith('{"tool":'):
+                try:
+                    obj = json.loads(stripped)
+                    if "tool" in obj and "command" in obj:
+                        tool_calls.append(ToolCall(tool=obj["tool"], command=obj["command"]))
+                        continue
+                except json.JSONDecodeError:
+                    pass
+            non_tool_lines.append(line)
+        raw = "\n".join(non_tool_lines).strip()
 
-        end_signal = "END_SESSION" in raw
-        text = raw.replace("END_SESSION", "").strip()
+        # END_SESSION detection (word-boundary safe)
+        end_signal = bool(re.search(r'\bEND_SESSION\b', raw))
+        text = re.sub(r'\s*\bEND_SESSION\b\s*', '', raw).strip()
 
         return SimResponse(text=text, tool_calls=tool_calls, end_signal=end_signal)
 
@@ -209,7 +223,7 @@ Return ONLY valid JSON with this exact structure:
         raw = await self._call(prompt, think=think)
         data = self._parse_json(raw, fallback)
         return DebriefResult(
-            overall_score=float(data.get("overall_score", 5.0)),
+            overall_score=max(0.0, min(10.0, float(data.get("overall_score", 5.0)))),
             hire_signal=data.get("hire_signal", "borderline"),
             core_scores=data.get("core_scores", fallback["core_scores"]),
             scenario_scores=data.get("scenario_scores", {}),
