@@ -20,6 +20,18 @@ class SpeechService:
         )
         return response.content
 
+    async def synthesize_stream(self, text: str):
+        """Yield MP3 chunks as bytes using OpenAI streaming TTS."""
+        async with self._openai_client.audio.speech.with_streaming_response.create(
+            model="tts-1",
+            voice=TTS_VOICE,
+            input=text,
+            response_format="mp3",
+        ) as response:
+            async for chunk in response.iter_bytes(chunk_size=4096):
+                if chunk:
+                    yield chunk
+
     async def transcribe(self, audio_bytes: bytes, language_hint: str = "en") -> str:
         audio_file = io.BytesIO(audio_bytes)
         audio_file.name = "recording.webm"
