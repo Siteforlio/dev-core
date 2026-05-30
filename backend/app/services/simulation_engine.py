@@ -20,7 +20,7 @@ SCENARIO_TYPE_MAP = [
     (re.compile(r"system design|architecture", re.I),          "system_design"),
     (re.compile(r"teach|lesson|class|student", re.I),          "teaching"),
     (re.compile(r"behavioral|star|panel", re.I),               "behavioral"),
-    (re.compile(r"pair.program|live cod", re.I),               "mr_review"),
+    (re.compile(r"pair[\s.]program|live cod", re.I),            "mr_review"),
     (re.compile(r"negotiat|sales", re.I),                      "negotiation"),
 ]
 
@@ -100,7 +100,7 @@ class SimulationEngine:
         scenario_type = _detect_scenario_type(brief)
 
         # Pre-analyze attachments
-        attachment_analysis = await self._preload_attachments(attachments)
+        attachment_analysis = self._preload_attachments(attachments)
 
         # Build AI persona
         persona = await self._orchestrator.build_sim_persona(brief)
@@ -120,7 +120,10 @@ class SimulationEngine:
 
         # Cache attachments under sim namespace
         r = await get_redis()
-        await r.setex(f"sim:{session.id}:attachments", SESSION_TTL, json.dumps(attachment_analysis))
+        try:
+            await r.setex(f"sim:{session.id}:attachments", SESSION_TTL, json.dumps(attachment_analysis))
+        except Exception as e:
+            logger.warning("[sim_engine] Redis cache write failed for %s: %s", session.id, e)
 
         return {
             "session_id": session.id,
@@ -130,7 +133,7 @@ class SimulationEngine:
             "started_at": session.started_at.isoformat(),
         }
 
-    async def _preload_attachments(self, attachments: list) -> str:
+    def _preload_attachments(self, attachments: list) -> str:
         """Read attachment content. Returns a string context block for the LLM."""
         if not attachments:
             return ""
@@ -194,7 +197,11 @@ class SimulationEngine:
 
         # Get attachment context from Redis
         r = await get_redis()
-        raw_att = await r.get(f"sim:{session_id}:attachments")
+        try:
+            raw_att = await r.get(f"sim:{session_id}:attachments")
+        except Exception as e:
+            logger.warning("[sim_engine] Redis cache read failed for %s: %s", session_id, e)
+            raw_att = None
         attachment_context = raw_att or ""
 
         # Compute time remaining
@@ -242,7 +249,7 @@ class SimulationEngine:
             time_offset_seconds=int(elapsed),
             tool_calls=[
                 {"tool": tc.tool, "command": tc.command, "output": tc.output}
-                for tc in sim_response.tool_calls
+                for tc in (sim_response.tool_calls or [])
             ],
         )
         self._db.add(ai_turn)

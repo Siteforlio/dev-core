@@ -1,6 +1,6 @@
 # backend/app/models/pg/progress.py
 from datetime import datetime, timezone
-from sqlalchemy import String, DateTime, Float, ForeignKey
+from sqlalchemy import String, DateTime, Float, ForeignKey  # ForeignKey kept for user_id
 from sqlalchemy.orm import Mapped, mapped_column
 from app.models.pg.base import Base
 
@@ -14,7 +14,7 @@ class UserProgress(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
-    session_id: Mapped[str] = mapped_column(String, ForeignKey("sessions.id"), nullable=False)
+    session_id: Mapped[str] = mapped_column(String, nullable=False)  # logical link — FK dropped in migration h2i3j4k5l6m7
     career_track: Mapped[str] = mapped_column(String(100), nullable=False)
     level: Mapped[str] = mapped_column(String(50), nullable=False)
     stage: Mapped[str] = mapped_column(String(100), nullable=False)
