@@ -6,6 +6,8 @@ import Login from './pages/Login'
 import Onboarding from './pages/Onboarding'
 import Dashboard from './pages/Dashboard'
 import InterviewSession from './components/interview/InterviewSession'
+import { useSimulationStore } from './store/simulationStore'
+import SimulationSessionPage from './pages/SimulationSessionPage'
 
 type Screen = 'splash' | 'login' | 'register' | 'dashboard'
 
@@ -14,6 +16,7 @@ export default function App() {
   const token          = useAuthStore((s) => s.accessToken)
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
   const sessionId      = useInterviewStore((s) => s.sessionId)
+  const activeSimSessionId = useSimulationStore((s) => s.activeSimSessionId)
 
   // Redirect to login whenever auth is cleared (logout, token expiry)
   if (screen === 'dashboard' && !isAuthenticated) {
@@ -53,6 +56,7 @@ export default function App() {
   }
 
   if (sessionId) return <InterviewSession token={token ?? ''} />
+  if (activeSimSessionId) return <SimulationSessionPage />
 
   return <Dashboard />
 }
