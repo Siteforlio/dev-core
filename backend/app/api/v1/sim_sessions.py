@@ -5,15 +5,15 @@ import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, Depends, HTTPException
 from fastapi.responses import Response
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
+from app.core.database import get_db, AsyncSessionLocal
 from app.core.security import decode_token
 from app.core.exceptions import InvalidCredentialsError
 from app.core import ws_registry
 from app.models.pg.simulation import SimulationSession, SimulationDebrief
-from app.schemas.simulation import CreateSimSessionRequest, SimTurnRequest
+from app.schemas.simulation import CreateSimSessionRequest
 from app.services.simulation_engine import SimulationEngine, utcnow
 from app.services.sim_debrief_service import generate_pdf
 from app.services.speech_service import SpeechService
@@ -70,6 +70,8 @@ async def get_sim_session(
     session = result.scalar_one_or_none()
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+    if session.user_id != user_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
     return {"data": {
         "id": session.id,
         "scenario_type": session.scenario_type,
@@ -87,7 +89,12 @@ async def end_sim_session(
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(get_user_id),
 ):
-    from sqlalchemy import update
+    result = await db.execute(select(SimulationSession).where(SimulationSession.id == session_id))
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.user_id != user_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
     await db.execute(
         update(SimulationSession)
         .where(SimulationSession.id == session_id)
@@ -105,6 +112,12 @@ async def trigger_debrief(
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(get_user_id),
 ):
+    result = await db.execute(select(SimulationSession).where(SimulationSession.id == session_id))
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.user_id != user_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
     engine = SimulationEngine(db)
     debrief = await engine.generate_debrief(session_id)
     return {"data": debrief, "error": None}
@@ -117,9 +130,17 @@ async def get_debrief(
     user_id: str = Depends(get_user_id),
 ):
     result = await db.execute(
+        select(SimulationSession).where(SimulationSession.id == session_id)
+    )
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.user_id != user_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    result2 = await db.execute(
         select(SimulationDebrief).where(SimulationDebrief.session_id == session_id)
     )
-    d = result.scalar_one_or_none()
+    d = result2.scalar_one_or_none()
     if not d:
         raise HTTPException(status_code=404, detail="Debrief not yet generated")
     engine = SimulationEngine(db)
@@ -133,9 +154,17 @@ async def get_report(
     user_id: str = Depends(get_user_id),
 ):
     result = await db.execute(
+        select(SimulationSession).where(SimulationSession.id == session_id)
+    )
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.user_id != user_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    result2 = await db.execute(
         select(SimulationDebrief).where(SimulationDebrief.session_id == session_id)
     )
-    d = result.scalar_one_or_none()
+    d = result2.scalar_one_or_none()
     if not d:
         raise HTTPException(status_code=404, detail="Debrief not yet generated")
     engine = SimulationEngine(db)
@@ -172,6 +201,10 @@ async def sim_session_ws(
         await websocket.send_json({"type": "error", "code": "NOT_FOUND", "message": "Session not found"})
         await websocket.close()
         return
+    if session.user_id != user_id:
+        await websocket.send_json({"type": "error", "code": "FORBIDDEN", "message": "Forbidden"})
+        await websocket.close()
+        return
 
     engine = SimulationEngine(db)
     speech = SpeechService()
@@ -180,46 +213,47 @@ async def sim_session_ws(
 
     # Timer task — ticks every second, fires hard_cutoff at zero
     async def timer_loop():
-        from sqlalchemy import update as sa_update
+        if not budget:
+            return  # open-ended session — no timer needed
         try:
             while True:
                 await asyncio.sleep(1)
                 elapsed = (utcnow() - started_at).total_seconds()
-                if budget:
-                    remaining = max(0, int(budget - elapsed))
+                remaining = max(0, int(budget - elapsed))
+                try:
+                    await websocket.send_json({
+                        "type": "timer_update",
+                        "remaining_seconds": remaining,
+                        "budget_seconds": budget,
+                    })
+                except Exception:
+                    break
+                if remaining == 0:
+                    cutoff_msgs = {
+                        "pitch": "Time. Stop right there.",
+                        "mr_review": "Time's up. Let's debrief.",
+                        "system_design": "Time. Wrap it up.",
+                        "teaching": "Class time is over.",
+                        "behavioral": "Time. Thank you.",
+                        "negotiation": "Time. We'll pause here.",
+                    }
+                    msg = cutoff_msgs.get(session.scenario_type or "custom", "Time.")
                     try:
-                        await websocket.send_json({
-                            "type": "timer_update",
-                            "remaining_seconds": remaining,
-                            "budget_seconds": budget,
-                        })
+                        await websocket.send_json({"type": "hard_cutoff", "message": msg})
+                        await websocket.send_json({"type": "session_end", "reason": "time_expired"})
                     except Exception:
-                        break
-                    if remaining == 0:
-                        cutoff_msgs = {
-                            "pitch": "Time. Stop right there.",
-                            "mr_review": "Time's up. Let's debrief.",
-                            "system_design": "Time. Wrap it up.",
-                            "teaching": "Class time is over.",
-                            "behavioral": "Time. Thank you.",
-                            "negotiation": "Time. We'll pause here.",
-                        }
-                        msg = cutoff_msgs.get(session.scenario_type or "custom", "Time.")
-                        try:
-                            await websocket.send_json({"type": "hard_cutoff", "message": msg})
-                            await websocket.send_json({"type": "session_end", "reason": "time_expired"})
-                        except Exception:
-                            pass
-                        try:
-                            await db.execute(
-                                sa_update(SimulationSession)
+                        pass
+                    try:
+                        async with AsyncSessionLocal() as cutoff_db:
+                            await cutoff_db.execute(
+                                update(SimulationSession)
                                 .where(SimulationSession.id == session_id)
                                 .values(hard_cutoff_fired=True)
                             )
-                            await db.commit()
-                        except Exception as e:
-                            logger.warning("[sim_ws] DB update failed on cutoff: %s", e)
-                        break
+                            await cutoff_db.commit()
+                    except Exception as e:
+                        logger.warning("[sim_ws] DB update failed on cutoff: %s", e)
+                    break
         except asyncio.CancelledError:
             pass
 
@@ -276,6 +310,7 @@ async def sim_session_ws(
                         "type": "session_end",
                         "reason": "time_expired" if turn_result.get("cutoff") else "ai_ended",
                     })
+                    break
 
             elif msg_type == "end_session":
                 timer_task.cancel()
