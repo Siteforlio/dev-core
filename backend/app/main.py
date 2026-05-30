@@ -47,6 +47,7 @@ from app.api.v1.job_hunter.ws import router as jh_ws_router
 from app.api.v1.cluely.ws import router as cluely_ws_router
 from app.api.v1.cluely.sessions import router as cluely_sessions_router
 from app.api.v1.progress import router as progress_router
+from app.api.v1.sim_sessions import router as sim_sessions_router
 from app.graph.seed import run_seed
 from app.graph.knowledge_seed import seed_knowledge_profiles
 from app.core.database import AsyncSessionLocal
@@ -96,6 +97,7 @@ app.include_router(jh_ws_router, prefix="/api/v1")
 app.include_router(cluely_ws_router,      prefix="/api/v1")
 app.include_router(cluely_sessions_router, prefix="/api/v1")
 app.include_router(progress_router, prefix="/api/v1")
+app.include_router(sim_sessions_router, prefix="/api/v1")
 
 
 @app.get("/health")
