@@ -67,21 +67,39 @@ class SimLLMOrchestrator:
                 return fallback
 
     def _get_field(self, brief: dict, name: str) -> str:
-        """Extract a field value from brief.fields list by label."""
+        """Extract a field value — supports both {label,value} and {k,v} shapes."""
         for f in brief.get("fields", []):
-            if isinstance(f, dict) and f.get("label", "").lower() == name.lower():
-                return f.get("value", "")
+            if not isinstance(f, dict):
+                continue
+            key = f.get("label") or f.get("k") or ""
+            if key.lower() == name.lower():
+                return f.get("value") or f.get("v") or ""
         return ""
+
+    @staticmethod
+    def _flatten_summary(parts: list) -> str:
+        """Flatten summaryParts — handles plain strings and {hl: str} objects."""
+        out = []
+        for p in parts:
+            if isinstance(p, str):
+                out.append(p)
+            elif isinstance(p, dict):
+                out.append(p.get("hl") or "")
+        return "".join(out)
 
     async def build_sim_persona(self, brief: dict) -> str:
         role_playing = self._get_field(brief, "I'll play")
         pressure = self._get_field(brief, "Pressure")
-        summary = brief.get("summaryParts", ["a simulation"])
+        raw_summary = brief.get("summaryParts", ["a simulation"])
+        if isinstance(raw_summary, list):
+            summary = self._flatten_summary(raw_summary)
+        else:
+            summary = str(raw_summary)
         prompt = (
             f"You are about to play a character in a simulation. "
             f"Your character: {role_playing}. "
             f"Pressure level: {pressure}. "
-            f"Context: {' '.join(summary) if isinstance(summary, list) else summary}\n\n"
+            f"Context: {summary}\n\n"
             "Write a 2-3 sentence internal character note describing exactly how this character "
             "speaks, what they care about, and how they push back. Be concrete, no fluff. "
             "This is a private note — write as if briefing an actor."

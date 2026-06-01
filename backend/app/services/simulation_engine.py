@@ -61,11 +61,7 @@ def _parse_time_budget(time_str: str) -> int | None:
 
 
 def _detect_scenario_type(brief: dict) -> str:
-    format_val = ""
-    for f in brief.get("fields", []):
-        if isinstance(f, dict) and f.get("label", "").lower() == "format":
-            format_val = f.get("value", "")
-            break
+    format_val = _get_field(brief, "Format")
     for pattern, stype in SCENARIO_TYPE_MAP:
         if pattern.search(format_val):
             return stype
@@ -73,9 +69,13 @@ def _detect_scenario_type(brief: dict) -> str:
 
 
 def _get_field(brief: dict, name: str) -> str:
+    """Read a field from brief.fields — supports both {label,value} and {k,v} shapes."""
     for f in brief.get("fields", []):
-        if isinstance(f, dict) and f.get("label", "").lower() == name.lower():
-            return f.get("value", "")
+        if not isinstance(f, dict):
+            continue
+        key = f.get("label") or f.get("k") or ""
+        if key.lower() == name.lower():
+            return f.get("value") or f.get("v") or ""
     return ""
 
 
