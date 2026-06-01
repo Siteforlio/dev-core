@@ -44,11 +44,6 @@ interface Refinement {
   reply: string
 }
 
-interface LogLine {
-  who: 'you' | 'ai'
-  text: string
-}
-
 interface BrainStats {
   nodes: number
   active: number
@@ -79,6 +74,13 @@ export interface SimSessionParams {
 
 interface Props {
   onLaunch?: (params: SimSessionParams) => void
+}
+
+interface ChatMsg {
+  id: string
+  who: 'user' | 'ai'
+  text: string
+  card?: UnderstoodState
 }
 
 // ============================================================
@@ -353,7 +355,7 @@ function Icon({ name, size = 16, className }: { name: string; size?: number; cla
 }
 
 // ============================================================
-// BRAIN VIZ
+// BRAIN VIZ  (untouched)
 // ============================================================
 
 function hexToRgb(h: string): [number, number, number] {
@@ -646,183 +648,6 @@ function BrainViz({ level=0, burst=0, cyan='#5ad6ee', violet='#9b7bff', intensit
 }
 
 // ============================================================
-// COMPOSER
-// ============================================================
-
-function humanSize(b: number): string {
-  if (!b && b !== 0) return ''
-  if (b < 1024) return b + ' B'
-  if (b < 1024*1024) return (b/1024).toFixed(0) + ' KB'
-  return (b/1024/1024).toFixed(1) + ' MB'
-}
-function snipName(v: string): string {
-  const first = v.split('\n')[0].slice(0,22).trim()
-  return first ? 'snippet · ' + first + (v.length>22 ? '…' : '') : 'snippet.txt'
-}
-
-function Composer({ text, setText, attachments, onAdd, onRemove, onInterpret, busy }: {
-  text: string; setText: (v: string) => void
-  attachments: Attachment[]; onAdd: (a: Attachment) => void; onRemove: (i: number) => void
-  onInterpret: () => void; busy: boolean
-}) {
-  const [focus, setFocus] = useState(false)
-  const [inlineMode, setInlineMode] = useState<'path'|'snippet'|null>(null)
-  const [inlineVal, setInlineVal] = useState('')
-  const fileRef = useRef<HTMLInputElement>(null)
-  const imgRef = useRef<HTMLInputElement>(null)
-  const inlineRef = useRef<HTMLInputElement>(null)
-
-  useEffect(() => { if (inlineMode && inlineRef.current) inlineRef.current.focus() }, [inlineMode])
-
-  const pickFile = (kind: Attachment['kind']) => (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files||[])
-    files.forEach(f => onAdd({ kind, name: f.name, meta: humanSize(f.size) }))
-    e.target.value = ''
-  }
-
-  const commitInline = () => {
-    const v = inlineVal.trim()
-    if (v) {
-      if (inlineMode==='path') onAdd({ kind:'path', name:v, meta:'path' })
-      else onAdd({ kind:'snippet', name:snipName(v), meta:v.length+' chars' })
-    }
-    setInlineVal(''); setInlineMode(null)
-  }
-
-  const onKey = (e: React.KeyboardEvent) => {
-    if ((e.metaKey||e.ctrlKey) && e.key==='Enter') { e.preventDefault(); if (!busy) onInterpret() }
-  }
-
-  return (
-    <div className={'composer'+(focus?' focus':'')}>
-      <div className="composer-bar">
-        <span>context://intake</span>
-        <span className="composer-dots"><i className="cdot r"></i><i className="cdot y"></i><i className="cdot g"></i></span>
-      </div>
-      <textarea
-        value={text}
-        onChange={e=>setText(e.target.value)}
-        onFocus={()=>setFocus(true)}
-        onBlur={()=>setFocus(false)}
-        onKeyDown={onKey}
-        placeholder={"Describe what you want to rehearse. Anything goes —\n\n  › \"90 seconds to pitch my startup to a skeptical VC\"\n  › \"GitLab interview: review this MR, then pair with a dev\"\n  › \"defend my system design to a staff engineer\"\n\nDrop in file paths, files, images, or snippets below."}
-      />
-      {attachments.length>0 && (
-        <div className="attach-tray">
-          {attachments.map((a,i) => (
-            <span className={'chip '+(a.kind==='image'?'img':a.kind==='path'?'path':a.kind==='file'?'file':'')} key={i}>
-              <span className="chip-ic"><Icon name={a.kind==='image'?'image':a.kind==='path'?'path':a.kind==='snippet'?'snippet':'file'} size={13} /></span>
-              <span className="nm">{a.name}</span>
-              {a.meta && <span className="faint" style={{fontSize:9.5}}>{a.meta}</span>}
-              <span className="x" onClick={()=>onRemove(i)}>×</span>
-            </span>
-          ))}
-        </div>
-      )}
-      {inlineMode && (
-        <div className="path-input">
-          <Icon name={inlineMode==='path'?'path':'snippet'} size={14} className={inlineMode==='path'?'vi':'cy'} />
-          <input
-            ref={inlineRef}
-            value={inlineVal}
-            onChange={e=>setInlineVal(e.target.value)}
-            onKeyDown={e=>{ if(e.key==='Enter') commitInline(); if(e.key==='Escape'){setInlineMode(null);setInlineVal('')} }}
-            placeholder={inlineMode==='path'?'/repo/src/auth.py   or   github.com/org/repo#L40-90':'paste a snippet, error log, or note…'}
-          />
-          <button className="tool-btn" onClick={commitInline} style={{padding:'5px 9px'}}>add</button>
-        </div>
-      )}
-      <div className="composer-tools">
-        <button className="tool-btn" onClick={()=>fileRef.current?.click()}><Icon name="file" size={14} /> File</button>
-        <button className="tool-btn" onClick={()=>setInlineMode(inlineMode==='path'?null:'path')}><Icon name="path" size={14} /> Path</button>
-        <button className="tool-btn" onClick={()=>imgRef.current?.click()}><Icon name="image" size={14} /> Image</button>
-        <button className="tool-btn" onClick={()=>setInlineMode(inlineMode==='snippet'?null:'snippet')}><Icon name="snippet" size={14} /> Snippet</button>
-        <span className="tools-spacer"></span>
-        <button className="sim-btn btn-primary" onClick={onInterpret} disabled={busy||(!text.trim()&&attachments.length===0)}>
-          <Icon name="brain" size={15} /> Interpret
-        </button>
-      </div>
-      <input ref={fileRef} type="file" multiple hidden onChange={pickFile('file')} />
-      <input ref={imgRef} type="file" accept="image/*" multiple hidden onChange={pickFile('image')} />
-    </div>
-  )
-}
-
-// ============================================================
-// UNDERSTANDING
-// ============================================================
-
-function Understanding({ u, log, onChip, onFree, onReinterpret, onEdit, busy }: {
-  u: UnderstoodState; log: LogLine[]
-  onChip: (r: Refinement) => void; onFree: (t: string) => void
-  onReinterpret: () => void; onEdit: () => void; busy: boolean
-}) {
-  const [val, setVal] = useState('')
-  const submit = () => { const v=val.trim(); if(v){onFree(v);setVal('')} }
-
-  return (
-    <div className="understanding">
-      <div className="und-head">
-        <span className="ic"><Icon name="brain" size={16} /></span>
-        <span className="t">Here's what I'll run — does this land?</span>
-        <span style={{flex:1}}></span>
-        <button className="tool-btn" onClick={onEdit}><Icon name="edit" size={13} /> edit context</button>
-      </div>
-      <div className="und-summary">
-        {u.summaryParts.map((p,i) =>
-          typeof p==='string'
-            ? <span key={i}>{p}</span>
-            : <span className="hl" key={i}>{(p as {hl:string}).hl}</span>
-        )}
-      </div>
-      <div className="und-fields">
-        {u.fields.map(f => (
-          <div className="und-field" key={f.k}>
-            <div className="k">{f.k}</div>
-            <div className="v">{f.accent && <span className="accentdot">▸ </span>}{f.v}</div>
-          </div>
-        ))}
-      </div>
-      {log.length>0 && (
-        <div className="refine-log">
-          {log.map((l,i) => (
-            <div className={'log-line '+l.who} key={i}>
-              <span className="ar">{l.who==='you'?'›':'◆'}</span>
-              <span className="tx">{l.text}</span>
-            </div>
-          ))}
-        </div>
-      )}
-      <div className="refine">
-        <div className="refine-chips">
-          {REFINEMENTS.map(r => (
-            <button className="refine-chip" key={r.label} onClick={()=>onChip(r)}>{r.label}</button>
-          ))}
-        </div>
-        <div className="refine-input-row">
-          <span className="prompt">›</span>
-          <input
-            value={val}
-            onChange={e=>setVal(e.target.value)}
-            onKeyDown={e=>{ if(e.key==='Enter') submit() }}
-            placeholder={"e.g. \"you're not a senior dev — you're a VC partner\""}
-          />
-          <button className="refine-send" onClick={submit}><Icon name="send" size={15} /></button>
-        </div>
-      </div>
-      <div style={{padding:'14px 16px 16px', borderTop:'1px solid var(--line)'}}>
-        <button className="sim-btn btn-ghost btn-block" onClick={onReinterpret} disabled={busy}>
-          <Icon name="refresh" size={15} /> Re-read my context
-        </button>
-        <div className="hintline" style={{marginTop:11, justifyContent:'center'}}>
-          <span>Correct me until it's right — then hit <span className="vi">Start Session</span> on the core →</span>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ============================================================
 // LAUNCH OVERLAY
 // ============================================================
 
@@ -865,11 +690,104 @@ function LaunchOverlay({ u, onClose, onConfirm }: { u: UnderstoodState|null; onC
           </div>
         </div>
         <div style={{padding:'16px 24px', borderTop:'1px solid var(--line)', display:'flex', gap:10, justifyContent:'flex-end'}}>
-          <button className="sim-btn btn-ghost" onClick={onClose}>↩ Back to builder</button>
+          <button className="sim-btn btn-ghost" onClick={onClose}>↩ Back</button>
           <button className="sim-btn btn-launch" disabled={!ready} onClick={onConfirm}>
             <Icon name="play" size={15} /> {ready ? 'Enter session' : 'Booting…'}
           </button>
         </div>
+      </div>
+    </div>
+  )
+}
+
+// ============================================================
+// CHAT COMPONENTS
+// ============================================================
+
+function ContextCard({ u, onChip }: { u: UnderstoodState; onChip: (r: Refinement) => void }) {
+  return (
+    <div style={{ marginTop: 12 }}>
+      {/* summary sentence */}
+      <div style={{ fontSize: 12.5, color: 'var(--ink-dim)', lineHeight: 1.6, marginBottom: 10 }}>
+        {u.summaryParts.map((p, i) =>
+          typeof p === 'string'
+            ? <span key={i}>{p}</span>
+            : <span key={i} style={{ color: 'var(--cy)', fontWeight: 600 }}>{(p as {hl:string}).hl}</span>
+        )}
+      </div>
+      {/* compact fields */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 0, border: '1px solid rgba(34,211,238,0.1)', borderRadius: 6, overflow: 'hidden' }}>
+        {u.fields.map((f, i) => (
+          <div key={f.k} style={{
+            display: 'flex', gap: 10, padding: '6px 12px',
+            background: i % 2 === 0 ? 'rgba(255,255,255,0.015)' : 'transparent',
+            borderBottom: i < u.fields.length - 1 ? '1px solid rgba(34,211,238,0.06)' : 'none',
+          }}>
+            <span style={{ color: 'var(--ink-ghost)', fontSize: 11, width: 80, flexShrink: 0, letterSpacing: '0.05em', paddingTop: 1 }}>{f.k}</span>
+            <span style={{ color: f.accent ? 'var(--vi)' : 'var(--cy)', fontSize: 12, lineHeight: 1.5 }}>{f.v}</span>
+          </div>
+        ))}
+      </div>
+      {/* quick chips */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
+        {REFINEMENTS.map(r => (
+          <button key={r.label} onClick={() => onChip(r)} style={{
+            padding: '4px 10px',
+            background: 'rgba(155,123,255,0.07)',
+            border: '1px solid rgba(155,123,255,0.18)',
+            borderRadius: 20,
+            color: 'var(--vi)',
+            fontSize: 11,
+            cursor: 'pointer',
+            fontFamily: 'var(--mono)',
+            letterSpacing: '0.03em',
+            transition: 'all 0.14s',
+          }}
+          onMouseEnter={e => { e.currentTarget.style.background = 'rgba(155,123,255,0.14)'; e.currentTarget.style.borderColor = 'rgba(155,123,255,0.4)' }}
+          onMouseLeave={e => { e.currentTarget.style.background = 'rgba(155,123,255,0.07)'; e.currentTarget.style.borderColor = 'rgba(155,123,255,0.18)' }}
+          >{r.label}</button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function ChatBubble({ msg, onChip }: { msg: ChatMsg; onChip: (r: Refinement) => void }) {
+  const isUser = msg.who === 'user'
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: isUser ? 'flex-end' : 'flex-start' }}>
+      <div style={{
+        maxWidth: isUser ? '78%' : '94%',
+        padding: '10px 14px',
+        borderRadius: isUser ? '12px 4px 12px 12px' : '4px 12px 12px 12px',
+        background: isUser
+          ? 'linear-gradient(135deg, rgba(90,214,238,0.12), rgba(90,214,238,0.06))'
+          : 'rgba(155,123,255,0.06)',
+        border: isUser
+          ? '1px solid rgba(90,214,238,0.22)'
+          : '1px solid rgba(155,123,255,0.14)',
+        fontSize: 13.5,
+        lineHeight: 1.6,
+        color: 'var(--ink)',
+        fontFamily: 'var(--mono)',
+      }}>
+        {msg.text && <span>{msg.text}</span>}
+        {msg.card && <ContextCard u={msg.card} onChip={onChip} />}
+      </div>
+    </div>
+  )
+}
+
+function ThinkingBubble() {
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-start' }}>
+      <div style={{
+        padding: '12px 18px',
+        borderRadius: '4px 12px 12px 12px',
+        background: 'rgba(155,123,255,0.06)',
+        border: '1px solid rgba(155,123,255,0.14)',
+      }}>
+        <span className="think-dots"><i></i><i></i><i></i></span>
       </div>
     </div>
   )
@@ -891,54 +809,132 @@ function stateWord(phase: string, level: number): string {
 export default function SimulationBuilder({ onLaunch }: Props) {
   const token = useAuthStore((s) => s.accessToken)
   const setSession = useSimulationStore((s) => s.setSession)
+
   const [text, setText] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [presetId, setPresetId] = useState<string|null>(null)
   const [phase, setPhase] = useState<'build'|'interpreting'|'understood'>('build')
   const [u, setU] = useState<UnderstoodState|null>(null)
-  const [log, setLog] = useState<LogLine[]>([])
   const [burst, setBurst] = useState(0)
   const [stats, setStats] = useState<BrainStats>({ nodes:0, active:0, edges:0, pulses:0 })
   const [showLaunch, setShowLaunch] = useState(false)
 
-  const fire = () => setBurst(b=>b+1)
+  // Chat state
+  const [messages, setMessages] = useState<ChatMsg[]>([{
+    id: 'init',
+    who: 'ai',
+    text: "What do you want to rehearse? Describe the scenario, who you'll be speaking with, and how much pressure. Drop in files, paths, or snippets if you have materials.",
+  }])
+  const [chatInput, setChatInput] = useState('')
+  const [inlineMode, setInlineMode] = useState<'path'|'snippet'|null>(null)
+  const [inlineVal, setInlineVal] = useState('')
+
+  const chatEndRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
+  const inlineRef = useRef<HTMLInputElement>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+  const imgRef = useRef<HTMLInputElement>(null)
+
+  const fire = () => setBurst(b => b + 1)
 
   const base = contextLevel(text, attachments, !!presetId)
   const level = phase==='interpreting' ? Math.max(base,0.82) : phase==='understood' ? Math.min(1,base+0.3) : base
   const signals = detectSignals(text, attachments)
+  const word = stateWord(phase, level)
 
-  const addAttachment = (a: Attachment) => setAttachments(prev=>[...prev,a])
-  const removeAttachment = (i: number) => setAttachments(prev=>prev.filter((_,x)=>x!==i))
+  // Auto-scroll to bottom on new messages
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages, phase])
 
-  const pickPreset = (p: Preset) => {
-    setPresetId(p.id); setText(p.seed); fire()
+  useEffect(() => {
+    if (inlineMode && inlineRef.current) inlineRef.current.focus()
+  }, [inlineMode])
+
+  const addAttachment = (a: Attachment) => { setAttachments(prev => [...prev, a]); fire() }
+  const removeAttachment = (i: number) => setAttachments(prev => prev.filter((_, x) => x !== i))
+
+  const humanSize = (b: number) => {
+    if (!b && b !== 0) return ''
+    if (b < 1024) return b + ' B'
+    if (b < 1024*1024) return (b/1024).toFixed(0) + ' KB'
+    return (b/1024/1024).toFixed(1) + ' MB'
+  }
+  const snipName = (v: string) => {
+    const first = v.split('\n')[0].slice(0,22).trim()
+    return first ? 'snippet · ' + first + (v.length>22 ? '…' : '') : 'snippet.txt'
   }
 
-  const doInterpret = useCallback(() => {
-    setPhase('interpreting'); setLog([]); fire()
+  const pickFile = (kind: Attachment['kind']) => (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || [])
+    files.forEach(f => addAttachment({ kind, name: f.name, meta: humanSize(f.size) }))
+    e.target.value = ''
+  }
+
+  const commitInline = () => {
+    const v = inlineVal.trim()
+    if (v) {
+      if (inlineMode === 'path') addAttachment({ kind: 'path', name: v, meta: 'path' })
+      else addAttachment({ kind: 'snippet', name: snipName(v), meta: v.length + ' chars' })
+    }
+    setInlineVal(''); setInlineMode(null)
+  }
+
+  const send = useCallback(() => {
+    const v = chatInput.trim()
+    if (!v && attachments.length === 0) return
+
+    // Build the user message text (include attachment names if any)
+    const attNote = attachments.length > 0
+      ? (v ? ' ' : '') + '[' + attachments.map(a => a.name).join(', ') + ']'
+      : ''
+    const userText = v + attNote
+
+    const userMsg: ChatMsg = { id: `u-${Date.now()}`, who: 'user', text: userText }
+    setMessages(prev => [...prev, userMsg])
+    setChatInput('')
+    fire()
+
+    // Accumulate context text
+    const newText = phase === 'build' ? v : (text ? text + '\n' + v : v)
+    setText(newText)
+
+    // Interpret or refine
+    setPhase('interpreting')
+    const delay = phase === 'understood' ? 700 : 1100
+
     setTimeout(() => {
-      setU(interpret(text, attachments, presetId))
-      setPhase('understood'); fire()
-    }, 1150)
-  }, [text, attachments, presetId])
+      if (phase === 'understood' && u) {
+        const { u: nu, reply } = applyFreeRefine(u, v)
+        setU(nu)
+        const aiMsg: ChatMsg = { id: `a-${Date.now()}`, who: 'ai', text: reply, card: nu }
+        setMessages(prev => [...prev, aiMsg])
+      } else {
+        const nu = interpret(newText, attachments, presetId)
+        setU(nu)
+        const aiMsg: ChatMsg = { id: `a-${Date.now()}`, who: 'ai', text: "Here's what I'll run:", card: nu }
+        setMessages(prev => [...prev, aiMsg])
+        if (presetId) setPresetId(null)
+      }
+      setPhase('understood')
+      fire()
+    }, delay)
+  }, [chatInput, attachments, phase, text, u, presetId])
 
-  const reinterpret = () => {
-    setPhase('interpreting'); fire()
-    setTimeout(() => { setU(interpret(text, attachments, presetId)); setPhase('understood'); fire() }, 900)
-  }
+  const chipRefine = useCallback((r: Refinement) => {
+    if (!u) return
+    const nu = r.apply(u)
+    setU(nu)
+    const userMsg: ChatMsg = { id: `u-${Date.now()}`, who: 'user', text: r.label }
+    const aiMsg: ChatMsg = { id: `a-${Date.now()}`, who: 'ai', text: r.reply, card: nu }
+    setMessages(prev => [...prev, userMsg, aiMsg])
+    fire()
+  }, [u])
 
-  const chipRefine = (r: Refinement) => {
-    setU(prev => r.apply(prev!))
-    setLog(l=>[...l, {who:'you',text:r.label}, {who:'ai',text:r.reply}])
-    fire()
-  }
-  const freeRefine = (txt: string) => {
-    setU(prev => {
-      const { u: nu, reply } = applyFreeRefine(prev!, txt)
-      setLog(l=>[...l, {who:'you',text:txt}, {who:'ai',text:reply}])
-      return nu
-    })
-    fire()
+  const handlePreset = (p: Preset) => {
+    setPresetId(p.id)
+    setChatInput(p.seed)
+    inputRef.current?.focus()
   }
 
   const doLaunch = () => { setShowLaunch(true); fire() }
@@ -966,8 +962,6 @@ export default function SimulationBuilder({ onLaunch }: Props) {
     if (onLaunch) onLaunch({ text, attachments, understood: u })
   }
 
-  const word = stateWord(phase, level)
-
   return (
     <div className="sim-stage">
       {/* top bar */}
@@ -983,73 +977,125 @@ export default function SimulationBuilder({ onLaunch }: Props) {
       </div>
 
       <div className="sim-layout">
-        {/* ─── builder ─── */}
-        <div className="builder">
-          <div className="builder-scroll">
-            <div className="builder-head">
-              <div className="eyebrow">Simulation Builder</div>
-              <h1>What should we rehearse?<span className="cursor"></span></h1>
-              <p>Feed the brain anything — a scenario in plain words, file paths, files, images, snippets. It reads your intent first, you refine it together, <em>then</em> you launch the live run.</p>
-            </div>
+        {/* ─── chat column ─── */}
+        <div className="builder" style={{ overflow: 'hidden' }}>
 
-            {phase!=='understood' && (
-              <Composer
-                text={text}
-                setText={v=>{ setText(v); if(presetId) setPresetId(null) }}
-                attachments={attachments}
-                onAdd={addAttachment}
-                onRemove={removeAttachment}
-                onInterpret={doInterpret}
-                busy={phase==='interpreting'}
-              />
-            )}
-
-            {phase==='build' && (
-              <div style={{display:'flex', flexDirection:'column', gap:12}}>
-                <div className="sec-row">
-                  <span className="lbl">or load a starting point</span>
-                  <span className="line"></span>
-                </div>
-                <div className="preset-grid">
-                  {PRESETS.map(p => (
-                    <button key={p.id} className={'preset'+(presetId===p.id?' on':'')} onClick={()=>pickPreset(p)}>
-                      <div className="preset-top">
-                        <span className="preset-ic"><Icon name={p.icon} size={15} /></span>
-                        <span className="preset-title">{p.title}</span>
-                      </div>
-                      <span className="preset-desc">{p.desc}</span>
-                    </button>
-                  ))}
-                </div>
-                <div className="hintline" style={{marginTop:4}}>
-                  <Icon name="brain" size={13} className="faint" />
-                  <span>Tip: press <kbd>⌘</kbd> <kbd>↵</kbd> to interpret. Nothing launches until you say so.</span>
-                </div>
-              </div>
-            )}
-
-            {phase==='interpreting' && (
-              <div className="understanding">
-                <div className="thinking">
-                  <Icon name="brain" size={18} className="vi" />
-                  <span>Reading your context, mapping intent</span>
-                  <span className="think-dots"><i></i><i></i><i></i></span>
-                </div>
-              </div>
-            )}
-
-            {phase==='understood' && u && (
-              <Understanding
-                u={u} log={log}
-                onChip={chipRefine} onFree={freeRefine}
-                onReinterpret={reinterpret} onEdit={()=>setPhase('build')}
-                busy={false}
-              />
-            )}
+          {/* messages */}
+          <div style={{ flex: 1, overflowY: 'auto', padding: '24px 28px', display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0 }}>
+            {messages.map(m => <ChatBubble key={m.id} msg={m} onChip={chipRefine} />)}
+            {phase === 'interpreting' && <ThinkingBubble />}
+            <div ref={chatEndRef} />
           </div>
+
+          {/* quick-start presets — only before first send */}
+          {phase === 'build' && messages.length === 1 && (
+            <div style={{ padding: '0 28px 12px', display: 'flex', flexWrap: 'wrap', gap: 7 }}>
+              {PRESETS.filter(p => p.seed).map(p => (
+                <button key={p.id} onClick={() => handlePreset(p)} style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 7,
+                  padding: '5px 12px',
+                  background: 'rgba(255,255,255,0.025)',
+                  border: '1px solid var(--line-2)',
+                  borderRadius: 20,
+                  color: 'var(--ink-dim)',
+                  fontSize: 11.5,
+                  cursor: 'pointer',
+                  fontFamily: 'var(--mono)',
+                  letterSpacing: '0.03em',
+                  transition: 'all 0.14s',
+                }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--line-hot)'; e.currentTarget.style.color = 'var(--cy)' }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--line-2)'; e.currentTarget.style.color = 'var(--ink-dim)' }}
+                >
+                  <Icon name={p.icon} size={12} />
+                  {p.title}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* attachment chips */}
+          {attachments.length > 0 && (
+            <div className="attach-tray" style={{ padding: '6px 28px', borderTop: '1px solid var(--line)' }}>
+              {attachments.map((a, i) => (
+                <span className={'chip ' + (a.kind === 'image' ? 'img' : a.kind === 'path' ? 'path' : a.kind === 'file' ? 'file' : '')} key={i}>
+                  <span className="chip-ic"><Icon name={a.kind==='image'?'image':a.kind==='path'?'path':a.kind==='snippet'?'snippet':'file'} size={13} /></span>
+                  <span className="nm">{a.name}</span>
+                  {a.meta && <span className="faint" style={{fontSize:9.5}}>{a.meta}</span>}
+                  <span className="x" onClick={() => removeAttachment(i)}>×</span>
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* inline path/snippet input */}
+          {inlineMode && (
+            <div className="path-input" style={{ margin: '0 28px 8px' }}>
+              <Icon name={inlineMode==='path'?'path':'snippet'} size={14} className={inlineMode==='path'?'vi':'cy'} />
+              <input
+                ref={inlineRef}
+                value={inlineVal}
+                onChange={e => setInlineVal(e.target.value)}
+                onKeyDown={e => { if (e.key==='Enter') commitInline(); if (e.key==='Escape') { setInlineMode(null); setInlineVal('') } }}
+                placeholder={inlineMode==='path' ? '/repo/src/file.py  or  github.com/org/repo' : 'paste a snippet, error log, or note…'}
+              />
+              <button className="tool-btn" onClick={commitInline} style={{padding:'5px 9px'}}>add</button>
+            </div>
+          )}
+
+          {/* input area */}
+          <div style={{ padding: '12px 16px 14px', borderTop: '1px solid var(--line)' }}>
+            {/* attachment toolbar */}
+            <div style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
+              <button className="tool-btn" onClick={() => fileRef.current?.click()}><Icon name="file" size={13} /> File</button>
+              <button className="tool-btn" onClick={() => setInlineMode(inlineMode==='path'?null:'path')}><Icon name="path" size={13} /> Path</button>
+              <button className="tool-btn" onClick={() => imgRef.current?.click()}><Icon name="image" size={13} /> Image</button>
+              <button className="tool-btn" onClick={() => setInlineMode(inlineMode==='snippet'?null:'snippet')}><Icon name="snippet" size={13} /> Snippet</button>
+            </div>
+            {/* text + send */}
+            <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+              <textarea
+                ref={inputRef}
+                value={chatInput}
+                onChange={e => setChatInput(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
+                placeholder={phase === 'understood' ? 'Refine the brief…' : 'Describe what you want to rehearse…'}
+                rows={2}
+                style={{
+                  flex: 1, resize: 'none',
+                  background: 'rgba(255,255,255,0.03)',
+                  border: '1px solid var(--line-2)',
+                  borderRadius: 8,
+                  padding: '10px 13px',
+                  color: 'var(--ink)',
+                  fontFamily: 'var(--mono)',
+                  fontSize: 13.5,
+                  lineHeight: 1.55,
+                  outline: 'none',
+                  transition: 'border-color 0.2s',
+                }}
+                onFocus={e => { e.currentTarget.style.borderColor = 'var(--line-hot)' }}
+                onBlur={e => { e.currentTarget.style.borderColor = 'var(--line-2)' }}
+              />
+              <button
+                onClick={send}
+                disabled={phase === 'interpreting' || (!chatInput.trim() && attachments.length === 0)}
+                className="sim-btn btn-primary"
+                style={{ padding: '10px 16px', alignSelf: 'stretch' }}
+              >
+                <Icon name="send" size={14} />
+              </button>
+            </div>
+            <div style={{ marginTop: 7, fontSize: 10.5, color: 'var(--ink-ghost)', letterSpacing: '0.05em' }}>
+              ↵ send · shift+↵ newline
+            </div>
+          </div>
+
+          <input ref={fileRef} type="file" multiple hidden onChange={pickFile('file')} />
+          <input ref={imgRef} type="file" accept="image/*" multiple hidden onChange={pickFile('image')} />
         </div>
 
-        {/* ─── brain ─── */}
+        {/* ─── brain panel (untouched) ─── */}
         <div className="brainwrap">
           <div className="brain-hud">
             <div className="brain-hud-inner">
@@ -1089,14 +1135,14 @@ export default function SimulationBuilder({ onLaunch }: Props) {
               disabled={phase!=='understood'}
               onClick={doLaunch}
             >
-              <Icon name="play" size={16} /> {phase==='understood' ? 'Start Session' : 'Interpret your context to begin'}
+              <Icon name="play" size={16} /> {phase==='understood' ? 'Start Session' : 'Describe your scenario first'}
             </button>
           </div>
         </div>
       </div>
 
       {showLaunch && (
-        <LaunchOverlay u={u} onClose={()=>setShowLaunch(false)} onConfirm={handleConfirmLaunch} />
+        <LaunchOverlay u={u} onClose={() => setShowLaunch(false)} onConfirm={handleConfirmLaunch} />
       )}
     </div>
   )
