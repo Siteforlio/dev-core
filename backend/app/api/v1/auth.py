@@ -11,7 +11,8 @@ from app.core.exceptions import InvalidCredentialsError
 from app.core.config import settings
 
 router = APIRouter(prefix="/auth", tags=["auth"])
-bearer = HTTPBearer()
+bearer = HTTPBearer(auto_error=True)
+refresh_bearer = HTTPBearer(auto_error=False)  # returns None instead of 403 on missing header
 
 
 def get_user_id(credentials: HTTPAuthorizationCredentials = Depends(bearer)) -> str:
@@ -46,7 +47,9 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/refresh", response_model=dict)
-async def refresh_token(credentials: HTTPAuthorizationCredentials = Depends(bearer)):
+async def refresh_token(credentials: HTTPAuthorizationCredentials | None = Depends(refresh_bearer)):
+    if not credentials:
+        raise HTTPException(status_code=401, detail="Refresh token required")
     try:
         payload = decode_refresh_token_payload(credentials.credentials)
     except InvalidCredentialsError:

@@ -18,6 +18,11 @@ async function attemptRefresh(): Promise<string | null> {
     if (!res.ok) { clearAuth(); return null }
     const { data } = await res.json()
     setAccessToken(data.access_token)
+    // Store the rotated refresh token so the next cycle doesn't replay a blacklisted JTI
+    if (data.refresh_token) {
+      useAuthStore.setState({ refreshToken: data.refresh_token })
+      ;(window as any).electronAPI?.setRefreshToken?.(data.refresh_token)
+    }
     return data.access_token
   } catch {
     clearAuth()
