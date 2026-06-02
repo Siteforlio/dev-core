@@ -184,6 +184,7 @@ export function useJobHunter() {
         status: a.status,
         matchScore: a.match_score ?? null,
         source: a.source ?? '',
+        appliedElsewhere: a.applied_elsewhere === true,
       })) as Application[],
       interviews: (data.interviews ?? []).map((i: Record<string, unknown>) => ({
         applicationId: i.application_id,

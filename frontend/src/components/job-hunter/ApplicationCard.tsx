@@ -42,7 +42,7 @@ function MatchBar({ score }: { score: string | null }) {
 }
 
 export default function ApplicationCard({ application, onStartInterviewPrep, onApply, onViewTracking }: Props) {
-  const { id, company, title, location, appliedAt, status, matchScore } = application
+  const { id, company, title, location, appliedAt, status, matchScore, source, appliedElsewhere } = application
   const isApplied = status === 'applied' || status === 'interview' || status === 'offer' || status === 'responded'
   const showInterviewPrep = status === 'interview'
   const appliedDate = appliedAt ? new Date(appliedAt).toLocaleDateString('en-GB') : '—'
@@ -53,20 +53,43 @@ export default function ApplicationCard({ application, onStartInterviewPrep, onA
       style={{
         gridTemplateColumns: '1fr 1fr 160px 100px 90px 100px',
         padding: '10px 16px',
-        borderBottom: '1px solid rgba(34,211,238,0.05)',
-        background: 'transparent',
+        borderBottom: appliedElsewhere
+          ? '1px solid rgba(251,191,36,0.12)'
+          : '1px solid rgba(34,211,238,0.05)',
+        background: appliedElsewhere ? 'rgba(251,191,36,0.03)' : 'transparent',
       }}
-      onMouseEnter={e => (e.currentTarget.style.background = 'rgba(34,211,238,0.03)')}
-      onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+      onMouseEnter={e => (e.currentTarget.style.background = appliedElsewhere ? 'rgba(251,191,36,0.06)' : 'rgba(34,211,238,0.03)')}
+      onMouseLeave={e => (e.currentTarget.style.background = appliedElsewhere ? 'rgba(251,191,36,0.03)' : 'transparent')}
     >
       {/* Company */}
       <div className="min-w-0 pr-3">
-        <p
-          className="text-sm font-semibold truncate"
-          style={{ color: 'rgba(226,232,240,0.9)', fontFamily: 'monospace' }}
-        >
-          {company}
-        </p>
+        <div className="flex items-center gap-2">
+          <p
+            className="text-sm font-semibold truncate"
+            style={{ color: 'rgba(226,232,240,0.9)', fontFamily: 'monospace' }}
+          >
+            {company}
+          </p>
+          {appliedElsewhere && (
+            <span
+              title="You've already applied to this role in another campaign"
+              style={{
+                fontSize: 9,
+                fontFamily: 'monospace',
+                letterSpacing: '0.06em',
+                padding: '2px 6px',
+                borderRadius: 3,
+                background: 'rgba(251,191,36,0.12)',
+                border: '1px solid rgba(251,191,36,0.3)',
+                color: '#fbbf24',
+                flexShrink: 0,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              APPLIED
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Role */}
@@ -84,6 +107,18 @@ export default function ApplicationCard({ application, onStartInterviewPrep, onA
           >
             {location}
           </p>
+        )}
+        {source && (
+          <span
+            className="inline-block text-[9px] font-mono px-1.5 py-px rounded mt-1"
+            style={{
+              background: 'rgba(34,211,238,0.07)',
+              border: '1px solid rgba(34,211,238,0.15)',
+              color: 'rgba(34,211,238,0.5)',
+            }}
+          >
+            {source}
+          </span>
         )}
       </div>
 

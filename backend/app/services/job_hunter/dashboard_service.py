@@ -48,8 +48,15 @@ class DashboardService:
             "offers": offers,
         }
 
+    _APPLIED_STATUSES = {"applied", "interview", "offer", "responded"}
+
     async def get_pipeline(self, campaign_id: str, user_id: str) -> list[dict]:
-        """Return all job listings for this campaign, with application status if one exists."""
+        """Return all job listings for this campaign, with application status if one exists.
+
+        Each row also carries `applied_elsewhere=True` when the user has already
+        applied to a different listing with the same company+title in any campaign,
+        so the UI can warn before a duplicate application is submitted.
+        """
         owned = self._owned_campaign_subquery(campaign_id, user_id)
         result = await self.db.execute(
             select(JobListing, Application)
@@ -61,6 +68,23 @@ class DashboardService:
             .order_by(JobListing.discovered_at.desc())
             .limit(200)
         )
+        rows = result.all()
+
+        # Build the set of (company, title) pairs the user has already applied to
+        # across ALL campaigns so we can flag cross-campaign duplicates.
+        applied_result = await self.db.execute(
+            select(func.lower(JobListing.company), func.lower(JobListing.title))
+            .join(Application, Application.job_listing_id == JobListing.id)
+            .where(
+                Application.user_id == user_id,
+                Application.status.in_(self._APPLIED_STATUSES),
+                Application.deleted_at.is_(None),
+            )
+        )
+        applied_fingerprints: set[tuple[str, str]] = {
+            (r[0], r[1]) for r in applied_result.all()
+        }
+
         return [
             {
                 "id": listing.id,
@@ -75,8 +99,14 @@ class DashboardService:
                 "match_score": listing.match_score,
                 "source": listing.source,
                 "url": listing.url,
+                # True only when this listing itself is NOT applied but the same
+                # company+title was already applied elsewhere.
+                "applied_elsewhere": (
+                    (app.status if app else listing.status) not in self._APPLIED_STATUSES
+                    and (listing.company.lower(), listing.title.lower()) in applied_fingerprints
+                ),
             }
-            for listing, app in result.all()
+            for listing, app in rows
         ]
 
     async def get_activity_log(self, campaign_id: str, user_id: str, limit: int = 200) -> list[dict]:

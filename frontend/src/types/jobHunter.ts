@@ -48,6 +48,7 @@ export interface Application {
   status: 'pending' | 'applied' | 'responded' | 'interview' | 'offer' | 'rejected' | 'failed' | 'withdrawn' | 'tailored'
   matchScore: 'MATCH' | 'PARTIAL' | 'SKIP' | null
   source: string
+  appliedElsewhere?: boolean   // true when same company+title was applied in another campaign
 }
 
 export interface ScheduledInterview {
