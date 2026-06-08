@@ -18,7 +18,8 @@ async def campaign_activity_feed(
     # Authenticate before accepting
     try:
         decode_token(token)
-    except Exception:
+    except Exception as exc:
+        logger.warning("WS auth rejected for campaign %s: %s — token_tail=...%s", campaign_id, exc, token[-12:])
         await websocket.close(code=1008)  # Policy Violation
         return
 

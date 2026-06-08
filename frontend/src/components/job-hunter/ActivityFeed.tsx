@@ -5,6 +5,7 @@ import type { BoardStatus, ScrapePreferences, ScrapeRunStatus } from '../../type
 interface Props {
   feed: ActivityMessage[]
   onTriggerScrape?: () => void
+  onStopScrape?: () => void
   onClear?: () => void
   scraping?: boolean
   scrapeError?: string
@@ -48,19 +49,21 @@ type MsgType = 'match' | 'partial' | 'skip' | 'success' | 'error' | 'warn' | 'in
 
 function parseMsg(text: string): { type: MsgType; role?: string; company?: string; raw: string } {
   const lower = text.toLowerCase()
-  let type: MsgType = 'info'
-  if (text.startsWith('✅') || lower.includes('match —') || lower.includes('match:')) type = 'match'
-  else if (text.startsWith('🟡') || lower.includes('partial')) type = 'partial'
-  else if (lower.includes('skip')) type = 'skip'
-  else if (text.startsWith('❌') || lower.includes('error') || lower.includes('failed')) type = 'error'
-  else if (text.startsWith('⚠️') || lower.includes('warn')) type = 'warn'
-  else if (lower.includes('done') || lower.includes('complete') || lower.includes('found')) type = 'success'
 
-  // Parse "MATCH — Role @ Company" or "PARTIAL — Role @ Company"
+  // Job scoring messages have explicit "MATCH —" or "PARTIAL —" pattern with role @ company
   const dashMatch = text.match(/(?:MATCH|PARTIAL|SKIP)\s*[—-]\s*(.+?)\s*@\s*(.+)$/i)
   if (dashMatch) {
+    const word = dashMatch[0].split(/\s/)[0].toUpperCase()
+    const type: MsgType = word === 'MATCH' ? 'match' : word === 'PARTIAL' ? 'partial' : 'skip'
     return { type, role: dashMatch[1].trim(), company: dashMatch[2].trim(), raw: text }
   }
+
+  let type: MsgType = 'info'
+  if (text.startsWith('❌') || lower.includes('error') || lower.includes('failed')) type = 'error'
+  else if (text.startsWith('⚠️') || lower.includes('warn')) type = 'warn'
+  else if (lower.includes('done') || lower.includes('complete') || lower.includes('saved') || lower.includes('found')) type = 'success'
+  else if (text.startsWith('✅') || text.startsWith('💾') || text.startsWith('🏁')) type = 'success'
+
   return { type, raw: text }
 }
 
@@ -100,20 +103,28 @@ function ToggleChip({
 }
 
 export default function ActivityFeed({
-  feed, onTriggerScrape, onClear, scraping,
+  feed, onTriggerScrape, onStopScrape, onClear, scraping,
   scrapeError, prefs, onPrefsChange, boardStatuses = {}, runStatus,
 }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
   const [showPrefs, setShowPrefs] = useState(false)
 
   const activeBoardIds = Object.keys(boardStatuses)
   const hasStatus = activeBoardIds.length > 0
 
-  const matchCount   = feed.filter(m => parseMsg(m.text).type === 'match').length
-  const partialCount = feed.filter(m => parseMsg(m.text).type === 'partial').length
+  // Only count actual job-match messages (have "MATCH —" pattern with role @ company)
+  const matchCount   = feed.filter(m => /MATCH\s*[—-]\s*.+@/i.test(m.text)).length
+  const partialCount = feed.filter(m => /PARTIAL\s*[—-]\s*.+@/i.test(m.text)).length
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    const el = scrollRef.current
+    if (!el) return
+    const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+    // Only auto-scroll if user is within 120px of the bottom
+    if (distFromBottom < 120) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }
   }, [feed])
 
   function toggleCompanyType(id: string) {
@@ -200,33 +211,48 @@ export default function ActivityFeed({
                 </svg>
               </button>
             )}
-            {onTriggerScrape && (
+            {scraping && onStopScrape ? (
               <button
-                onClick={onTriggerScrape}
-                disabled={scraping}
+                onClick={onStopScrape}
                 style={{
                   display: 'flex', alignItems: 'center', gap: '6px',
-                  background: scraping ? 'rgba(248,113,113,0.1)' : 'rgba(34,211,238,0.1)',
-                  border: `1px solid ${scraping ? 'rgba(248,113,113,0.3)' : 'rgba(34,211,238,0.35)'}`,
-                  color: scraping ? '#f87171' : '#22d3ee',
+                  background: 'rgba(248,113,113,0.1)',
+                  border: '1px solid rgba(248,113,113,0.35)',
+                  color: '#f87171',
                   fontFamily: 'monospace', fontSize: '10px', fontWeight: 700,
                   letterSpacing: '0.12em', textTransform: 'uppercase',
                   padding: '5px 12px', borderRadius: '7px',
-                  cursor: scraping ? 'not-allowed' : 'pointer',
-                  opacity: scraping ? 0.8 : 1,
+                  cursor: 'pointer',
                   transition: 'all 0.15s',
-                  boxShadow: scraping ? 'none' : '0 0 12px rgba(34,211,238,0.1)',
                 }}
-                onMouseEnter={e => { if (!scraping) { e.currentTarget.style.background = 'rgba(34,211,238,0.18)'; e.currentTarget.style.boxShadow = '0 0 18px rgba(34,211,238,0.2)' } }}
-                onMouseLeave={e => { if (!scraping) { e.currentTarget.style.background = 'rgba(34,211,238,0.1)'; e.currentTarget.style.boxShadow = '0 0 12px rgba(34,211,238,0.1)' } }}
+                onMouseEnter={e => { e.currentTarget.style.background = 'rgba(248,113,113,0.18)' }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'rgba(248,113,113,0.1)' }}
               >
-                {scraping
-                  ? <span style={{ width: '10px', height: '10px', border: '1.5px solid rgba(248,113,113,0.4)', borderTopColor: '#f87171', borderRadius: '50%', display: 'inline-block', animation: 'af-spin 0.7s linear infinite' }} />
-                  : <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                }
-                {scraping ? 'Scraping' : 'Run Scrape'}
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+                Stop
               </button>
-            )}
+            ) : onTriggerScrape ? (
+              <button
+                onClick={onTriggerScrape}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '6px',
+                  background: 'rgba(34,211,238,0.1)',
+                  border: '1px solid rgba(34,211,238,0.35)',
+                  color: '#22d3ee',
+                  fontFamily: 'monospace', fontSize: '10px', fontWeight: 700,
+                  letterSpacing: '0.12em', textTransform: 'uppercase',
+                  padding: '5px 12px', borderRadius: '7px',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s',
+                  boxShadow: '0 0 12px rgba(34,211,238,0.1)',
+                }}
+                onMouseEnter={e => { e.currentTarget.style.background = 'rgba(34,211,238,0.18)'; e.currentTarget.style.boxShadow = '0 0 18px rgba(34,211,238,0.2)' }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'rgba(34,211,238,0.1)'; e.currentTarget.style.boxShadow = '0 0 12px rgba(34,211,238,0.1)' }}
+              >
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                Run Scrape
+              </button>
+            ) : null}
           </div>
         </div>
 
@@ -317,7 +343,7 @@ export default function ActivityFeed({
                 Round {runStatus.round}
               </span>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <span style={{ fontFamily: 'monospace', fontSize: '10px', fontWeight: 700, color: '#34d399' }}>{runStatus.matches}</span>
+                <span style={{ fontFamily: 'monospace', fontSize: '10px', fontWeight: 700, color: '#34d399' }}>{matchCount || runStatus.matches}</span>
                 <span style={{ fontFamily: 'monospace', fontSize: '9px', color: 'rgba(100,116,139,0.5)' }}>matches</span>
                 {runStatus.status === 'running' && (
                   <div style={{ width: '5px', height: '5px', borderRadius: '50%', background: '#22d3ee', animation: 'pulse-dot 1s ease-in-out infinite' }} />
@@ -374,7 +400,7 @@ export default function ActivityFeed({
       )}
 
       {/* ── Feed log ── */}
-      <div className="af-scroll" style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
+      <div ref={scrollRef} className="af-scroll" style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
         {feed.length === 0 ? (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: '12px', padding: '40px 20px' }}>
             <div style={{ width: '36px', height: '36px', borderRadius: '50%', border: '1px solid rgba(34,211,238,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>

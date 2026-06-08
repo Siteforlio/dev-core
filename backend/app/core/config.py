@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     jwt_secret: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"
     jwt_access_expire_minutes: int = 10080  # 7 days — practical for dev
-    jwt_refresh_expire_days: int = 7
+    jwt_refresh_expire_days: int = 90
     anthropic_api_key: str = ""
     gemini_api_key: str = ""
     vertex_api_key: str = ""  # aiplatform.googleapis.com key for gemini-2.5-flash-lite

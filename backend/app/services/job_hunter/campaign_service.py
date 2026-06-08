@@ -37,9 +37,11 @@ class CampaignService:
         user_id: str,
         name: str,
         broad_category: str,
+        sub_categories: list[str] | None = None,
         user_country: str | None = None,
         anywhere: bool = False,
         work_type: str = "remote",
+        work_types: list[str] | None = None,
         profile_overrides: dict | None = None,
     ) -> JobHunterCampaign:
         campaign = JobHunterCampaign(
@@ -48,11 +50,12 @@ class CampaignService:
             name=name,
             status="active",
             broad_category=broad_category,
-            sub_categories=[],          # inferred later once profile has skills
+            sub_categories=sub_categories or [],
             profile_overrides=profile_overrides or {},
             user_country=(user_country or "").upper() if user_country else None,
             anywhere=anywhere,
             work_type=work_type,
+            work_types=work_types,
             email_monitor_since=utcnow(),
         )
         self.db.add(campaign)

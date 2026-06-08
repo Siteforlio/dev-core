@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react'
 import { useJobHunter } from '../../hooks/useJobHunter'
 import type { Campaign } from '../../types/jobHunter'
 
-// Common countries for the picker
 const COUNTRIES = [
   { code: 'US', name: 'United States' },
   { code: 'GB', name: 'United Kingdom' },
@@ -37,11 +36,15 @@ const COUNTRIES = [
 ]
 
 const WORK_TYPE_OPTIONS = [
-  { value: 'remote', label: 'Remote only', desc: 'Fully remote positions anywhere' },
-  { value: 'hybrid', label: 'Hybrid', desc: 'Hybrid roles in your country' },
-  { value: 'onsite', label: 'On-site', desc: 'In-person roles in your country' },
-  { value: 'any', label: 'Any', desc: 'All work types' },
+  { value: 'remote', label: 'Remote', desc: 'Fully remote anywhere' },
+  { value: 'hybrid', label: 'Hybrid', desc: 'Partial in-office' },
+  { value: 'onsite', label: 'On-site', desc: 'In-person only' },
+  { value: 'any', label: 'Any', desc: 'All arrangements' },
 ]
+
+function toggle<T>(arr: T[], item: T): T[] {
+  return arr.includes(item) ? arr.filter(x => x !== item) : [...arr, item]
+}
 
 interface Props {
   onCreated: (campaign: Campaign) => void
@@ -50,10 +53,10 @@ interface Props {
 export default function CampaignForm({ onCreated }: Props) {
   const { getCampaignMeta, createCampaign } = useJobHunter()
 
-  const [categories, setCategories] = useState<string[]>([])
+  const [allCategories, setAllCategories] = useState<string[]>([])
   const [name, setName] = useState('')
-  const [category, setCategory] = useState('')
-  const [workType, setWorkType] = useState<'remote' | 'hybrid' | 'onsite' | 'any'>('remote')
+  const [categories, setCategories] = useState<string[]>([])
+  const [workTypes, setWorkTypes] = useState<string[]>(['remote'])
   const [anywhere, setAnywhere] = useState(false)
   const [country, setCountry] = useState('')
   const [countrySearch, setCountrySearch] = useState('')
@@ -61,7 +64,11 @@ export default function CampaignForm({ onCreated }: Props) {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    getCampaignMeta().then(({ categories }) => setCategories(categories)).catch(() => {})
+    let cancelled = false
+    getCampaignMeta()
+      .then(({ categories }) => { if (!cancelled) setAllCategories(categories) })
+      .catch(() => {})
+    return () => { cancelled = true }
   }, [])
 
   const filteredCountries = COUNTRIES.filter(c =>
@@ -69,7 +76,7 @@ export default function CampaignForm({ onCreated }: Props) {
     c.code.toLowerCase().includes(countrySearch.toLowerCase())
   )
 
-  const canSubmit = name.trim() && category && (anywhere || country)
+  const canSubmit = name.trim() && categories.length > 0 && workTypes.length > 0 && (anywhere || country)
 
   const handleSubmit = async () => {
     if (!canSubmit) return
@@ -78,10 +85,10 @@ export default function CampaignForm({ onCreated }: Props) {
     try {
       const campaign = await createCampaign({
         name: name.trim(),
-        broadCategory: category,
+        categories,
         userCountry: anywhere ? undefined : country,
         anywhere,
-        workType,
+        workTypes,
       })
       onCreated(campaign)
     } catch (e: unknown) {
@@ -95,7 +102,7 @@ export default function CampaignForm({ onCreated }: Props) {
       <div>
         <h2 className="text-2xl font-bold text-white">New Campaign</h2>
         <p className="text-gray-400 text-sm mt-1">
-          Set your target role and preferences. You'll build your profile next.
+          Set your target roles and preferences. You'll build your profile next.
         </p>
       </div>
 
@@ -112,46 +119,81 @@ export default function CampaignForm({ onCreated }: Props) {
           />
         </div>
 
-        {/* Job Category */}
+        {/* Job Categories — multi-select */}
         <div className="flex flex-col gap-1.5">
-          <label className="text-xs text-gray-400 uppercase tracking-wide font-medium">Job Category</label>
-          <div className="grid grid-cols-2 gap-1.5">
-            {categories.map(cat => (
-              <button
-                key={cat}
-                onClick={() => setCategory(cat)}
-                className={`text-left px-3 py-2 rounded-lg text-xs border transition-colors ${
-                  category === cat
-                    ? 'border-blue-500 bg-blue-500/10 text-blue-300'
-                    : 'border-gray-800 bg-gray-900 text-gray-400 hover:border-gray-600'
-                }`}
-              >
-                {cat}
-              </button>
-            ))}
+          <div className="flex items-center justify-between">
+            <label className="text-xs text-gray-400 uppercase tracking-wide font-medium">Job Categories</label>
+            {categories.length > 0 && (
+              <span className="text-xs text-blue-400 font-mono">{categories.length} selected</span>
+            )}
           </div>
+          <div className="grid grid-cols-2 gap-1.5">
+            {allCategories.map(cat => {
+              const selected = categories.includes(cat)
+              return (
+                <button
+                  key={cat}
+                  onClick={() => setCategories(prev => toggle(prev, cat))}
+                  className={`text-left px-3 py-2 rounded-lg text-xs border transition-colors ${
+                    selected
+                      ? 'border-blue-500 bg-blue-500/10 text-blue-300'
+                      : 'border-gray-800 bg-gray-900 text-gray-400 hover:border-gray-600'
+                  }`}
+                >
+                  <span className="flex items-center gap-1.5">
+                    {selected && (
+                      <svg width="10" height="10" viewBox="0 0 12 12" fill="none" className="flex-shrink-0">
+                        <path d="M2 6l3 3 5-5" stroke="#60a5fa" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                    )}
+                    {cat}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+          {categories.length === 0 && (
+            <p className="text-xs text-gray-600">Select one or more categories — the scraper searches all of them.</p>
+          )}
         </div>
 
-        {/* Work Type */}
+        {/* Work Arrangements — multi-select */}
         <div className="flex flex-col gap-1.5">
-          <label className="text-xs text-gray-400 uppercase tracking-wide font-medium">Work Arrangement</label>
+          <div className="flex items-center justify-between">
+            <label className="text-xs text-gray-400 uppercase tracking-wide font-medium">Work Arrangement</label>
+            {workTypes.length > 1 && (
+              <span className="text-xs text-blue-400 font-mono">{workTypes.length} selected</span>
+            )}
+          </div>
           <div className="grid grid-cols-2 gap-1.5">
-            {WORK_TYPE_OPTIONS.map(opt => (
-              <button
-                key={opt.value}
-                onClick={() => setWorkType(opt.value as typeof workType)}
-                className={`text-left px-3 py-2.5 rounded-lg border transition-colors ${
-                  workType === opt.value
-                    ? 'border-blue-500 bg-blue-500/10'
-                    : 'border-gray-800 bg-gray-900 hover:border-gray-600'
-                }`}
-              >
-                <p className={`text-xs font-medium ${workType === opt.value ? 'text-blue-300' : 'text-gray-300'}`}>
-                  {opt.label}
-                </p>
-                <p className="text-xs text-gray-600 mt-0.5">{opt.desc}</p>
-              </button>
-            ))}
+            {WORK_TYPE_OPTIONS.map(opt => {
+              const selected = workTypes.includes(opt.value)
+              return (
+                <button
+                  key={opt.value}
+                  onClick={() => {
+                    if (opt.value === 'any') {
+                      // "Any" is exclusive — selecting it clears others
+                      setWorkTypes(selected ? [] : ['any'])
+                    } else {
+                      // Selecting a specific type clears "any"
+                      const without = workTypes.filter(w => w !== 'any')
+                      setWorkTypes(toggle(without, opt.value))
+                    }
+                  }}
+                  className={`text-left px-3 py-2.5 rounded-lg border transition-colors ${
+                    selected
+                      ? 'border-blue-500 bg-blue-500/10'
+                      : 'border-gray-800 bg-gray-900 hover:border-gray-600'
+                  }`}
+                >
+                  <p className={`text-xs font-medium ${selected ? 'text-blue-300' : 'text-gray-300'}`}>
+                    {opt.label}
+                  </p>
+                  <p className="text-xs text-gray-600 mt-0.5">{opt.desc}</p>
+                </button>
+              )
+            })}
           </div>
         </div>
 

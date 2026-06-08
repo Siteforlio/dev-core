@@ -108,6 +108,16 @@ _BOARDS: list[BoardSpec] = [
     ),
     # ── Startup / remote boards ────────────────────────────────────────────
     BoardSpec(
+        id="wellfound",
+        display_name="Wellfound",
+        regions=("global",),
+        company_types=("startup", "faang", "sme"),
+        work_types=("remote", "hybrid", "onsite", "any"),
+        avg_yield=80,
+        priority=1,        # highest priority — best startup coverage globally
+        auto_apply="partial",
+    ),
+    BoardSpec(
         id="remotive",
         display_name="Remotive",
         regions=("global",),
@@ -168,17 +178,6 @@ _BOARDS: list[BoardSpec] = [
         auto_apply="partial",   # links to company pages — variable quality
     ),
     # ── Kenya / Africa boards ──────────────────────────────────────────────
-    BoardSpec(
-        id="fuzu",
-        display_name="Fuzu",
-        regions=("kenya",),
-        company_types=("enterprise", "sme", "all"),
-        work_types=("hybrid", "onsite", "any"),
-        is_static=True,
-        avg_yield=30,
-        priority=3,
-        auto_apply="full",      # platform has consistent apply form — dedicated filler
-    ),
     BoardSpec(
         id="brightermonday",
         display_name="BrighterMonday",

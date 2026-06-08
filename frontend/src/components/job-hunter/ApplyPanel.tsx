@@ -29,7 +29,7 @@ function BoldText({ text }: { text: string }) {
 }
 
 export default function ApplyPanel({ campaignId, applicationId, onClose, onApplied }: Props) {
-  const { getApplicationDetail, generateCoverLetter, chatWithApplication, openInChrome, patchApplicationStatus } = useJobHunter()
+  const { getApplicationDetail, generateCoverLetter, chatWithApplication, openInChrome, patchApplicationStatus, triggerTailoring } = useJobHunter()
 
   const [detail, setDetail] = useState<ApplicationDetail | null>(null)
   const [loading, setLoading] = useState(true)
@@ -45,6 +45,9 @@ export default function ApplyPanel({ campaignId, applicationId, onClose, onAppli
 
   const [chromeLoading, setChromeLoading] = useState(false)
   const [markingApplied, setMarkingApplied] = useState(false)
+  const [tailorLoading, setTailorLoading] = useState(false)
+  const [tailorQueued, setTailorQueued] = useState(false)
+  const [showDesc, setShowDesc] = useState(false)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -118,6 +121,18 @@ export default function ApplyPanel({ campaignId, applicationId, onClose, onAppli
       // silent — user can retry
     } finally {
       setMarkingApplied(false)
+    }
+  }
+
+  const handleTriggerTailoring = async () => {
+    setTailorLoading(true)
+    try {
+      await triggerTailoring(campaignId, applicationId)
+      setTailorQueued(true)
+    } catch {
+      // silent — user can retry
+    } finally {
+      setTailorLoading(false)
     }
   }
 
@@ -212,11 +227,22 @@ export default function ApplyPanel({ campaignId, applicationId, onClose, onAppli
                 <p className="text-[10px] text-[#333] font-mono mt-0.5 truncate">{detail.resumeFolder}</p>
               )}
             </>
+          ) : tailorQueued ? (
+            <p className="text-[12px] text-[#34d399] italic">Tailoring queued — resume will appear shortly.</p>
           ) : (
-            <p className="text-[12px] text-[#444] italic">No resume yet — trigger tailoring first.</p>
+            <p className="text-[12px] text-[#444] italic">No tailored resume yet.</p>
           )}
         </div>
         <div className="flex gap-1.5 flex-shrink-0">
+          {!detail.resumeFilename && (
+            <button
+              onClick={handleTriggerTailoring}
+              disabled={tailorLoading || tailorQueued}
+              className="text-[11px] px-2.5 py-1 rounded-md border border-[#1a3d24] text-[#34d399] hover:bg-[#0f2a1a] hover:border-[#1f4a2a] transition-all disabled:opacity-50"
+            >
+              {tailorLoading ? '…' : tailorQueued ? '✓ Queued' : '⚡ Tailor resume'}
+            </button>
+          )}
           {detail.resumeFolder && (
             <button
               onClick={handleOpenFolder}
@@ -255,6 +281,31 @@ export default function ApplyPanel({ campaignId, applicationId, onClose, onAppli
               <p className="text-sm text-[#b0b0b0] leading-relaxed whitespace-pre-wrap">{coverLetter}</p>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Job description — collapsible */}
+      {detail.description && (
+        <div className="flex-shrink-0 border-b border-[#141414]">
+          <button
+            onClick={() => setShowDesc(v => !v)}
+            className="w-full flex items-center justify-between px-6 py-2.5 text-left hover:bg-[#0d0d0d] transition-colors"
+          >
+            <span className="text-[10px] text-[#383838] uppercase tracking-widest">Job Description</span>
+            <span className="text-[#333] text-[11px]">{showDesc ? '▲' : '▼'}</span>
+          </button>
+          {showDesc && (
+            <div className="px-6 pb-4 max-h-48 overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+              <p className="text-[12px] text-[#555] leading-relaxed whitespace-pre-wrap">{
+                detail.description
+                  .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
+                  .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ')
+                  .replace(/<[^>]+>/g, '')
+                  .replace(/\n{3,}/g, '\n\n')
+                  .trim()
+              }</p>
+            </div>
+          )}
         </div>
       )}
 

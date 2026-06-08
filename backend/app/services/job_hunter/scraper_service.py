@@ -1,5 +1,14 @@
 # backend/app/services/job_hunter/scraper_service.py
-import hashlib, sys, uuid, re as _re
+import hashlib, html as _html_mod, sys, uuid, re as _re
+
+
+def _strip_html(text: str) -> str:
+    """Unescape HTML entities then strip all tags, collapse whitespace."""
+    text = _html_mod.unescape(text)
+    text = _re.sub(r'<[^>]+>', ' ', text)
+    text = _re.sub(r'[ \t]+', ' ', text)
+    text = _re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -195,7 +204,12 @@ class ScraperService:
             return "onsite"
         return "unknown"
 
-    def passes_work_type_filter(self, job: dict, work_type: str, user_country: str, anywhere: bool) -> bool:
+    def passes_work_type_filter(self, job: dict, work_type: str | list, user_country: str, anywhere: bool) -> bool:
+        if isinstance(work_type, list):
+            if "any" in work_type or not work_type:
+                return True
+            return any(self.passes_work_type_filter(job, wt, user_country, anywhere) for wt in work_type)
+
         """Filter jobs by campaign work_type preference and location."""
         if anywhere:
             # No location restriction — only filter by work type
@@ -239,8 +253,8 @@ class ScraperService:
                 return True
             return bool(loc_country) and loc_country == user_c
 
-    async def _call_haiku(self, prompt: str, max_tokens: int = 10) -> str:
-        return (await call_llm(prompt, max_tokens)).strip()
+    async def _call_haiku(self, prompt: str, max_tokens: int = 20) -> str:
+        return (await call_llm(prompt, max_tokens, thinking=False)).strip()
 
     def _keyword_prefilter(self, title: str, description: str, skills: list[str]) -> bool:
         """Fast O(n) check before burning an AI call.
@@ -315,7 +329,7 @@ class ScraperService:
             remote=job.get("remote", False),
             url=job.get("url", ""),
             apply_url=job.get("apply_url"),
-            description=job.get("description", "")[:5000],
+            description=_strip_html(job.get("description", ""))[:5000],
             match_score=score,
             sub_category=job.get("sub_category"),
             url_hash=url_hash,
@@ -327,7 +341,20 @@ class ScraperService:
             return listing
         except IntegrityError:
             await self.db.rollback()
-            return None  # duplicate — silently dropped
+            # Duplicate url_hash — job already exists (possibly from a different campaign).
+            # For MATCH or PARTIAL: always reassign to the current campaign if the new score
+            # is equal or better, so the job shows up in the correct pipeline.
+            if _SCORE_ORDER.get(score, 99) < 2:  # MATCH=0 or PARTIAL=1
+                existing = (await self.db.execute(
+                    select(JobListing).where(JobListing.url_hash == url_hash)
+                )).scalar_one_or_none()
+                if existing and _SCORE_ORDER.get(score, 99) <= _SCORE_ORDER.get(existing.match_score, 99):
+                    existing.match_score = score
+                    existing.status = "pending"
+                    existing.campaign_id = campaign_id
+                    await self.db.commit()
+                    return existing
+            return None
 
     async def run_jobspy(self, campaign: JobHunterCampaign, results_wanted: int = 100, search_term: str | None = None) -> list[dict]:
         """Scrape jobs from multiple sources via JobSpy, tolerating per-source failures."""

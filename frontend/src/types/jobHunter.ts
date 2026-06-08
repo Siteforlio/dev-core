@@ -107,6 +107,7 @@ export interface ApplicationDetail {
   coverLetter: string | null
   appliedAt: string | null
   statusUpdatedAt: string | null
+  description: string | null
 }
 
 export interface ChatMessage {

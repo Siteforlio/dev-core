@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAuthStore } from '../store/authStore'
+import { attemptRefresh } from '../lib/apiFetch'
 
 const MIN_DISPLAY_MS = 4200
 
@@ -32,11 +33,11 @@ const MOD_IDS: Record<string, string> = {
 }
 
 interface Props {
-  onDone: (authenticated: boolean) => void
+  onDone: (result: 'authenticated' | 'unauthenticated' | 'pin') => void
 }
 
 export default function SplashScreen({ onDone }: Props) {
-  const { accessToken, refreshToken, setAccessToken, clearAuth } = useAuthStore.getState()
+  const { accessToken, refreshToken } = useAuthStore.getState()
 
   const canvasRef    = useRef<HTMLCanvasElement>(null)
   const animFrameRef = useRef<number>(0)
@@ -207,47 +208,38 @@ export default function SplashScreen({ onDone }: Props) {
       // Start animations
       setTimeout(() => { runProgress(0); typeQuote(0) }, 1800)
 
-      // No stored session at all
-      if (!refreshToken && !accessToken) {
+      const electronAPI = (window as any).electronAPI
+
+      // Ask Electron main process what it found in secure storage
+      const status = await electronAPI?.startupStatus?.()
+
+      if (status) {
+        if (!status.hasToken) {
+          await wait(MIN_DISPLAY_MS - (Date.now() - started))
+          onDone('unauthenticated')
+          return
+        }
+        if (status.pinRequired) {
+          await wait(MIN_DISPLAY_MS - (Date.now() - started))
+          onDone('pin')
+          return
+        }
+        // Has stored token, no PIN — silent refresh
+        const newToken = await attemptRefresh()
         await wait(MIN_DISPLAY_MS - (Date.now() - started))
-        onDone(false)
+        onDone(newToken ? 'authenticated' : 'unauthenticated')
         return
       }
 
-      // Try to refresh the token
-      try {
-        const res = await fetch('http://localhost:8000/api/v1/auth/refresh', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ refresh_token: refreshToken }),
-        })
-        if (res.ok) {
-          const body = await res.json()
-          setAccessToken(body.data.access_token)
-          await wait(MIN_DISPLAY_MS - (Date.now() - started))
-          onDone(true)
-        } else {
-          // Expired or invalid — but if we have an accessToken still try (offline case)
-          if (accessToken) {
-            await wait(MIN_DISPLAY_MS - (Date.now() - started))
-            onDone(true)
-          } else {
-            clearAuth()
-            await wait(MIN_DISPLAY_MS - (Date.now() - started))
-            onDone(false)
-          }
-        }
-      } catch {
-        // Network error — trust existing token if present
-        if (accessToken) {
-          await wait(MIN_DISPLAY_MS - (Date.now() - started))
-          onDone(true)
-        } else {
-          clearAuth()
-          await wait(MIN_DISPLAY_MS - (Date.now() - started))
-          onDone(false)
-        }
+      // Fallback: no Electron API (browser dev mode) — use Zustand store
+      if (!refreshToken && !accessToken) {
+        await wait(MIN_DISPLAY_MS - (Date.now() - started))
+        onDone('unauthenticated')
+        return
       }
+      const newToken = await attemptRefresh()
+      await wait(MIN_DISPLAY_MS - (Date.now() - started))
+      onDone(newToken || accessToken ? 'authenticated' : 'unauthenticated')
     }
 
     checkAuth()

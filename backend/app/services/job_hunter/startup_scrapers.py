@@ -300,6 +300,123 @@ async def scrape_startupdeals_africa(search_term: str, client: httpx.AsyncClient
         return []
 
 
+async def scrape_wellfound(search_term: str, client: httpx.AsyncClient) -> list[dict]:
+    """
+    Wellfound (formerly AngelList Talent) — the primary source for funded startup roles globally.
+    Uses their public job search JSON endpoint (no auth required for browsing).
+    """
+    try:
+        # Wellfound exposes a public search API used by their own frontend
+        r = await client.get(
+            "https://wellfound.com/api/v2/jobs",
+            params={
+                "q": search_term,
+                "remote": "true",
+                "page": 1,
+            },
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Accept": "application/json",
+                "Referer": "https://wellfound.com/jobs",
+            },
+            timeout=_HTTP_TIMEOUT,
+        )
+        if r.status_code != 200:
+            # Fallback: scrape the HTML jobs listing page
+            return await _scrape_wellfound_html(search_term, client)
+
+        data = r.json()
+        jobs = []
+        for j in (data.get("jobs") or data.get("results") or [])[:80]:
+            startup = j.get("startup") or j.get("company") or {}
+            remote = j.get("remote") or j.get("locationTypes", {}).get("remote", False)
+            loc = j.get("location") or ("Remote" if remote else "")
+            slug = j.get("slug") or ""
+            url = f"https://wellfound.com/jobs/{slug}" if slug else "https://wellfound.com/jobs"
+            jobs.append(_normalize({
+                "source": "wellfound",
+                "title": j.get("title") or j.get("role") or "",
+                "company": startup.get("name") or j.get("companyName") or "",
+                "location": loc,
+                "location_country": None,
+                "remote": bool(remote),
+                "url": url,
+                "apply_url": url,
+                "description": (j.get("description") or j.get("jobDescription") or "")[:3000],
+            }))
+        return jobs
+    except Exception:
+        return await _scrape_wellfound_html(search_term, client)
+
+
+async def _scrape_wellfound_html(search_term: str, client: httpx.AsyncClient) -> list[dict]:
+    """Fallback: parse Wellfound HTML search results page."""
+    try:
+        query = search_term.replace(" ", "-").lower()
+        r = await client.get(
+            f"https://wellfound.com/role/l/{query}",
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Accept": "text/html",
+            },
+            timeout=_HTTP_TIMEOUT,
+        )
+        if r.status_code != 200:
+            return []
+
+        # Extract job data from JSON embedded in the page (__NEXT_DATA__ or similar)
+        import json as _json
+        next_data_match = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', r.text, re.DOTALL)
+        if next_data_match:
+            try:
+                page_data = _json.loads(next_data_match.group(1))
+                job_listings = (
+                    page_data.get("props", {})
+                    .get("pageProps", {})
+                    .get("jobListings") or []
+                )
+                jobs = []
+                for j in job_listings[:80]:
+                    startup = j.get("startup") or {}
+                    url = f"https://wellfound.com/jobs/{j.get('slug', '')}"
+                    jobs.append(_normalize({
+                        "source": "wellfound",
+                        "title": j.get("title", ""),
+                        "company": startup.get("name", ""),
+                        "location": j.get("locationNames") or ("Remote" if j.get("remote") else ""),
+                        "location_country": None,
+                        "remote": bool(j.get("remote")),
+                        "url": url,
+                        "apply_url": url,
+                        "description": j.get("description", "")[:3000],
+                    }))
+                return jobs
+            except (_json.JSONDecodeError, KeyError):
+                pass
+
+        # Last resort: extract from visible HTML
+        titles = re.findall(r'data-test="JobListing-title"[^>]*>([^<]+)<', r.text)
+        companies = re.findall(r'data-test="StartupResult-name"[^>]*>([^<]+)<', r.text)
+        links = re.findall(r'href="(/jobs/[^"]+)"', r.text)
+        jobs = []
+        for i, title in enumerate(titles[:60]):
+            url = f"https://wellfound.com{links[i]}" if i < len(links) else "https://wellfound.com/jobs"
+            jobs.append(_normalize({
+                "source": "wellfound",
+                "title": title.strip(),
+                "company": companies[i].strip() if i < len(companies) else "",
+                "location": "Remote",
+                "location_country": None,
+                "remote": True,
+                "url": url,
+                "apply_url": url,
+                "description": f"Startup role at {companies[i].strip() if i < len(companies) else 'startup'}. See {url}",
+            }))
+        return jobs
+    except Exception:
+        return []
+
+
 async def scrape_all_startup_boards(
     search_term: str,
     publish_fn=None,
@@ -312,14 +429,15 @@ async def scrape_all_startup_boards(
     if publish_fn:
         await publish_fn(
             "🚀 Querying startup job boards "
-            "(Remotive + RemoteOK + HN Who's Hiring + WeWorkRemotely + Zindi + Startup Deals Africa)..."
+            "(Wellfound + Remotive + RemoteOK + HN Who's Hiring + WeWorkRemotely + Zindi + Startup Deals Africa)..."
         )
 
     async with httpx.AsyncClient(follow_redirects=True) as client:
         (
-            remotive_jobs, remoteok_jobs, hn_jobs,
+            wellfound_jobs, remotive_jobs, remoteok_jobs, hn_jobs,
             wwr_jobs, zindi_jobs, sda_jobs,
         ) = await asyncio.gather(
+            scrape_wellfound(search_term, client),
             scrape_remotive(search_term, client),
             scrape_remoteok(search_term, client),
             scrape_hn_who_is_hiring(search_term, client),
@@ -328,14 +446,14 @@ async def scrape_all_startup_boards(
             scrape_startupdeals_africa(search_term, client),
         )
 
-    all_jobs = remotive_jobs + remoteok_jobs + hn_jobs + wwr_jobs + zindi_jobs + sda_jobs
+    all_jobs = wellfound_jobs + remotive_jobs + remoteok_jobs + hn_jobs + wwr_jobs + zindi_jobs + sda_jobs
 
     if publish_fn:
         await publish_fn(
-            f"  ↳ Remotive: {len(remotive_jobs)} | RemoteOK: {len(remoteok_jobs)} | "
-            f"HN Hiring: {len(hn_jobs)} | WeWorkRemotely: {len(wwr_jobs)} | "
-            f"Zindi: {len(zindi_jobs)} | Startup Deals Africa: {len(sda_jobs)} "
-            f"= {len(all_jobs)} total startup listings"
+            f"  ↳ Wellfound: {len(wellfound_jobs)} | Remotive: {len(remotive_jobs)} | "
+            f"RemoteOK: {len(remoteok_jobs)} | HN Hiring: {len(hn_jobs)} | "
+            f"WeWorkRemotely: {len(wwr_jobs)} | Zindi: {len(zindi_jobs)} | "
+            f"Startup Deals Africa: {len(sda_jobs)} = {len(all_jobs)} total startup listings"
         )
 
     return all_jobs

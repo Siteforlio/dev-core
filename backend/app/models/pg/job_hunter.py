@@ -75,6 +75,7 @@ class JobHunterCampaign(Base):
     user_country: Mapped[str | None] = mapped_column(String(100), nullable=True)
     anywhere: Mapped[bool] = mapped_column(Boolean, default=False)
     work_type: Mapped[str] = mapped_column(String(20), default="remote")
+    work_types: Mapped[list | None] = mapped_column(JSONB, nullable=True)  # multi-select; None = use work_type
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

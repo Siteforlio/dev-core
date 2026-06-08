@@ -6,10 +6,11 @@ import Login from './pages/Login'
 import Onboarding from './pages/Onboarding'
 import Dashboard from './pages/Dashboard'
 import InterviewSession from './components/interview/InterviewSession'
+import PinUnlock from './components/PinUnlock'
 import { useSimulationStore } from './store/simulationStore'
 import SimulationSessionPage from './pages/SimulationSessionPage'
 
-type Screen = 'splash' | 'login' | 'register' | 'dashboard'
+type Screen = 'splash' | 'pin' | 'login' | 'register' | 'dashboard'
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>('splash')
@@ -23,18 +24,29 @@ export default function App() {
     setScreen('login')
   }
 
-  /* Splash → login or dashboard */
-  const handleSplashDone = (authenticated: boolean) => {
+  /* Splash → pin, login, or dashboard */
+  const handleSplashDone = (result: 'authenticated' | 'unauthenticated' | 'pin') => {
     // Signal Electron to create the overlay window now that splash is done
     ;(window as any).electronAPI?.splashDone?.()
-    setScreen(authenticated ? 'dashboard' : 'login')
+    if (result === 'authenticated') setScreen('dashboard')
+    else if (result === 'pin') setScreen('pin')
+    else setScreen('login')
   }
 
-  /* Login success → dashboard */
+  /* Login / PIN success → dashboard */
   const handleLoggedIn = () => setScreen('dashboard')
 
   if (screen === 'splash') {
     return <SplashScreen onDone={handleSplashDone} />
+  }
+
+  if (screen === 'pin') {
+    return (
+      <PinUnlock
+        onUnlocked={handleLoggedIn}
+        onForgot={() => setScreen('login')}
+      />
+    )
   }
 
   if (screen === 'login') {

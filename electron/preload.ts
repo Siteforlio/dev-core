@@ -9,6 +9,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getAccessToken:   () => ipcRenderer.invoke('auth:get:token'),
   setRefreshToken:  (t: string) => ipcRenderer.invoke('auth:set:refresh', t),
   refreshToken:     () => ipcRenderer.invoke('auth:refresh:token'),
+  startupStatus:    () => ipcRenderer.invoke('auth:startup:status'),
+  checkPin:         (pin: string) => ipcRenderer.invoke('auth:pin:check', pin),
+  setPin:           (pin: string) => ipcRenderer.invoke('auth:pin:set', pin),
+  removePin:        () => ipcRenderer.invoke('auth:pin:remove'),
+  pinExists:        () => ipcRenderer.invoke('auth:pin:exists'),
+  clearStored:      () => ipcRenderer.invoke('auth:clear:stored'),
   window: {
     minimize: () => ipcRenderer.invoke('window:minimize'),
     maximize: () => ipcRenderer.invoke('window:maximize'),

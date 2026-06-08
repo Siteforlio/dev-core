@@ -1,17 +1,16 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { useAuthStore } from '../store/authStore'
 import { useInterviewSession } from '../hooks/useInterviewSession'
 import { useJobHunterStore } from '../store/jobHunterStore'
 import { useJobHunter } from '../hooks/useJobHunter'
 import Sidebar from '../components/job-hunter/Sidebar'
-import SessionSetupForm from '../components/interview/SessionSetupForm'
+import SimulationBuilder from '../components/interview/SimulationBuilder'
 import CampaignList from '../components/job-hunter/CampaignList'
 import CampaignForm from '../components/job-hunter/CampaignForm'
 import CampaignProfileBuilder from '../components/job-hunter/CampaignProfileBuilder'
 import CampaignDashboard from '../components/job-hunter/CampaignDashboard'
 import GlobalIntegrationsPanel from '../components/job-hunter/GlobalIntegrationsPanel'
 import { SessionSetup } from '../components/devcore/SessionSetup'
-import ProgressDashboard from '../components/interview/ProgressDashboard'
 import type { Campaign } from '../types/jobHunter'
 
 type Module = 'interview' | 'job-hunter' | 'settings'
@@ -23,7 +22,7 @@ export default function Dashboard() {
 
   const [activeModule, setActiveModule] = useState<Module>('interview')
   const [showSessionSetup, setShowSessionSetup] = useState(false)
-  const sessionFormRef = useRef<HTMLDivElement>(null)
+
 
   const {
     activeView,
@@ -114,6 +113,34 @@ export default function Dashboard() {
         >
           {activeModule === 'interview' ? 'Interview Prep' : activeModule === 'job-hunter' ? 'Job Hunter' : 'Settings'}
         </span>
+        {/* Start Session */}
+        <button
+          onClick={() => setShowSessionSetup(true)}
+          className="flex items-center gap-2 transition-all duration-150 flex-shrink-0 mr-3"
+          style={{
+            fontFamily: 'monospace',
+            fontSize: '11px',
+            fontWeight: 600,
+            letterSpacing: '0.14em',
+            textTransform: 'uppercase',
+            padding: '7px 14px',
+            borderRadius: '6px',
+            background: 'linear-gradient(180deg, rgba(155,123,255,0.18), rgba(90,214,238,0.1))',
+            border: '1px solid rgba(90,74,150,0.6)',
+            color: '#efeaff',
+            WebkitAppRegion: 'no-drag',
+            position: 'relative',
+            overflow: 'hidden',
+          } as React.CSSProperties}
+          onMouseEnter={e => (e.currentTarget.style.borderColor = 'rgba(155,123,255,0.8)')}
+          onMouseLeave={e => (e.currentTarget.style.borderColor = 'rgba(90,74,150,0.6)')}
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="9"/><path d="M10 8.5 16 12l-6 3.5z" fill="currentColor" stroke="none"/>
+          </svg>
+          Start Session
+        </button>
+
         {/* User chip */}
         <div
           className="flex items-center gap-3 px-3 py-1.5 rounded"
@@ -180,48 +207,9 @@ export default function Dashboard() {
 
         <main className="flex-1 overflow-y-auto">
           {activeModule === 'interview' ? (
-            /* ── Interview Prep ── */
-            <div className="flex h-full items-center justify-center p-8">
-              <div className="flex gap-8 w-full max-w-5xl">
-                <div style={{ flex: '0 0 440px' }}>
-                  <div className="flex flex-col items-center gap-6">
-                    <div ref={sessionFormRef}><SessionSetupForm /></div>
-                    <div className="flex items-center gap-3 w-full max-w-sm">
-                      <div className="flex-1 h-px" style={{ background: 'rgba(34,211,238,0.08)' }} />
-                      <span className="text-[10px] font-mono uppercase tracking-[0.18em]" style={{ color: 'rgba(34,211,238,0.3)' }}>or</span>
-                      <div className="flex-1 h-px" style={{ background: 'rgba(34,211,238,0.08)' }} />
-                    </div>
-                    <button
-                      onClick={() => setShowSessionSetup(true)}
-                      className="flex items-center gap-2.5 px-6 py-2.5 rounded-lg transition-all duration-150 w-full max-w-sm justify-center"
-                      style={{
-                        background: 'rgba(34,211,238,0.07)',
-                        border: '1px solid rgba(34,211,238,0.2)',
-                        color: '#22d3ee',
-                        fontFamily: 'monospace',
-                        fontSize: '11px',
-                        fontWeight: 600,
-                        letterSpacing: '0.14em',
-                        textTransform: 'uppercase',
-                      }}
-                      onMouseEnter={e => {
-                        e.currentTarget.style.background = 'rgba(34,211,238,0.13)'
-                        e.currentTarget.style.borderColor = 'rgba(34,211,238,0.38)'
-                      }}
-                      onMouseLeave={e => {
-                        e.currentTarget.style.background = 'rgba(34,211,238,0.07)'
-                        e.currentTarget.style.borderColor = 'rgba(34,211,238,0.2)'
-                      }}
-                    >
-                      <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
-                      Start DevCore Session
-                    </button>
-                  </div>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <ProgressDashboard onStartNew={() => sessionFormRef.current?.scrollIntoView({ behavior: 'smooth' })} />
-                </div>
-              </div>
+            /* ── Interview Prep — Simulation Builder ── */
+            <div style={{ height: '100%', overflow: 'hidden' }}>
+              <SimulationBuilder />
             </div>
           ) : activeModule === 'settings' ? (
             /* ── Settings ── */

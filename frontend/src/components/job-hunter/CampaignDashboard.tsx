@@ -9,6 +9,7 @@ import CampaignSettings from './CampaignSettings'
 import ApplyPanel from './ApplyPanel'
 import DidYouApplyPopup from './DidYouApplyPopup'
 import TrackingPanel from './TrackingPanel'
+import ManualJobModal from './ManualJobModal'
 import type {
   CampaignSummary, Application, ScheduledInterview,
   ScrapePreferences, BoardStatus, ScrapeRunStatus,
@@ -31,7 +32,7 @@ const DEFAULT_PREFS: ScrapePreferences = {
 }
 
 export default function CampaignDashboard({ campaignId, onBack, onStartInterviewPrep, onGoToSettings }: Props) {
-  const { getDashboard, getInterviewContext, triggerScrape, getScrapeStatus } = useJobHunter()
+  const { getDashboard, getInterviewContext, triggerScrape, getScrapeStatus, stopScrape, ensureApplication } = useJobHunter()
   const token = useAuthStore((s) => s.accessToken)
   const [persistedFeed, setPersistedFeed] = useState<ActivityMessage[]>([])
   const { feed: liveFeed } = useCampaignActivity(campaignId, token)
@@ -59,7 +60,9 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
   const [scraping, setScraping] = useState(false)
   const [scrapeError, setScrapeError] = useState('')
   const [rightPanel, setRightPanel] = useState<'activity' | 'settings'>('activity')
+  const [showManualJob, setShowManualJob] = useState(false)
   const [pipelineTab, setPipelineTab] = useState<'all' | 'match' | 'partial' | 'applied' | 'interview'>('all')
+  const [boardFilter, setBoardFilter] = useState<string>('all')
   const [page, setPage] = useState(1)
   const PAGE_SIZE = 10
 
@@ -69,7 +72,29 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
   const [runStatus, setRunStatus] = useState<ScrapeRunStatus | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
+  // When the live feed receives a MATCH or PARTIAL message, refresh the pipeline.
+  // Use a debounce-style approach: reset the timer on every new match message so
+  // we do one refresh after the burst of messages settles (2s quiet window).
+  const wsRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    if (liveFeed.length === 0) return
+    const lastMsg = liveFeed[liveFeed.length - 1]
+    if (!/(?:MATCH|PARTIAL)\s*[—\-]\s*.+@/i.test(lastMsg.text)) return
+    // Debounce: cancel any pending refresh and start a fresh 2s window
+    if (wsRefreshTimerRef.current) clearTimeout(wsRefreshTimerRef.current)
+    wsRefreshTimerRef.current = setTimeout(() => {
+      wsRefreshTimerRef.current = null
+      loadDashboard().catch(() => {})
+    }, 2000)
+    return () => {
+      if (wsRefreshTimerRef.current) clearTimeout(wsRefreshTimerRef.current)
+    }
+  }, [liveFeed])
+
+  const uniqueBoards = Array.from(new Set(pipeline.map((a) => a.source).filter(Boolean))).sort()
+
   const filteredPipeline = pipeline.filter((app) => {
+    if (boardFilter !== 'all' && app.source !== boardFilter) return false
     if (pipelineTab === 'all') return true
     if (pipelineTab === 'match') return app.matchScore === 'MATCH'
     if (pipelineTab === 'partial') return app.matchScore === 'PARTIAL'
@@ -105,6 +130,7 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
 
   const startStatusPolling = () => {
     if (pollRef.current) return
+    let tickCount = 0
     pollRef.current = setInterval(async () => {
       try {
         const { run, boards } = await getScrapeStatus(campaignId)
@@ -118,6 +144,12 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
           stopStatusPolling()
           setScraping(false)
           await loadDashboard()
+        } else {
+          // Refresh pipeline every 10 seconds while scraping
+          tickCount++
+          if (tickCount % 5 === 0) {
+            await loadDashboard()
+          }
         }
       } catch {
         // polling errors are silent
@@ -146,6 +178,16 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
     }
   }
 
+  const handleStopScrape = async () => {
+    try {
+      await stopScrape(campaignId)
+    } catch {
+      // best-effort
+    }
+    stopStatusPolling()
+    setScraping(false)
+  }
+
   // Clean up polling on unmount
   useEffect(() => () => stopStatusPolling(), [])
 
@@ -170,13 +212,25 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
   }
 
   // Open apply panel — if switching away from an in-progress panel, prompt "did you apply?"
-  const handleApply = (listingId: string) => {
+  const handleApply = async (listingId: string) => {
     const listing = pipeline.find((a) => a.id === listingId)
-    if (!listing?.applicationId) return // no application record yet — tailoring hasn't run
+    if (!listing) return
+
+    // If no application record yet, create one on-demand
+    let appId = listing.applicationId
+    if (!appId) {
+      try {
+        appId = await ensureApplication(campaignId, listingId)
+        // Patch local pipeline state so re-renders don't need a full reload
+        setPipeline(prev => prev.map(a => a.id === listingId ? { ...a, applicationId: appId! } : a))
+      } catch {
+        return
+      }
+    }
 
     if (
       activeApplicationId &&
-      activeApplicationId !== listing.applicationId &&
+      activeApplicationId !== appId &&
       panelMode === 'apply'
     ) {
       const prev = pipeline.find((a) => a.applicationId === activeApplicationId)
@@ -186,7 +240,7 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
         return
       }
     }
-    setActiveApplicationId(listing.applicationId)
+    setActiveApplicationId(appId)
     setPanelMode('apply')
   }
 
@@ -288,39 +342,85 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
           </div>
         )}
 
-        {/* Pipeline tabs */}
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center gap-1 border-b border-gray-800 flex-shrink-0 overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
-            {([
-              { key: 'all', label: 'All' },
-              { key: 'match', label: 'Match' },
-              { key: 'partial', label: 'Partial' },
-              { key: 'applied', label: 'Applied' },
-              { key: 'interview', label: 'Interview' },
-            ] as const).map(({ key, label }) => (
+        {/* Board filter chips */}
+        {uniqueBoards.length > 0 && (
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span
+              className="text-[10px] font-semibold uppercase tracking-[0.1em] flex-shrink-0"
+              style={{ color: 'rgba(34,211,238,0.4)', fontFamily: 'monospace' }}
+            >
+              Board
+            </span>
+            {['all', ...uniqueBoards].map((board) => (
               <button
-                key={key}
-                onClick={() => { setPipelineTab(key); setPage(1) }}
-                className={`px-3 py-2 text-xs font-medium transition-colors border-b-2 -mb-px flex items-center gap-1.5 ${
-                  pipelineTab === key
-                    ? 'border-blue-500 text-white'
-                    : 'border-transparent text-gray-500 hover:text-gray-300'
-                }`}
+                key={board}
+                onClick={() => { setBoardFilter(board); setPage(1) }}
+                className="text-[10px] font-mono px-2 py-0.5 rounded transition-all duration-150"
+                style={{
+                  border: '1px solid',
+                  borderColor: boardFilter === board ? 'rgba(34,211,238,0.5)' : 'rgba(255,255,255,0.08)',
+                  background: boardFilter === board ? 'rgba(34,211,238,0.1)' : 'transparent',
+                  color: boardFilter === board ? '#22d3ee' : 'rgba(148,163,184,0.5)',
+                }}
               >
-                {label}
-                <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
-                  pipelineTab === key ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400'
-                }`}>
-                  {tabCounts[key]}
-                </span>
+                {board === 'all' ? 'All Boards' : board}
               </button>
             ))}
           </div>
+        )}
 
-          {/* Table header */}
+        {/* Pipeline tabs */}
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center border-b border-gray-800 flex-shrink-0">
+            <div className="flex items-center gap-1 overflow-x-auto flex-1 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+              {([
+                { key: 'all', label: 'All' },
+                { key: 'match', label: 'Match' },
+                { key: 'partial', label: 'Partial' },
+                { key: 'applied', label: 'Applied' },
+                { key: 'interview', label: 'Interview' },
+              ] as const).map(({ key, label }) => (
+                <button
+                  key={key}
+                  onClick={() => { setPipelineTab(key); setPage(1) }}
+                  className={`px-3 py-2 text-xs font-medium transition-colors border-b-2 -mb-px flex items-center gap-1.5 flex-shrink-0 ${
+                    pipelineTab === key
+                      ? 'border-blue-500 text-white'
+                      : 'border-transparent text-gray-500 hover:text-gray-300'
+                  }`}
+                >
+                  {label}
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                    pipelineTab === key ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400'
+                  }`}>
+                    {tabCounts[key]}
+                  </span>
+                </button>
+              ))}
+            </div>
+            {/* Manual add button */}
+            <button
+              onClick={() => setShowManualJob(true)}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[10px] font-medium transition-all flex-shrink-0 ml-2 mb-1"
+              style={{
+                background: 'rgba(59,130,246,0.08)',
+                border: '1px solid rgba(59,130,246,0.2)',
+                color: 'rgba(147,197,253,0.8)',
+              }}
+              title="Add a job manually"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              Add Job
+            </button>
+          </div>
+
+          {/* Table header — hidden in compact mode */}
           <div
             className="grid items-center"
             style={{
+              display: panelMode !== 'none' ? 'none' : 'grid',
               gridTemplateColumns: '1fr 1fr 160px 100px 90px 100px',
               padding: '6px 16px',
               borderBottom: '1px solid rgba(34,211,238,0.1)',
@@ -342,7 +442,11 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
           <div className="flex flex-col flex-shrink-0">
             {filteredPipeline.length === 0 ? (
               <p className="text-gray-600 text-sm py-8 text-center">
-                {pipeline.length === 0 ? 'No jobs yet — hit Run Scrape to start.' : 'No jobs in this category.'}
+                {pipeline.length === 0 ? (
+                <>No jobs yet — run a scrape or{' '}
+                  <button onClick={() => setShowManualJob(true)} className="underline text-blue-400 hover:text-blue-300">add one manually</button>.
+                </>
+              ) : 'No jobs in this category.'}
               </p>
             ) : (
               pagedPipeline.map((app) => (
@@ -355,6 +459,8 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
                     onStartInterviewPrep={handleStartInterviewPrep}
                     onApply={handleApply}
                     onViewTracking={handleViewTracking}
+                    compact={panelMode !== 'none'}
+                    active={app.applicationId === activeApplicationId}
                   />
                 </div>
               ))
@@ -430,6 +536,7 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
             <ActivityFeed
               feed={feed}
               onTriggerScrape={handleTriggerScrape}
+              onStopScrape={handleStopScrape}
               onClear={() => setPersistedFeed([])}
               scraping={scraping}
               scrapeError={scrapeError}
@@ -445,6 +552,18 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
       </div>
       )}
     </div>
+
+    {/* Manual job add modal */}
+    {showManualJob && (
+      <ManualJobModal
+        campaignId={campaignId}
+        onClose={() => setShowManualJob(false)}
+        onAdded={() => {
+          setShowManualJob(false)
+          loadDashboard().catch(() => {})
+        }}
+      />
+    )}
 
     {/* "Did you apply?" popup */}
     {showDidYouApply && prevApplicationId && (() => {

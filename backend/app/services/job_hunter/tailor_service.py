@@ -90,9 +90,9 @@ class TailorService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def _call_haiku(self, prompt: str, max_tokens: int = 1000) -> str:
+    async def _call_haiku(self, prompt: str, max_tokens: int = 1000, quality: bool = False) -> str:
         async with _get_haiku_sem():
-            return await call_llm(prompt, max_tokens)
+            return await call_llm(prompt, max_tokens, quality=quality)
 
     async def extract_keywords(self, jd: str) -> list[str]:
         raw = await self._call_haiku(
@@ -178,6 +178,7 @@ class TailorService:
             f"- Return a JSON array of rewritten bullet strings only, no explanation\n\n"
             f"Bullets to rewrite:\n{json.dumps(bullets)}",
             max_tokens=1500,
+            quality=True,  # Pro model — directly impacts application quality
         )
         start, end = raw.find("["), raw.rfind("]") + 1
         if start == -1 or end == 0:
@@ -542,7 +543,7 @@ a:hover {{ text-decoration:underline; }}
             os.unlink(tmp_html)
 
     async def tailor_for_listing(self, listing_id: str, user_id: str) -> Application | None:
-        # Idempotency check
+        # Idempotency check — only skip if already tailored
         existing_result = await self.db.execute(
             select(Application).where(
                 Application.job_listing_id == listing_id,
@@ -550,7 +551,7 @@ a:hover {{ text-decoration:underline; }}
             )
         )
         existing = existing_result.scalar_one_or_none()
-        if existing:
+        if existing and existing.tailored_resume_pdf_url:
             return existing
 
         listing_result = await self.db.execute(select(JobListing).where(JobListing.id == listing_id))
@@ -570,21 +571,13 @@ a:hover {{ text-decoration:underline; }}
         location = (listing.location or "remote")[:100]
         experience = profile.work_experience or []
 
-        # ── EDUCATION GUARD — do not proceed without education on the profile ──
-        if not (profile.education or []):
-            import logging as _log2
-            _log2.getLogger(__name__).warning(
-                "tailor_for_listing: blocked — no education on profile for listing %s", listing_id
-            )
-            return None
-
         # ── Build immutable facts block (injected into every LLM prompt) ──────
         immutable_facts = _build_immutable_facts(profile, experience)
 
         # --- Pre-filter: skip tailoring for very poor fits ---
         profile_text = (
             f"{', '.join((profile.skills or [])[:20])} | "
-            f"{' | '.join(j.get('title', '') for j in experience[:3])} | "
+            f"{' | '.join(j.get('title', '') or '' for j in experience[:3])} | "
             f"{profile.years_of_experience or len(experience)} years experience"
         )
         fit_score = matcher.score_fit(listing.description, profile_text)
@@ -630,6 +623,7 @@ a:hover {{ text-decoration:underline; }}
             f"Do NOT use placeholders like [Your Name] — use the actual name above.\n"
             f"Return plain text only, no markdown.",
             max_tokens=500,
+            quality=True,  # Pro model — cover letter is what humans read first
         )
 
         # --- Map rewritten bullets back to jobs ---
@@ -681,22 +675,33 @@ a:hover {{ text-decoration:underline; }}
         pdf_path = campaign_folder / pdf_filename
         await asyncio.to_thread(self._generate_pdf_sync, html, pdf_path)
 
-        application = Application(
-            id=str(uuid.uuid4()),
-            campaign_id=listing.campaign_id,
-            job_listing_id=listing.id,
-            user_id=user_id,
-            tailored_resume_pdf_url=str(pdf_path),
-            cover_letter=cover_letter,
-            form_answers={
-                "salary": salary,
-                "summary": summary,
-                "rewritten_bullets": rewritten,
-                "top_competencies": top_competencies,
-            },
-            status="tailored",
-        )
+        form_answers = {
+            "salary": salary,
+            "summary": summary,
+            "rewritten_bullets": rewritten,
+            "top_competencies": top_competencies,
+        }
+
+        if existing:
+            # Update the pre-created pending record
+            existing.tailored_resume_pdf_url = str(pdf_path)
+            existing.cover_letter = cover_letter
+            existing.form_answers = form_answers
+            existing.status = "tailored"
+            application = existing
+        else:
+            application = Application(
+                id=str(uuid.uuid4()),
+                campaign_id=listing.campaign_id,
+                job_listing_id=listing.id,
+                user_id=user_id,
+                tailored_resume_pdf_url=str(pdf_path),
+                cover_letter=cover_letter,
+                form_answers=form_answers,
+                status="tailored",
+            )
+            self.db.add(application)
+
         listing.status = "applying"
-        self.db.add(application)
         await self.db.commit()
         return application

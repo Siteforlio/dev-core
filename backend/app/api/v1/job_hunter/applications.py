@@ -101,9 +101,42 @@ async def get_application_detail(
             "cover_letter": app.cover_letter,
             "applied_at": app.applied_at.isoformat() if app.applied_at else None,
             "status_updated_at": app.status_updated_at.isoformat() if app.status_updated_at else None,
+            "description": listing.description,
         },
         "error": None,
     }
+
+
+# ── Retrigger tailoring ───────────────────────────────────────────────────────
+
+@router.post("/{campaign_id}/applications/{application_id}/tailor", response_model=dict)
+async def retrigger_tailoring(
+    campaign_id: str,
+    application_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_user_id),
+):
+    """Queue tailoring for an application that hasn't been tailored yet (or retry)."""
+    result = await db.execute(
+        select(Application)
+        .where(
+            Application.id == application_id,
+            Application.campaign_id == campaign_id,
+            Application.user_id == user_id,
+            Application.deleted_at.is_(None),
+        )
+    )
+    app = result.scalar_one_or_none()
+    if not app:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    try:
+        from app.workers.tailor_worker import tailor_listing
+        tailor_listing.delay(app.job_listing_id, user_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Could not queue tailoring: {e}")
+
+    return {"data": {"queued": True}, "error": None}
 
 
 # ── Apply panel: mark applied / update status ─────────────────────────────────

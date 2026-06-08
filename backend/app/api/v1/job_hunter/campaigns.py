@@ -1,5 +1,7 @@
 # backend/app/api/v1/job_hunter/campaigns.py
-from fastapi import APIRouter, Depends, HTTPException
+import io
+import os
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.security import HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
@@ -8,7 +10,7 @@ from app.services.job_hunter.campaign_service import CampaignService
 from app.schemas.job_hunter import (
     CampaignCreateRequest, CampaignStatusRequest,
     EmailCredentialsRequest, CalDAVCredentialsRequest, LinkedInCredentialsRequest,
-    CampaignProfileUpsertRequest, RawContextRequest,
+    CampaignProfileUpsertRequest, RawContextRequest, ManualJobRequest,
 )
 from app.services.job_hunter.campaign_profile_service import JOB_CATEGORIES, WORK_TYPES
 
@@ -30,23 +32,38 @@ async def create_campaign(
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(get_user_id),
 ):
-    if body.broad_category not in JOB_CATEGORIES:
-        raise HTTPException(status_code=400, detail=f"Invalid category. Choose from: {', '.join(JOB_CATEGORIES)}")
+    # Resolve categories — multi-select takes priority over legacy single-select
+    effective_categories = body.categories if body.categories else (
+        [body.broad_category] if body.broad_category else []
+    )
+    if not effective_categories:
+        raise HTTPException(status_code=400, detail="Select at least one job category")
+    invalid = [c for c in effective_categories if c not in JOB_CATEGORIES]
+    if invalid:
+        raise HTTPException(status_code=400, detail=f"Invalid categories: {', '.join(invalid)}. Choose from: {', '.join(JOB_CATEGORIES)}")
+
+    # Resolve work types — multi-select takes priority over legacy single-select
+    effective_work_types = body.work_types if body.work_types else [body.work_type]
+
     if not body.anywhere and not body.user_country:
         raise HTTPException(status_code=400, detail="Provide user_country or set anywhere=true")
+
     service = CampaignService(db)
     campaign = await service.create_campaign(
         user_id=user_id,
         name=body.name,
-        broad_category=body.broad_category,
+        broad_category=effective_categories[0],
+        sub_categories=effective_categories[1:],
         user_country=body.user_country,
         anywhere=body.anywhere,
-        work_type=body.work_type,
+        work_type=effective_work_types[0] if len(effective_work_types) == 1 else "any",
+        work_types=effective_work_types if len(effective_work_types) > 1 else None,
         profile_overrides=body.profile_overrides,
     )
     return {"data": {
         "id": campaign.id, "name": campaign.name, "status": campaign.status,
         "broad_category": campaign.broad_category, "work_type": campaign.work_type,
+        "work_types": campaign.work_types,
         "anywhere": campaign.anywhere, "user_country": campaign.user_country,
         "sub_categories": campaign.sub_categories,
     }, "error": None}
@@ -119,6 +136,91 @@ async def process_raw_context(
     return {"data": result, "error": None}
 
 
+_ALLOWED_EXTS = {".pdf", ".docx", ".doc", ".txt", ".md"}
+_MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
+
+
+def _clean_extracted_text(text: str) -> str:
+    """
+    Compress extracted text before sending to the LLM.
+    Removes token-wasting noise without touching meaningful content.
+    Falls back to a plain truncation if cleaning wipes everything (safety net).
+    """
+    import re
+
+    original = text
+
+    # Strip HTML tags that leak through from DOCX XML
+    text = re.sub(r"<[^>]+>", " ", text)
+
+    # Remove actual base64 blobs: must end with = padding AND have no spaces —
+    # real base64 is a solid block; normal English words never end in = or ==.
+    text = re.sub(r"\b[A-Za-z0-9+/]{80,}={1,2}\b", "", text)
+
+    # Collapse long runs of pure separator characters on their own line
+    # (===== / ----- / _____ / ·····) — common in PDF/DOCX header borders
+    text = re.sub(r"(?m)^[ \t]*[-=_·•█▪]{4,}[ \t]*$", "", text)
+
+    # Remove bare page-number lines: a line that is just a number or "Page N of M"
+    text = re.sub(r"(?m)^\s*(Page\s+\d+\s+of\s+\d+|\d{1,4})\s*$", "", text)
+
+    # Collapse 3+ consecutive blank lines into one blank line
+    text = re.sub(r"\n{3,}", "\n\n", text)
+
+    # Normalise horizontal whitespace per line (tabs / multiple spaces → single space)
+    lines = [re.sub(r"[ \t]{2,}", " ", line).strip() for line in text.splitlines()]
+    text = "\n".join(lines).strip()
+
+    # Safety net: if cleaning removed everything, fall back to plain truncation
+    if not text and original.strip():
+        text = re.sub(r"\n{3,}", "\n\n", original).strip()
+
+    # Hard cap — 12 000 chars ≈ 3 000 tokens; a resume has everything before this
+    return text[:12_000]
+
+
+@router.post("/{campaign_id}/profile/context/file", response_model=dict)
+async def process_context_file(
+    campaign_id: str,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_user_id),
+):
+    """Upload a PDF, DOCX, TXT, or MD file — text is extracted, cleaned, and fed to the profile AI pipeline."""
+    import pdfplumber
+    import docx as python_docx
+    from app.services.job_hunter.campaign_profile_service import CampaignProfileService
+
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in _ALLOWED_EXTS:
+        raise HTTPException(status_code=400, detail=f"Unsupported file type '{ext}'. Allowed: PDF, DOCX, TXT, MD.")
+
+    raw = await file.read()
+    if len(raw) > _MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail="File too large. Maximum 5 MB.")
+
+    if ext == ".pdf":
+        text = ""
+        with pdfplumber.open(io.BytesIO(raw)) as pdf:
+            for page in pdf.pages:
+                text += (page.extract_text() or "") + "\n"
+        text = _clean_extracted_text(text)
+    elif ext in (".docx", ".doc"):
+        doc = python_docx.Document(io.BytesIO(raw))
+        text = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+        text = _clean_extracted_text(text)
+    else:
+        # .txt and .md — already human-readable; just cap at 12 000 chars
+        text = raw.decode("utf-8", errors="ignore").strip()[:12_000]
+
+    if not text:
+        raise HTTPException(status_code=422, detail="Could not extract text from the file.")
+
+    svc = CampaignProfileService(db)
+    result = await svc.process_raw_context(campaign_id, user_id, text)
+    return {"data": result, "error": None}
+
+
 @router.get("", response_model=dict)
 async def list_campaigns(
     db: AsyncSession = Depends(get_db),
@@ -165,10 +267,8 @@ async def trigger_scrape(
         missing.append("full name")
     if not (profile.email or "").strip():
         missing.append("email")
-    if not profile.skills:
-        missing.append("skills")
-    if not profile.work_experience:
-        missing.append("work experience")
+    if not profile.skills and not (profile.raw_context or "").strip():
+        missing.append("skills or profile context")
     if missing:
         raise HTTPException(status_code=400, detail=f"Profile incomplete: {', '.join(missing)}.")
 
@@ -195,7 +295,14 @@ async def trigger_scrape(
             pass
 
     # ── Build preferences ─────────────────────────────────────────────────
-    work_type   = body.get("work_type") or campaign.work_type or "any"
+    # Resolve effective work types: body override > campaign.work_types > campaign.work_type
+    if body.get("work_type"):
+        effective_work_types = [body["work_type"]]
+    elif campaign.work_types:
+        effective_work_types = list(campaign.work_types)
+    else:
+        effective_work_types = [campaign.work_type or "any"]
+
     anywhere    = bool(campaign.anywhere)
     user_country = campaign.user_country or ""
 
@@ -212,7 +319,8 @@ async def trigger_scrape(
     preferences = {
         "search_term":    campaign.broad_category,
         "company_types":  body.get("company_types") or [],
-        "work_type":      work_type,
+        "work_type":      effective_work_types[0] if len(effective_work_types) == 1 else "any",
+        "work_types":     effective_work_types,
         "regions":        regions,
         "user_country":   user_country,
         "anywhere":       anywhere,
@@ -234,6 +342,127 @@ async def trigger_scrape(
     )
 
     return {"data": {"started": True, "preferences": {k: v for k, v in preferences.items() if k != "linkedin_creds"}}, "error": None}
+
+
+@router.post("/{campaign_id}/jobs/manual", response_model=dict)
+async def add_manual_job(
+    campaign_id: str,
+    body: ManualJobRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_user_id),
+):
+    """
+    Add a job manually to the campaign pipeline.
+    Creates a JobListing (source='manual', match_score='MATCH') and queues tailoring.
+    """
+    import hashlib
+    from app.models.pg.job_hunter import JobListing
+    from sqlalchemy.exc import IntegrityError
+
+    # Build a stable url_hash — use company+title since there's no real URL
+    raw = f"{user_id}|{body.company.lower()}|{body.title.lower()}|manual"
+    url_hash = hashlib.sha256(raw.encode()).hexdigest()
+
+    # Synthetic URL so the unique constraint has something to key on
+    synthetic_url = f"manual://{url_hash[:12]}"
+
+    listing = JobListing(
+        campaign_id=campaign_id,
+        source="manual",
+        title=body.title.strip(),
+        company=body.company.strip(),
+        location=body.location,
+        remote=False,
+        url=body.apply_url or synthetic_url,
+        apply_url=body.apply_url,
+        description=body.description.strip()[:5000],
+        match_score="MATCH",
+        url_hash=url_hash,
+        status="pending",
+    )
+    db.add(listing)
+    try:
+        await db.commit()
+        await db.refresh(listing)
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="This job is already in the campaign.")
+
+    # Queue tailoring — same pipeline as scraped jobs
+    try:
+        from app.workers.tailor_worker import tailor_listing
+        tailor_listing.delay(listing.id, user_id)
+    except Exception:
+        pass  # tailoring is best-effort; listing is already saved
+
+    return {"data": {"listing_id": listing.id, "status": "queued"}, "error": None}
+
+
+@router.post("/{campaign_id}/listings/{listing_id}/ensure-application", response_model=dict)
+async def ensure_application(
+    campaign_id: str,
+    listing_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_user_id),
+):
+    """
+    Ensure an Application record exists for this listing.
+    Creates one (and queues tailoring) if it doesn't exist yet.
+    Returns the application_id.
+    """
+    from sqlalchemy import select
+    from sqlalchemy.exc import IntegrityError
+    from app.models.pg.job_hunter import Application, JobListing
+
+    # Verify listing belongs to this campaign
+    result = await db.execute(
+        select(JobListing).where(JobListing.id == listing_id, JobListing.campaign_id == campaign_id)
+    )
+    listing = result.scalar_one_or_none()
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found.")
+
+    # Check if application already exists
+    app_result = await db.execute(
+        select(Application).where(
+            Application.job_listing_id == listing_id,
+            Application.user_id == user_id,
+        )
+    )
+    app = app_result.scalar_one_or_none()
+
+    if not app:
+        import uuid as _uuid
+        app = Application(
+            id=str(_uuid.uuid4()),
+            campaign_id=campaign_id,
+            job_listing_id=listing_id,
+            user_id=user_id,
+            status="pending",
+        )
+        db.add(app)
+        try:
+            await db.commit()
+            await db.refresh(app)
+        except IntegrityError:
+            await db.rollback()
+            # Race condition — fetch the one that was just created
+            app_result2 = await db.execute(
+                select(Application).where(
+                    Application.job_listing_id == listing_id,
+                    Application.user_id == user_id,
+                )
+            )
+            app = app_result2.scalar_one()
+
+        # Queue tailoring
+        try:
+            from app.workers.tailor_worker import tailor_listing
+            tailor_listing.delay(listing_id, user_id)
+        except Exception:
+            pass
+
+    return {"data": {"application_id": app.id}, "error": None}
 
 
 @router.get("/{campaign_id}/scrape/status", response_model=dict)
@@ -270,6 +499,37 @@ async def get_scrape_status(
         },
         "error": None,
     }
+
+
+@router.post("/{campaign_id}/scrape/stop", response_model=dict)
+async def stop_scrape(
+    campaign_id: str,
+    user_id: str = Depends(get_user_id),
+):
+    """
+    Stop an in-progress scrape by revoking all queued/running Celery tasks
+    and marking the run as done.
+    """
+    import json
+    from app.workers.board_scrape_worker import _redis, _set_run_status
+    from app.core.celery_app import celery_app
+
+    revoked = 0
+    try:
+        r = _redis()
+        raw = r.get(f"scrape_tasks:{campaign_id}")
+        if raw:
+            task_ids = json.loads(raw)
+            for task_id in task_ids:
+                celery_app.control.revoke(task_id, terminate=True, signal="SIGTERM")
+                revoked += 1
+            r.delete(f"scrape_tasks:{campaign_id}")
+    except Exception:
+        pass
+
+    _set_run_status(campaign_id, "done")
+
+    return {"data": {"stopped": True, "revoked": revoked}, "error": None}
 
 
 @router.put("/{campaign_id}/credentials/email", response_model=dict)

@@ -40,3 +40,4 @@ deepgram-sdk>=3.4.0
 faster-whisper>=1.0.3
 semble>=0.1.8
 resemblyzer>=0.1.1.dev0
+spacy>=3.7

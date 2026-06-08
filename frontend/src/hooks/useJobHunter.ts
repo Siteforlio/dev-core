@@ -44,20 +44,24 @@ export function useJobHunter() {
 
   async function createCampaign(body: {
     name: string
-    broadCategory: string
+    broadCategory?: string
+    categories?: string[]
     userCountry?: string
     anywhere?: boolean
     workType?: string
+    workTypes?: string[]
   }): Promise<Campaign> {
     const res = await apiFetch(`${BASE}/job-hunter/campaigns`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
         name: body.name,
-        broad_category: body.broadCategory,
+        broad_category: body.broadCategory ?? null,
+        categories: body.categories ?? [],
         user_country: body.userCountry ?? null,
         anywhere: body.anywhere ?? false,
         work_type: body.workType ?? 'remote',
+        work_types: body.workTypes ?? [],
       }),
     })
     if (!res.ok) {
@@ -117,6 +121,29 @@ export function useJobHunter() {
     return data
   }
 
+  async function processContextFile(campaignId: string, file: File): Promise<{
+    extracted: Record<string, unknown>; gaps: { score: number; is_ready: boolean; gaps: string[]; questions: { gap: string; question: string }[] }
+  }> {
+    const form = new FormData()
+    form.append('file', file)
+    const token = useAuthStore.getState().accessToken
+    const res = await apiFetch(`${BASE}/job-hunter/campaigns/${campaignId}/profile/context/file`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },  // no Content-Type — browser sets multipart boundary
+      body: form,
+    })
+    if (!res.ok) {
+      const b = await res.json().catch(() => null)
+      const detail = b?.detail
+      const msg = Array.isArray(detail)
+        ? detail.map((d: Record<string, unknown>) => d?.msg ?? String(d)).join('; ')
+        : typeof detail === 'string' ? detail : `HTTP ${res.status}`
+      throw new Error(msg)
+    }
+    const { data } = await res.json()
+    return data
+  }
+
   async function triggerScrape(campaignId: string, prefs?: Partial<ScrapePreferences>): Promise<void> {
     const body: Record<string, unknown> = {}
     if (prefs?.companyTypes?.length)   body.company_types  = prefs.companyTypes
@@ -143,6 +170,26 @@ export function useJobHunter() {
     if (!res.ok) return { run: null, boards: {} }
     const { data } = await res.json()
     return { run: data.run ?? null, boards: data.boards ?? {} }
+  }
+
+  async function ensureApplication(campaignId: string, listingId: string): Promise<string> {
+    const res = await apiFetch(
+      `${BASE}/job-hunter/campaigns/${campaignId}/listings/${listingId}/ensure-application`,
+      { method: 'POST', headers },
+    )
+    if (!res.ok) {
+      const b = await res.json().catch(() => null)
+      throw new Error(b?.detail ?? `HTTP ${res.status}`)
+    }
+    const { data } = await res.json()
+    return data.application_id as string
+  }
+
+  async function stopScrape(campaignId: string): Promise<void> {
+    await apiFetch(`${BASE}/job-hunter/campaigns/${campaignId}/scrape/stop`, {
+      method: 'POST',
+      headers,
+    })
   }
 
   async function setCampaignStatus(
@@ -330,7 +377,16 @@ export function useJobHunter() {
       coverLetter: data.cover_letter ?? null,
       appliedAt: data.applied_at ?? null,
       statusUpdatedAt: data.status_updated_at ?? null,
+      description: data.description ?? null,
     }
+  }
+
+  async function triggerTailoring(campaignId: string, applicationId: string): Promise<void> {
+    const res = await apiFetch(
+      `${BASE}/job-hunter/campaigns/${campaignId}/applications/${applicationId}/tailor`,
+      { method: 'POST', headers }
+    )
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
   }
 
   async function patchApplicationStatus(
@@ -396,6 +452,29 @@ export function useJobHunter() {
     return { noCredentials: data.no_credentials ?? false }
   }
 
+  async function addManualJob(
+    campaignId: string,
+    job: { title: string; company: string; description: string; applyUrl?: string; location?: string }
+  ): Promise<{ listingId: string }> {
+    const res = await apiFetch(`${BASE}/job-hunter/campaigns/${campaignId}/jobs/manual`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        title: job.title,
+        company: job.company,
+        description: job.description,
+        apply_url: job.applyUrl ?? null,
+        location: job.location ?? null,
+      }),
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body?.detail ?? `HTTP ${res.status}`)
+    }
+    const { data } = await res.json()
+    return { listingId: data.listing_id }
+  }
+
   async function getTrackingStatus(campaignId: string, applicationId: string): Promise<TrackingStatus> {
     const res = await apiFetch(
       `${BASE}/job-hunter/campaigns/${campaignId}/applications/${applicationId}/tracking`,
@@ -428,8 +507,11 @@ export function useJobHunter() {
     upsertCampaignProfile,
     analyzeProfileGaps,
     processRawContext,
+    processContextFile,
     triggerScrape,
     getScrapeStatus,
+    stopScrape,
+    ensureApplication,
     setCampaignStatus,
     getDashboard,
     getInterviewContext,
@@ -444,10 +526,12 @@ export function useJobHunter() {
     deleteCampaign,
     getApplicationDetail,
     patchApplicationStatus,
+    triggerTailoring,
     generateCoverLetter,
     chatWithApplication,
     openInChrome,
     scanEmails,
     getTrackingStatus,
+    addManualJob,
   }
 }

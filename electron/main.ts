@@ -1,7 +1,8 @@
-import { app, BrowserWindow, Menu, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, Menu, ipcMain, shell, safeStorage } from 'electron'
 import path from 'path'
 import fs from 'fs'
 import os from 'os'
+import crypto from 'crypto'
 import { execFile } from 'child_process'
 import * as naudiodon from 'naudiodon'
 import { createOverlayWindow, getOverlayWindow, setOverlayContentBounds } from './overlay'
@@ -53,6 +54,63 @@ let _lastToken: string = ''
 let _lastRefreshToken: string = ''
 let _refreshingToken: Promise<{ accessToken: string; refreshToken: string } | null> | null = null
 
+// ── Secure credential storage paths (set after app ready) ─────────────────
+let _tokenFilePath = ''
+let _pinConfigPath = ''
+let _pinFailures   = 0
+const PIN_MAX_FAILURES = 5
+
+function _initCredPaths() {
+  const userData  = app.getPath('userData')
+  _tokenFilePath  = path.join(userData, 'devcore-session.bin')
+  _pinConfigPath  = path.join(userData, 'devcore-pin.json')
+}
+
+/** Persist refresh token to disk using OS-level encryption (Windows DPAPI). */
+function _saveRefreshToken(token: string): void {
+  if (!_tokenFilePath || !safeStorage.isEncryptionAvailable()) return
+  try {
+    fs.writeFileSync(_tokenFilePath, safeStorage.encryptString(token))
+  } catch {}
+}
+
+/** Load the persisted refresh token from disk. Returns '' on any failure. */
+function _loadStoredRefreshToken(): string {
+  if (!_tokenFilePath || !safeStorage.isEncryptionAvailable()) return ''
+  try {
+    if (!fs.existsSync(_tokenFilePath)) return ''
+    return safeStorage.decryptString(fs.readFileSync(_tokenFilePath))
+  } catch { return '' }
+}
+
+function _clearStoredToken(): void {
+  try { if (_tokenFilePath) fs.unlinkSync(_tokenFilePath) } catch {}
+}
+
+// ── PIN helpers ───────────────────────────────────────────────────────────
+
+/** Deterministic hash for a PIN. Fixed salt is fine — lockout enforces rate-limiting. */
+function _hashPin(pin: string): string {
+  return crypto.pbkdf2Sync(pin, 'devcore-pin-salt-v1', 100_000, 32, 'sha256').toString('hex')
+}
+
+function _loadPinHash(): string | null {
+  try {
+    if (!_pinConfigPath || !fs.existsSync(_pinConfigPath)) return null
+    const data = JSON.parse(fs.readFileSync(_pinConfigPath, 'utf8'))
+    return typeof data.hash === 'string' ? data.hash : null
+  } catch { return null }
+}
+
+function _savePinHash(hash: string): void {
+  if (!_pinConfigPath) return
+  fs.writeFileSync(_pinConfigPath, JSON.stringify({ hash }))
+}
+
+function _clearPin(): void {
+  try { if (_pinConfigPath) fs.unlinkSync(_pinConfigPath) } catch {}
+}
+
 const BACKEND_HTTP = 'http://localhost:8000'
 
 /** Decode JWT exp claim without a library. Returns expiry ms or 0 on error. */
@@ -86,7 +144,7 @@ async function _doRefresh(): Promise<{ accessToken: string; refreshToken: string
             // Capture rotated refresh token (replay attack protection — server issues new JTI each time)
             const refreshToken: string = data?.refresh_token ?? ''
             if (accessToken) _lastToken = accessToken
-            if (refreshToken) _lastRefreshToken = refreshToken
+            if (refreshToken) { _lastRefreshToken = refreshToken; _saveRefreshToken(refreshToken) }
             resolve(accessToken ? { accessToken, refreshToken } : null)
           } catch { resolve(null) }
         })
@@ -100,8 +158,66 @@ async function _doRefresh(): Promise<{ accessToken: string; refreshToken: string
 ipcMain.handle('auth:get:token', () => _lastToken || null)
 
 // Store refresh token from renderer so main process can refresh independently.
+// Also persists to disk via safeStorage so it survives app restarts.
 ipcMain.handle('auth:set:refresh', (_e, refreshToken: string) => {
-  if (refreshToken) _lastRefreshToken = refreshToken
+  if (refreshToken) {
+    _lastRefreshToken = refreshToken
+    _saveRefreshToken(refreshToken)
+  }
+})
+
+// Called during splash to decide what screen to show.
+ipcMain.handle('auth:startup:status', () => {
+  const hasToken  = !!_lastRefreshToken
+  const pinHash   = _loadPinHash()
+  return { hasToken, pinRequired: hasToken && pinHash !== null }
+})
+
+// Verify a PIN attempt. Locks out after PIN_MAX_FAILURES wrong tries.
+ipcMain.handle('auth:pin:check', (_e, pin: string) => {
+  const pinHash = _loadPinHash()
+  if (!pinHash) return { ok: false, reason: 'no_pin' }
+  if (_pinFailures >= PIN_MAX_FAILURES) {
+    return { ok: false, reason: 'locked', attemptsLeft: 0 }
+  }
+  if (_hashPin(String(pin)) === pinHash) {
+    _pinFailures = 0
+    return { ok: true }
+  }
+  _pinFailures++
+  const attemptsLeft = PIN_MAX_FAILURES - _pinFailures
+  if (attemptsLeft <= 0) {
+    // Wipe stored token — force full login
+    _clearStoredToken()
+    _lastRefreshToken = ''
+    _lastToken = ''
+  }
+  return { ok: false, reason: 'wrong', attemptsLeft }
+})
+
+// Set or update the PIN (digits only, 4–8 chars).
+ipcMain.handle('auth:pin:set', (_e, pin: string) => {
+  if (typeof pin !== 'string' || !/^\d{4,8}$/.test(pin)) {
+    return { ok: false, reason: 'invalid' }
+  }
+  _savePinHash(_hashPin(pin))
+  return { ok: true }
+})
+
+// Remove PIN (PIN screen skipped on next startup).
+ipcMain.handle('auth:pin:remove', () => {
+  _clearPin()
+  return { ok: true }
+})
+
+// Quick check used by settings UI to know if PIN is configured.
+ipcMain.handle('auth:pin:exists', () => ({ exists: _loadPinHash() !== null }))
+
+// Called on logout — wipes the stored refresh token from disk.
+ipcMain.handle('auth:clear:stored', () => {
+  _clearStoredToken()
+  _lastRefreshToken = ''
+  _lastToken = ''
 })
 
 // Single refresh path for all windows — deduplicates concurrent attempts.
@@ -438,6 +554,11 @@ ipcMain.handle('app:splash-done', () => {
 })
 
 app.whenReady().then(() => {
+  _initCredPaths()
+  // Restore persisted refresh token so startup status check is correct
+  const stored = _loadStoredRefreshToken()
+  if (stored) _lastRefreshToken = stored
+
   Menu.setApplicationMenu(null)
   createWindow()          // main app window (overlay deferred until splash-done IPC)
   _startDeviceWatcher()   // hot-plug detection

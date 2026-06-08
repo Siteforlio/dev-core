@@ -24,10 +24,14 @@ class ResumeTextRequest(BaseModel):
 
 class CampaignCreateRequest(BaseModel):
     name: str
-    broad_category: str           # must be one of JOB_CATEGORIES
+    # Single-select legacy fields (still accepted for backward compat)
+    broad_category: str | None = None
+    work_type: Literal["remote", "hybrid", "onsite", "any"] = "remote"
+    # Multi-select fields (take priority when provided)
+    categories: list[str] = []
+    work_types: list[str] = []
     user_country: str | None = None  # None when anywhere=True
     anywhere: bool = False
-    work_type: Literal["remote", "hybrid", "onsite", "any"] = "remote"
     profile_overrides: dict[str, Any] = {}
 
 
@@ -52,6 +56,14 @@ class CampaignProfileUpsertRequest(BaseModel):
 
 class RawContextRequest(BaseModel):
     raw_context: str
+
+
+class ManualJobRequest(BaseModel):
+    title: str
+    company: str
+    description: str
+    apply_url: str | None = None
+    location: str | None = None
 
 
 class CampaignStatusRequest(BaseModel):

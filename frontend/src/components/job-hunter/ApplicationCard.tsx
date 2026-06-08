@@ -6,6 +6,8 @@ interface Props {
   onStartInterviewPrep: (applicationId: string) => void
   onApply: (applicationId: string) => void
   onViewTracking: (applicationId: string) => void
+  compact?: boolean
+  active?: boolean
 }
 
 const MATCH_BAR: Record<string, { fill: string; glow: string; pct: number }> = {
@@ -41,12 +43,68 @@ function MatchBar({ score }: { score: string | null }) {
   )
 }
 
-export default function ApplicationCard({ application, onStartInterviewPrep, onApply, onViewTracking }: Props) {
+export default function ApplicationCard({ application, onStartInterviewPrep, onApply, onViewTracking, compact, active }: Props) {
   const { id, company, title, location, appliedAt, status, matchScore, source, appliedElsewhere } = application
   const isApplied = status === 'applied' || status === 'interview' || status === 'offer' || status === 'responded'
   const showInterviewPrep = status === 'interview'
   const appliedDate = appliedAt ? new Date(appliedAt).toLocaleDateString('en-GB') : '—'
 
+  const MATCH_CFG = matchScore ? (MATCH_BAR[matchScore] ?? MATCH_BAR.SKIP) : MATCH_BAR.SKIP
+
+  // ── Compact mode: narrow sidebar list when panel is open ──────────────────
+  if (compact) {
+    return (
+      <div
+        onClick={() => isApplied ? onViewTracking(id) : onApply(id)}
+        style={{
+          padding: '8px 12px',
+          borderBottom: '1px solid rgba(34,211,238,0.05)',
+          background: active
+            ? 'rgba(34,211,238,0.06)'
+            : appliedElsewhere ? 'rgba(251,191,36,0.03)' : 'transparent',
+          borderLeft: `2px solid ${active ? '#22d3ee' : MATCH_CFG.fill}`,
+          cursor: 'pointer',
+          transition: 'background 0.1s',
+        }}
+        onMouseEnter={e => { if (!active) e.currentTarget.style.background = 'rgba(34,211,238,0.03)' }}
+        onMouseLeave={e => { if (!active) e.currentTarget.style.background = appliedElsewhere ? 'rgba(251,191,36,0.03)' : 'transparent' }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 6 }}>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <p style={{ fontFamily: 'monospace', fontSize: 11, fontWeight: 700, color: 'rgba(226,232,240,0.9)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {company}
+            </p>
+            <p style={{ fontFamily: 'monospace', fontSize: 10, color: 'rgba(148,163,184,0.6)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: 1 }}>
+              {title}
+            </p>
+          </div>
+          <span style={{ fontFamily: 'monospace', fontSize: 9, fontWeight: 700, color: MATCH_CFG.fill, flexShrink: 0, marginTop: 2 }}>
+            {matchScore ?? 'SKIP'}
+          </span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 4 }}>
+          {source && (
+            <span style={{ fontFamily: 'monospace', fontSize: 9, padding: '1px 5px', borderRadius: 3, background: 'rgba(34,211,238,0.07)', border: '1px solid rgba(34,211,238,0.15)', color: 'rgba(34,211,238,0.5)' }}>
+              {source}
+            </span>
+          )}
+          <span style={{ fontFamily: 'monospace', fontSize: 9, color: 'rgba(100,116,139,0.4)' }}>
+            {status}
+          </span>
+          {showInterviewPrep && (
+            <button
+              onClick={e => { e.stopPropagation(); onStartInterviewPrep(id) }}
+              style={{ marginLeft: 'auto', padding: '2px 6px', borderRadius: 4, background: 'rgba(167,139,250,0.1)', border: '1px solid rgba(167,139,250,0.25)', color: '#a78bfa', fontFamily: 'monospace', fontSize: 9, cursor: 'pointer' }}
+            >
+              prep
+            </button>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  // ── Full mode: wide table row ─────────────────────────────────────────────
   return (
     <div
       className="grid items-center transition-all duration-150 cursor-default group"

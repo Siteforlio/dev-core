@@ -124,7 +124,7 @@ async def _run_board(board_id: str, search_term: str, linkedin_creds: dict | Non
     )
 
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
             if board_id == "greenhouse":
                 return await ats_scrapers.scrape_all_ats(search_term, publish_fn=None)
 
@@ -153,6 +153,9 @@ async def _run_board(board_id: str, search_term: str, linkedin_creds: dict | Non
                     if isinstance(r, list):
                         jobs.extend(r)
                 return jobs
+
+            elif board_id == "wellfound":
+                return await startup_scrapers.scrape_wellfound(search_term, client)
 
             elif board_id == "remotive":
                 return await startup_scrapers.scrape_remotive(search_term, client)
@@ -328,7 +331,8 @@ def aggregate_board_results(
             svc._campaign_id = campaign_id
 
             daily_target  = preferences.get("daily_target", 100)
-            work_type     = preferences.get("work_type", "any")
+            # work_types takes priority over work_type for multi-select support
+            work_type     = preferences.get("work_types") or preferences.get("work_type", "any")
             user_country  = preferences.get("user_country", "")
             anywhere      = preferences.get("anywhere", True)
             sub_categories = preferences.get("sub_categories", [])
@@ -474,14 +478,16 @@ def dispatch_scrape(
     from app.services.job_hunter.board_registry import select_boards
 
     company_types  = preferences.get("company_types") or []
-    work_type      = preferences.get("work_type", "any")
+    # For board selection, collapse multi work_types: if multiple chosen, use "any" to cast wide net
+    raw_work_types = preferences.get("work_types") or [preferences.get("work_type", "any")]
+    work_type_for_boards = raw_work_types[0] if len(raw_work_types) == 1 else "any"
     regions        = preferences.get("regions") or []
     search_term    = preferences.get("search_term", "")
     linkedin_creds = preferences.get("linkedin_creds")
 
     selected = select_boards(
         company_types=company_types or None,
-        work_type=work_type,
+        work_type=work_type_for_boards,
         regions=regions or None,
         require_linkedin=bool(linkedin_creds),
     )
@@ -507,13 +513,14 @@ def dispatch_scrape(
         _set_board_status(campaign_id, b.id, "queued")
 
     # Build the group of per-board tasks
-    board_tasks = group(
+    tasks = [
         scrape_board.s(b.id, campaign_id, search_term, linkedin_creds)
         for b in selected
-    )
+    ]
+    board_tasks = group(tasks)
 
     # Chord: run all boards in parallel, then aggregate
-    chord(board_tasks)(
+    result = chord(board_tasks)(
         aggregate_board_results.s(
             campaign_id=campaign_id,
             user_id=user_id,
@@ -521,5 +528,24 @@ def dispatch_scrape(
             round_=round_,
         )
     )
+
+    # Store task IDs in Redis so the stop endpoint can revoke them
+    try:
+        r = _redis()
+        # result.parent is the group; collect all child task IDs
+        parent = result.parent
+        task_ids = []
+        if parent and hasattr(parent, "results"):
+            task_ids = [t.id for t in parent.results]
+        if result.id:
+            task_ids.append(result.id)  # chord callback task
+        if task_ids:
+            r.set(
+                f"scrape_tasks:{campaign_id}",
+                json.dumps(task_ids),
+                ex=86400,
+            )
+    except Exception:
+        pass  # best-effort
 
     return {"boards": len(board_ids), "board_ids": board_ids, "round": round_}

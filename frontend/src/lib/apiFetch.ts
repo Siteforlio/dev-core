@@ -6,11 +6,24 @@ import { useAuthStore } from '../store/authStore'
 
 let refreshing: Promise<string | null> | null = null
 
-async function attemptRefresh(): Promise<string | null> {
+export async function attemptRefresh(): Promise<string | null> {
   const { refreshToken, setAccessToken, clearAuth } = useAuthStore.getState()
-  if (!refreshToken) { clearAuth(); return null }
+  const electronAPI = (window as any).electronAPI
 
   try {
+    // In Electron, the main process holds the refresh token (loaded from safeStorage on startup).
+    // Delegate to it directly — don't guard on the Zustand refreshToken which may be empty
+    // on first startup before the store is hydrated.
+    if (electronAPI?.refreshToken) {
+      const result = await electronAPI.refreshToken()
+      if (!result?.accessToken) { clearAuth(); return null }
+      setAccessToken(result.accessToken)
+      if (result.refreshToken) useAuthStore.setState({ refreshToken: result.refreshToken })
+      return result.accessToken
+    }
+
+    // Non-Electron fallback (plain browser dev mode)
+    if (!refreshToken) { clearAuth(); return null }
     const res = await fetch('http://localhost:8000/api/v1/auth/refresh', {
       method: 'POST',
       headers: { Authorization: `Bearer ${refreshToken}` },
@@ -18,11 +31,7 @@ async function attemptRefresh(): Promise<string | null> {
     if (!res.ok) { clearAuth(); return null }
     const { data } = await res.json()
     setAccessToken(data.access_token)
-    // Store the rotated refresh token so the next cycle doesn't replay a blacklisted JTI
-    if (data.refresh_token) {
-      useAuthStore.setState({ refreshToken: data.refresh_token })
-      ;(window as any).electronAPI?.setRefreshToken?.(data.refresh_token)
-    }
+    if (data.refresh_token) useAuthStore.setState({ refreshToken: data.refresh_token })
     return data.access_token
   } catch {
     clearAuth()
@@ -53,7 +62,8 @@ export async function apiFetch(input: string, init: RequestInit = {}): Promise<R
   const { accessToken } = useAuthStore.getState()
 
   const makeHeaders = (token: string | null) => ({
-    'Content-Type': 'application/json',
+    // Don't set Content-Type for FormData — the browser must set it to inject the multipart boundary
+    ...(init.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
     ...(init.headers as Record<string, string> ?? {}),
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
   })
