@@ -80,6 +80,26 @@ def _celery_worker_alive() -> bool:
         return False
 
 
+def _purge_celery_queues() -> None:
+    """
+    Purge all pending tasks from Redis queues directly.
+    Called at startup so stale tasks from a previous (possibly unclean) shutdown
+    don't replay. Redis queue keys match the queue name exactly (Kombu Redis transport).
+    """
+    _log = logging.getLogger("uvicorn.error")
+    try:
+        import redis as _redis_lib
+        from app.core.config import settings as _s
+        _r = _redis_lib.from_url(_s.celery_broker_url, decode_responses=True)
+        for _q in ("celery", "tailor"):
+            _purged = _r.delete(_q)
+            if _purged:
+                _log.info("celery: purged stale queue '%s'", _q)
+        _r.close()
+    except Exception as _pe:
+        _log.warning("celery: startup queue purge failed — %s", _pe)
+
+
 async def _ensure_celery_worker() -> None:
     """Start a Celery worker subprocess if none is currently running."""
     global _celery_proc
@@ -88,6 +108,10 @@ async def _ensure_celery_worker() -> None:
         logging.getLogger("uvicorn.error").info("celery: worker already running — skipping auto-start")
         return
 
+    # Purge stale queues before starting a fresh worker so tasks from the
+    # previous session (which may have been killed mid-flight) don't replay.
+    await asyncio.to_thread(_purge_celery_queues)
+
     logging.getLogger("uvicorn.error").info("celery: no worker detected — starting worker subprocess")
     cmd = [
         sys.executable, "-m", "celery",
@@ -95,7 +119,7 @@ async def _ensure_celery_worker() -> None:
         "worker",
         "--loglevel=info",
         "--pool=solo",   # prefork uses billiard shared memory which fails on Windows
-        "-Q", "celery",
+        "-Q", "tailor,celery",  # tailor queue polled first — resume tasks jump the queue
     ]
     try:
         _celery_proc = subprocess.Popen(cmd, cwd=str(_BACKEND_DIR))
@@ -121,10 +145,11 @@ async def lifespan(app: FastAPI):
     if _celery_proc is not None and _celery_proc.poll() is None:
         _log = logging.getLogger("uvicorn.error")
         _log.info("celery: shutting down worker (pid=%d)", _celery_proc.pid)
-        # Revoke all active/reserved tasks then shut the worker down
         try:
             from app.core.celery_app import celery_app
-            # Inspect what's running and reserved, revoke with terminate=True
+            # 1. Purge all queued tasks from Redis so they don't replay on next start
+            await asyncio.to_thread(_purge_celery_queues)
+            # 2. Revoke active/reserved tasks then shut the worker down
             insp = celery_app.control.inspect(timeout=2)
             active   = insp.active()   or {}
             reserved = insp.reserved() or {}

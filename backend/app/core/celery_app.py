@@ -20,6 +20,15 @@ celery_app.conf.update(
     result_serializer="json",
     accept_content=["json"],
     timezone="UTC",
+    # Two queues: tailor (high-priority, processed first) and celery (default/scraping)
+    task_queues={
+        "tailor": {"exchange": "tailor", "routing_key": "tailor"},
+        "celery": {"exchange": "celery", "routing_key": "celery"},
+    },
+    task_default_queue="celery",
+    task_routes={
+        "app.workers.tailor_worker.tailor_listing": {"queue": "tailor"},
+    },
     beat_schedule={
         "email-poll-every-60s": {
             "task": "app.workers.email_worker.poll_all_campaigns",

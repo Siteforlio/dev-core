@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 from fastapi.security import HTTPBearer
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -107,6 +108,85 @@ async def get_application_detail(
     }
 
 
+# ── Serve tailored resume PDF ─────────────────────────────────────────────────
+
+@router.get("/{campaign_id}/applications/{application_id}/resume")
+async def get_resume_pdf(
+    campaign_id: str,
+    application_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_user_id),
+):
+    """Stream the tailored resume PDF so the frontend can open it directly."""
+    from pathlib import Path
+
+    result = await db.execute(
+        select(Application).where(
+            Application.id == application_id,
+            Application.campaign_id == campaign_id,
+            Application.user_id == user_id,
+            Application.deleted_at.is_(None),
+        )
+    )
+    app = result.scalar_one_or_none()
+    if not app or not app.tailored_resume_pdf_url:
+        raise HTTPException(status_code=404, detail="Resume not found")
+
+    pdf_path = Path(app.tailored_resume_pdf_url)
+    if not pdf_path.exists():
+        raise HTTPException(status_code=404, detail="Resume file missing from disk")
+
+    return FileResponse(
+        path=str(pdf_path),
+        media_type="application/pdf",
+        filename=pdf_path.name,
+        headers={"Content-Disposition": f'inline; filename="{pdf_path.name}"'},
+    )
+
+
+# ── Reveal resume in file explorer ───────────────────────────────────────────
+
+@router.post("/{campaign_id}/applications/{application_id}/resume/reveal", response_model=dict)
+async def reveal_resume_in_explorer(
+    campaign_id: str,
+    application_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_user_id),
+):
+    """Open the folder containing the resume in the OS file explorer with the file selected."""
+    from pathlib import Path
+    import subprocess, sys
+
+    result = await db.execute(
+        select(Application).where(
+            Application.id == application_id,
+            Application.campaign_id == campaign_id,
+            Application.user_id == user_id,
+            Application.deleted_at.is_(None),
+        )
+    )
+    app = result.scalar_one_or_none()
+    if not app or not app.tailored_resume_pdf_url:
+        raise HTTPException(status_code=404, detail="Resume not found")
+
+    pdf_path = Path(app.tailored_resume_pdf_url)
+    if not pdf_path.exists():
+        raise HTTPException(status_code=404, detail="Resume file missing from disk")
+
+    try:
+        if sys.platform == "win32":
+            # /select highlights the file in Explorer
+            subprocess.Popen(["explorer", "/select,", str(pdf_path)])
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", "-R", str(pdf_path)])
+        else:
+            subprocess.Popen(["xdg-open", str(pdf_path.parent)])
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Could not open folder: {e}")
+
+    return {"data": {"revealed": True}, "error": None}
+
+
 # ── Retrigger tailoring ───────────────────────────────────────────────────────
 
 @router.post("/{campaign_id}/applications/{application_id}/tailor", response_model=dict)
@@ -132,7 +212,7 @@ async def retrigger_tailoring(
 
     try:
         from app.workers.tailor_worker import tailor_listing
-        tailor_listing.delay(app.job_listing_id, user_id)
+        tailor_listing.apply_async(args=[app.job_listing_id, user_id], queue="tailor", priority=9)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Could not queue tailoring: {e}")
 

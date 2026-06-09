@@ -12,6 +12,7 @@ from app.services.job_hunter.llm import call_llm
 logger = logging.getLogger(__name__)
 
 JOB_CATEGORIES = [
+    # Technology
     "Software Engineering",
     "Frontend Development",
     "Backend Development",
@@ -28,6 +29,136 @@ JOB_CATEGORIES = [
     "UI/UX Design",
     "Technical Writing",
     "Engineering Management",
+    "IT Support / Sysadmin",
+    "Blockchain / Web3",
+    "Game Development",
+    "Embedded Systems",
+    # Business & Finance
+    "Accounting",
+    "Finance / Investment",
+    "Banking",
+    "Financial Analysis",
+    "Auditing",
+    "Tax & Compliance",
+    "Business Analysis",
+    "Strategy & Consulting",
+    "Operations Management",
+    "Project Management",
+    "Supply Chain / Logistics",
+    "Procurement",
+    # Marketing & Sales
+    "Digital Marketing",
+    "Content Marketing",
+    "SEO / SEM",
+    "Social Media Management",
+    "Brand Management",
+    "Growth Marketing",
+    "Sales",
+    "Business Development",
+    "Account Management",
+    "Customer Success",
+    "Public Relations",
+    "Copywriting",
+    # Design & Creative
+    "Graphic Design",
+    "Motion Design / Animation",
+    "Video Production",
+    "Photography",
+    "Architecture",
+    "Interior Design",
+    "Fashion Design",
+    "Industrial Design",
+    "Creative Direction",
+    # Healthcare & Medical
+    "Medicine / Clinical",
+    "Nursing",
+    "Pharmacy",
+    "Dentistry",
+    "Mental Health / Counseling",
+    "Public Health",
+    "Biomedical Engineering",
+    "Medical Research",
+    "Healthcare Administration",
+    "Physical Therapy",
+    "Nutrition / Dietetics",
+    # Legal
+    "Law / Legal Practice",
+    "Paralegal",
+    "Compliance & Regulatory",
+    "IP & Patents",
+    "Corporate Law",
+    # Education & Research
+    "Teaching / Instruction",
+    "Academic Research",
+    "Curriculum Development",
+    "Training & L&D",
+    "EdTech",
+    "Library Science",
+    # Engineering (Non-Software)
+    "Mechanical Engineering",
+    "Civil Engineering",
+    "Electrical Engineering",
+    "Chemical Engineering",
+    "Aerospace Engineering",
+    "Environmental Engineering",
+    "Structural Engineering",
+    "Manufacturing Engineering",
+    # Science & Research
+    "Biology / Life Sciences",
+    "Chemistry",
+    "Physics",
+    "Environmental Science",
+    "Materials Science",
+    "Data Analysis / Statistics",
+    # Human Resources
+    "HR Management",
+    "Talent Acquisition / Recruiting",
+    "Compensation & Benefits",
+    "HR Business Partner",
+    "Organizational Development",
+    # Operations & Support
+    "Customer Support",
+    "Administrative Assistant",
+    "Office Management",
+    "Executive Assistant",
+    "Operations Analyst",
+    # Trades & Construction
+    "Construction Management",
+    "Electrical Trade",
+    "Plumbing",
+    "HVAC",
+    "Carpentry",
+    "Civil Works",
+    # Hospitality & Tourism
+    "Hotel Management",
+    "Event Planning",
+    "Travel & Tourism",
+    "Food & Beverage",
+    "Restaurant Management",
+    # Media & Communications
+    "Journalism",
+    "Broadcasting",
+    "Editing / Publishing",
+    "Communications",
+    "Translation / Localization",
+    # Agriculture & Environment
+    "Agriculture / Agronomy",
+    "Veterinary",
+    "Forestry",
+    "Environmental Management",
+    # Government & Social
+    "Government / Public Sector",
+    "Non-profit / NGO",
+    "Social Work",
+    "Policy & Advocacy",
+    "International Development",
+    # Other
+    "Real Estate",
+    "Insurance",
+    "Logistics / Freight",
+    "Transportation",
+    "Security Services",
+    "Sports & Fitness",
 ]
 
 WORK_TYPES = ["remote", "hybrid", "onsite", "any"]
@@ -111,35 +242,35 @@ class CampaignProfileService:
         )
 
         prompt = (
-            f"You are reviewing a job candidate's profile for a {role_context} role.\n\n"
+            f"You are reviewing a job candidate's profile for a {role_context} position.\n\n"
             f"Below is the candidate's raw profile context (exactly what they submitted):\n"
             f"---\n{context_for_llm}\n---\n\n"
             f"Quick extracted facts:\n{quick_facts}\n\n"
-            f"Read the raw context above and determine whether this candidate has enough information "
-            f"to generate a strong, ATS-matched resume for {role_context}.\n\n"
+            f"Evaluate whether this candidate has provided enough information to be matched to relevant "
+            f"{role_context} job listings and to have a strong application submitted on their behalf.\n"
+            f"This tool is used by people across ALL industries — not just tech. Evaluate based on "
+            f"what matters for their specific field ({role_context}), not on software engineering standards.\n\n"
             f"Respond with a JSON object:\n"
             f'{{\n'
             f'  "score": <0-100 integer>,\n'
-            f'  "is_ready": <true if score >= 75>,\n'
-            f'  "gaps": ["specific gap — e.g. \'No quantified impact in work bullets — add metrics like users served, latency reduced, revenue impacted\'", ...],\n'
-            f'  "questions": [{{"gap": "gap label", "question": "specific pre-screen question to fill this gap"}}],\n'
-            f'  "summary": "one sentence: main strength + single biggest thing holding this profile back"\n'
+            f'  "is_ready": <true if score >= 70>,\n'
+            f'  "gaps": ["specific missing info relevant to {role_context} — e.g. no work history, no key skills listed, no contact info"],\n'
+            f'  "questions": [{{"gap": "gap label", "question": "simple, friendly question to fill this gap"}}],\n'
+            f'  "summary": "one sentence: what they have + what would strengthen their profile"\n'
             f'}}\n\n'
-            f"SCORING (start at 100, deduct):\n"
-            f"- -20 if no work experience described (no companies, titles, or job descriptions)\n"
-            f"- -15 if years of experience not stated\n"
-            f"- -10 if no quantified achievements (no numbers, %, metrics anywhere in work history)\n"
-            f"- -10 if fewer than 5 skills relevant to {category} mentioned\n"
-            f"- -10 if no contact info found (name/email/phone)\n"
-            f"- -5 if no LinkedIn URL\n"
-            f"- -5 if no GitHub URL\n"
-            f"- -8 if work descriptions are vague (no specific responsibilities or outcomes — just titles)\n"
-            f"- +5 if detailed project descriptions with measurable outcomes are present\n"
-            f"- +5 if candidate clearly owns end-to-end work (built, designed, led — not just 'helped')\n\n"
-            f"GAPS: be specific to {role_context} — name the exact ATS keywords missing, "
-            f"the specific metrics absent, the ownership signals weak.\n"
-            f"QUESTIONS: ask like a hiring manager pre-screen — name the company, ask for numbers.\n"
-            f"NEVER flag high skill counts. NEVER ask for info that's already clearly present.\n"
+            f"SCORING (start at 100, deduct for what's missing):\n"
+            f"- -25 if no work/experience history described at all (no roles, no projects, no field context)\n"
+            f"- -15 if no relevant skills, tools, or qualifications for {role_context} are mentioned\n"
+            f"- -15 if no contact info at all (name, email, or phone)\n"
+            f"- -10 if experience is described but extremely vague (just titles, no context or outcomes)\n"
+            f"- -10 if years of experience or career level is completely unclear\n"
+            f"- -5  if no indication of preferred location or remote/onsite preference\n"
+            f"- +10 if they have clear, specific experience directly relevant to {role_context}\n"
+            f"- +5  if they mention specific tools, credentials, or certifications relevant to {role_context}\n\n"
+            f"IMPORTANT: Adapt expectations to the field. A nurse doesn't need GitHub. "
+            f"A carpenter doesn't need LinkedIn. A fresh graduate shouldn't be penalized for short history. "
+            f"Ask ONLY for information that would genuinely help match or apply for {role_context} jobs. "
+            f"NEVER ask for info that's already present. Keep questions friendly and conversational.\n"
             f"Return only the JSON object, no other text."
         )
 

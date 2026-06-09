@@ -18,23 +18,12 @@ from app.services.job_hunter.llm import call_llm
 
 _SCORE_ORDER = {"MATCH": 0, "PARTIAL": 1, "SKIP": 2}
 
-_TECH_REJECT_SIGNALS = {
-    "sales", "marketing", "accountant", "recruiter", "hr ", "human resources",
-    "legal", "logistics", "driver", "cook", "nurse", "doctor", "cleaner",
-}
-
-_TECH_ACCEPT_SIGNALS = {
-    "engineer", "developer", "architect", "devops", "sre", "backend", "frontend",
-    "fullstack", "full-stack", "full stack", "mobile", "ios", "android", "embedded",
-    "firmware", "cloud", "platform",
-    "data scientist", "data analyst", "data engineer", "machine learning",
-    "ml engineer", "ai engineer",
-    "product manager", "ux", "ui designer", "product designer",
-    "security", "cybersecurity", "penetration", "sysadmin", "network engineer",
-    "it support", "database admin", "dba",
-    "technical lead", "tech lead", "engineering manager", "cto", "vp engineering",
-    "staff engineer", "solutions engineer", "developer advocate", "technical writer",
-    "qa engineer", "test engineer",
+# Generic role-level words that appear in every industry — always let through
+_GENERIC_ROLE_WORDS = {
+    "manager", "director", "head", "lead", "senior", "junior", "analyst",
+    "specialist", "coordinator", "officer", "assistant", "associate",
+    "consultant", "advisor", "executive", "intern", "trainee", "supervisor",
+    "representative", "administrator", "principal", "partner", "fellow",
 }
 
 _LARGE_CORP_SIGNALS = {
@@ -267,19 +256,45 @@ class ScraperService:
                 return True
         return False
 
-    def _tech_role_prefilter(self, title: str, description: str) -> bool:
-        """Return False to drop obvious non-tech jobs before AI scoring.
-        Default is True — ambiguous jobs pass through to Haiku."""
+    def _category_prefilter(
+        self, title: str, description: str,
+        broad_category: str, sub_categories: list[str] | None = None,
+    ) -> bool:
+        """
+        Return True if this job is plausibly in the campaign's target categories.
+        Uses keywords derived from the campaign's own category names — no hardcoded domain bias.
+        Defaults to True (pass through) when uncertain so the AI scorer makes the final call.
+        """
+        if not broad_category:
+            return True  # no category configured — let everything through
+
         t = title.lower()
-        if any(sig in t for sig in _TECH_REJECT_SIGNALS):
-            return False
-        if any(sig in t for sig in _TECH_ACCEPT_SIGNALS):
+
+        # Generic role-level words present in every field → always pass through
+        if any(g in t for g in _GENERIC_ROLE_WORDS):
             return True
-        # Title is ambiguous — check first 300 chars of post-strip description
-        stripped = _re.sub(r'<[^>]+>', ' ', description).lower()[:300]
-        if any(sig in stripped for sig in _TECH_ACCEPT_SIGNALS):
+
+        # Build keyword set from campaign category names
+        all_cats = [broad_category] + list(sub_categories or [])
+        keywords: set[str] = set()
+        for cat in all_cats:
+            for part in _re.split(r'[\s/\-,]+', cat.lower()):
+                if len(part) >= 4:
+                    keywords.add(part)
+                    # Add stem variants (drop common suffixes)
+                    for suffix in ('ing', 'ment', 'tion', 'ers', 'ors', 'ies'):
+                        if part.endswith(suffix) and len(part) - len(suffix) >= 4:
+                            keywords.add(part[:-len(suffix)])
+
+        # Check title (strongest signal) then description snippet
+        d = _re.sub(r'<[^>]+>', ' ', description).lower()[:400]
+        if any(kw in t for kw in keywords):
             return True
-        return True  # default: pass through
+        if any(kw in d for kw in keywords):
+            return True
+
+        # No keyword match — default pass through so AI scorer can decide
+        return True
 
     async def score_job_match(
         self,
@@ -299,15 +314,15 @@ class ScraperService:
         jd_preview = description[:1500]
 
         prompt = (
-            f"You are screening a job for a candidate. Reply with exactly one word: MATCH, PARTIAL, or SKIP.\n\n"
+            f"You are screening a job listing for a candidate. Reply with exactly one word: MATCH, PARTIAL, or SKIP.\n\n"
             f"Job title: {title}\n"
             f"Job description:\n{jd_preview}\n\n"
             f"Candidate's target roles: {', '.join(sub_categories)}\n"
-            f"Candidate's skills: {skill_sample}\n\n"
+            f"Candidate's skills/background: {skill_sample}\n\n"
             f"Rules:\n"
-            f"- MATCH: The job's core requirements directly align with the candidate's skills and target roles\n"
+            f"- MATCH: The job's core requirements directly align with the candidate's background and target roles\n"
             f"- PARTIAL: Some overlap but the job requires a significantly different primary focus\n"
-            f"- SKIP: No meaningful match — wrong domain, purely sales/non-technical, or requires skills the candidate doesn't have\n"
+            f"- SKIP: No meaningful match — clearly the wrong field or requires a background the candidate doesn't have\n"
             f"Reply with exactly one word."
         )
         result = await self._call_haiku(prompt)
@@ -575,10 +590,10 @@ class ScraperService:
                 else:
                     skipped_location += 1
 
-            # Step 2: tech-role pre-filter (drops obvious non-tech before Haiku)
+            # Step 2: category pre-filter (drops jobs clearly outside the campaign's field)
             tech_filtered = []
             for job in work_type_filtered:
-                if self._tech_role_prefilter(job["title"], job["description"]):
+                if self._category_prefilter(job["title"], job["description"], broad_category, sub_categories):
                     tech_filtered.append(job)
                 else:
                     skipped_non_tech += 1

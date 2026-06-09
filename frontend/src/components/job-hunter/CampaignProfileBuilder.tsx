@@ -2,29 +2,14 @@ import { useState, useEffect, useRef } from 'react'
 import { useJobHunter } from '../../hooks/useJobHunter'
 
 const ALLOWED_EXTS = ['.pdf', '.docx', '.doc', '.txt', '.md']
-// Soft context budget: ~400 KB raw across all queued files.
-// Backend cleans + caps each file to ~12 000 chars, so this is a generous ceiling.
 const CONTEXT_BUDGET_BYTES = 400 * 1024
 
-interface QueuedFile {
-  id: string
-  file: File
-}
-
-interface Props {
-  campaignId: string
-  campaignName: string
-  onReady: () => void
-}
-
+interface QueuedFile { id: string; file: File }
+interface Props { campaignId: string; campaignName: string; onReady: () => void }
 interface GapAnalysis {
-  score: number
-  is_ready: boolean
-  gaps: string[]
-  questions: { gap: string; question: string }[]
-  summary: string
+  score: number; is_ready: boolean; gaps: string[]
+  questions: { gap: string; question: string }[]; summary: string
 }
-
 type Step = 'paste' | 'gaps' | 'ready'
 
 function fmtBytes(b: number) {
@@ -33,13 +18,31 @@ function fmtBytes(b: number) {
   return `${(b / 1024 / 1024).toFixed(1)} MB`
 }
 
+function ScoreRing({ score }: { score: number }) {
+  const color = score >= 75 ? '#34d399' : score >= 50 ? '#fbbf24' : '#f87171'
+  const r = 28, circ = 2 * Math.PI * r
+  const dash = (score / 100) * circ
+  return (
+    <svg width="72" height="72" viewBox="0 0 72 72" style={{ transform: 'rotate(-90deg)' }}>
+      <circle cx="36" cy="36" r={r} fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth="5" />
+      <circle cx="36" cy="36" r={r} fill="none" stroke={color} strokeWidth="5"
+        strokeDasharray={`${dash} ${circ}`} strokeLinecap="round"
+        style={{ transition: 'stroke-dasharray 0.6s ease', filter: `drop-shadow(0 0 6px ${color})` }}
+      />
+      <text x="36" y="40" textAnchor="middle" fill={color}
+        style={{ transform: 'rotate(90deg) translate(0, -72px)', fontFamily: 'monospace', fontSize: '14px', fontWeight: 700, transformOrigin: '36px 36px' }}>
+        {score}
+      </text>
+    </svg>
+  )
+}
+
 export default function CampaignProfileBuilder({ campaignId, campaignName, onReady }: Props) {
   const { getCampaignProfile, analyzeProfileGaps, processRawContext, processContextFile } = useJobHunter()
 
   const [step, setStep] = useState<Step>('paste')
   const [rawText, setRawText] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
-  // Queue of staged files — not yet sent
   const [queue, setQueue] = useState<QueuedFile[]>([])
   const [sendingIdx, setSendingIdx] = useState<number | null>(null)
   const [dragOver, setDragOver] = useState(false)
@@ -49,7 +52,8 @@ export default function CampaignProfileBuilder({ campaignId, campaignName, onRea
   const [loadingLabel, setLoadingLabel] = useState('')
   const submittingRef = useRef(false)
   const [error, setError] = useState('')
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const [previewFile, setPreviewFile] = useState<QueuedFile | null>(null)
+  const [previewText, setPreviewText] = useState<string | null>(null)
 
   const totalQueueBytes = queue.reduce((s, q) => s + q.file.size, 0)
   const contextPct = Math.min(100, Math.round((totalQueueBytes / CONTEXT_BUDGET_BYTES) * 100))
@@ -57,8 +61,7 @@ export default function CampaignProfileBuilder({ campaignId, campaignName, onRea
 
   useEffect(() => {
     getCampaignProfile(campaignId).then(p => {
-      // If already has data, go straight to gap analysis
-      if (p.raw_context || (p.work_experience as unknown[])?.length) {
+      if ((p as any).raw_context || (p.work_experience as unknown[])?.length) {
         setStep('gaps')
         loadAnalysis()
       }
@@ -92,15 +95,9 @@ export default function CampaignProfileBuilder({ campaignId, campaignName, onRea
       await loadAnalysis()
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to process context')
-      setLoading(false)
-      setLoadingLabel('')
-    } finally {
-      submittingRef.current = false
-    }
+      setLoading(false); setLoadingLabel('')
+    } finally { submittingRef.current = false }
   }
-
-  const [previewFile, setPreviewFile] = useState<QueuedFile | null>(null)
-  const [previewText, setPreviewText] = useState<string | null>(null)
 
   const addFilesToQueue = (files: FileList | File[]) => {
     setError('')
@@ -108,18 +105,9 @@ export default function CampaignProfileBuilder({ campaignId, campaignName, onRea
     const valid: QueuedFile[] = []
     for (const file of arr) {
       const ext = '.' + (file.name.split('.').pop() ?? '').toLowerCase()
-      if (!ALLOWED_EXTS.includes(ext)) {
-        setError(`"${file.name}" — unsupported type. Allowed: ${ALLOWED_EXTS.join(', ')}`)
-        continue
-      }
-      if (totalQueueBytes + file.size > CONTEXT_BUDGET_BYTES) {
-        setError('Context budget full. Remove a file before adding more.')
-        break
-      }
-      // Deduplicate by name
-      if (!queue.some(q => q.file.name === file.name)) {
-        valid.push({ id: crypto.randomUUID(), file })
-      }
+      if (!ALLOWED_EXTS.includes(ext)) { setError(`"${file.name}" — unsupported. Allowed: ${ALLOWED_EXTS.join(', ')}`); continue }
+      if (totalQueueBytes + file.size > CONTEXT_BUDGET_BYTES) { setError('Context budget full.'); break }
+      if (!queue.some(q => q.file.name === file.name)) valid.push({ id: crypto.randomUUID(), file })
     }
     if (valid.length) setQueue(prev => [...prev, ...valid])
   }
@@ -136,9 +124,7 @@ export default function CampaignProfileBuilder({ campaignId, campaignName, onRea
       const reader = new FileReader()
       reader.onload = e => setPreviewText(e.target?.result as string ?? '')
       reader.readAsText(qf.file)
-    } else {
-      setPreviewText(null) // binary — no text preview
-    }
+    } else { setPreviewText(null) }
   }
 
   const handleSendQueue = async () => {
@@ -153,375 +139,402 @@ export default function CampaignProfileBuilder({ campaignId, campaignName, onRea
         await processContextFile(campaignId, queue[i].file)
       } catch (e: unknown) {
         setError(`Failed on "${queue[i].file.name}": ${e instanceof Error ? e.message : 'Unknown error'}`)
-        setLoading(false)
-        setSendingIdx(null)
-        setLoadingLabel('')
-        submittingRef.current = false
-        return
+        setLoading(false); setSendingIdx(null); setLoadingLabel(''); submittingRef.current = false; return
       }
     }
-    setSendingIdx(null)
-    setQueue([])
-    setPreviewFile(null)
-    submittingRef.current = false
+    setSendingIdx(null); setQueue([]); setPreviewFile(null); submittingRef.current = false
     await loadAnalysis()
   }
 
   const handleAnswersSubmit = async () => {
     if (!analysis) return
-    setLoading(true)
-    setLoadingLabel('Updating profile…')
-    setError('')
+    setLoading(true); setLoadingLabel('Updating profile…'); setError('')
     try {
-      // Append answers as additional raw context
       const answersText = analysis.questions
         .map((q, i) => `Q: ${q.question}\nA: ${answers[i] ?? ''}`)
-        .filter((_, i) => answers[i]?.trim())
-        .join('\n\n')
-
-      if (answersText) {
-        await processRawContext(campaignId, answersText)
-      }
-      setLoadingLabel('Re-analyzing your profile…')
+        .filter((_, i) => answers[i]?.trim()).join('\n\n')
+      if (answersText) await processRawContext(campaignId, answersText)
+      setLoadingLabel('Re-analyzing…')
       await loadAnalysis()
       setAnswers({})
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to update profile')
-      setLoading(false)
-      setLoadingLabel('')
+      setError(e instanceof Error ? e.message : 'Failed to update')
+      setLoading(false); setLoadingLabel('')
     }
   }
 
-  const scoreColor = (score: number) =>
-    score >= 80 ? 'text-green-400' : score >= 50 ? 'text-yellow-400' : 'text-red-400'
+  const scoreColor = (s: number) => s >= 75 ? '#34d399' : s >= 50 ? '#fbbf24' : '#f87171'
+  const canSubmit = queue.length > 0 || rawText.trim().length > 0
 
-  const scoreBg = (score: number) =>
-    score >= 80 ? 'bg-green-500' : score >= 50 ? 'bg-yellow-500' : 'bg-red-500'
+  // ── Shared card style ─────────────────────────────────────────────────────
+  const card: React.CSSProperties = {
+    background: 'rgba(34,211,238,0.025)',
+    border: '1px solid rgba(34,211,238,0.1)',
+    borderRadius: '12px',
+    padding: '20px',
+  }
 
   return (
-    <div className="max-w-2xl mx-auto w-full px-4 py-8 flex flex-col gap-6">
+    <div style={{ maxWidth: '680px', margin: '0 auto', width: '100%', padding: '32px 16px', display: 'flex', flexDirection: 'column', gap: '24px' }}>
+
+      {/* ── Header ── */}
       <div>
-        <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Campaign: {campaignName}</p>
-        <h2 className="text-2xl font-bold text-white">Build Your Profile</h2>
-        <p className="text-gray-400 text-sm mt-1">
-          The AI reads your profile, checks what's missing, and asks targeted questions to hit 90%+ ATS match.
+        <p style={{ fontFamily: 'monospace', fontSize: '10px', fontWeight: 700, letterSpacing: '0.2em', textTransform: 'uppercase', color: 'rgba(34,211,238,0.5)', marginBottom: '6px' }}>
+          — Campaign: {campaignName}
+        </p>
+        <h2 style={{ fontFamily: '"Orbitron", monospace', fontWeight: 700, fontSize: '22px', letterSpacing: '0.08em', color: 'rgba(226,232,240,0.95)', lineHeight: 1, marginBottom: '8px' }}>
+          Build Your Profile
+        </h2>
+        <p style={{ fontFamily: 'monospace', fontSize: '12px', color: 'rgba(100,116,139,0.6)', lineHeight: 1.6 }}>
+          Share your background — CV, work history, skills. The AI checks what's missing and asks targeted questions.
         </p>
       </div>
 
-      {/* ── Step 1: Paste context ── */}
-      {step === 'paste' && loading && (
-        <div className="flex flex-col items-center justify-center gap-4 py-16">
-          <svg className="animate-spin h-8 w-8 text-blue-400" viewBox="0 0 24 24" fill="none">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
-          </svg>
-          <p className="text-sm text-gray-400">{loadingLabel || 'Processing…'}</p>
+      {/* ── Loading state ── */}
+      {loading && (
+        <div style={{ ...card, display: 'flex', alignItems: 'center', gap: '16px', padding: '24px' }}>
+          <div style={{ width: '36px', height: '36px', border: '2px solid rgba(34,211,238,0.2)', borderTopColor: '#22d3ee', borderRadius: '50%', animation: 'spin 0.8s linear infinite', flexShrink: 0 }} />
+          <div>
+            <p style={{ fontFamily: 'monospace', fontSize: '12px', color: 'rgba(226,232,240,0.8)', marginBottom: '3px' }}>{loadingLabel || 'Processing…'}</p>
+            <p style={{ fontFamily: 'monospace', fontSize: '10px', color: 'rgba(100,116,139,0.4)' }}>This may take a few seconds</p>
+          </div>
         </div>
       )}
 
+      {/* ── Step 1: Paste / Upload ── */}
       {step === 'paste' && !loading && (
-        <div className="flex flex-col gap-4">
-
-          {/* ── Drop zone ── */}
+        <>
+          {/* Drop zone */}
           <div
-            className="rounded-xl flex flex-col items-center justify-center gap-3 cursor-pointer transition-all"
             style={{
-              minHeight: 160,
-              border: `2px dashed ${dragOver ? '#3b82f6' : 'rgba(255,255,255,0.1)'}`,
-              background: dragOver ? 'rgba(59,130,246,0.05)' : 'rgba(255,255,255,0.02)',
-              padding: '2rem 1.5rem',
+              ...card,
+              minHeight: '140px',
+              display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px',
+              cursor: 'pointer',
+              border: `1px dashed ${dragOver ? 'rgba(34,211,238,0.5)' : 'rgba(34,211,238,0.15)'}`,
+              background: dragOver ? 'rgba(34,211,238,0.05)' : 'rgba(34,211,238,0.015)',
+              transition: 'all 0.15s',
             }}
             onClick={() => fileInputRef.current?.click()}
             onDragOver={e => { e.preventDefault(); setDragOver(true) }}
             onDragLeave={() => setDragOver(false)}
-            onDrop={e => {
-              e.preventDefault()
-              setDragOver(false)
-              if (e.dataTransfer.files.length) addFilesToQueue(e.dataTransfer.files)
-            }}
+            onDrop={e => { e.preventDefault(); setDragOver(false); if (e.dataTransfer.files.length) addFilesToQueue(e.dataTransfer.files) }}
           >
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-gray-500">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-              <polyline points="17 8 12 3 7 8"/>
-              <line x1="12" y1="3" x2="12" y2="15"/>
-            </svg>
-            <div className="text-center">
-              <p className="text-sm text-gray-400">
-                Drop files here, or <span className="text-blue-400 hover:text-blue-300">browse</span>
-              </p>
-              <p className="text-xs text-gray-600 mt-1">Prefer plain text (.txt, .md) — PDFs and DOCX lose formatting</p>
+            <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: 'rgba(34,211,238,0.07)', border: '1px solid rgba(34,211,238,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#22d3ee" strokeWidth="1.8" strokeLinecap="round">
+                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+              </svg>
             </div>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".pdf,.docx,.doc,.txt,.md"
-              multiple
-              className="hidden"
-              onChange={e => {
-                if (e.target.files?.length) addFilesToQueue(e.target.files)
-                e.target.value = ''
-              }}
-            />
+            <div style={{ textAlign: 'center' }}>
+              <p style={{ fontFamily: 'monospace', fontSize: '12px', color: 'rgba(148,163,184,0.7)', marginBottom: '4px' }}>
+                Drop files here, or <span style={{ color: '#22d3ee', textDecoration: 'underline' }}>browse</span>
+              </p>
+              <p style={{ fontFamily: 'monospace', fontSize: '10px', color: 'rgba(100,116,139,0.4)' }}>
+                PDF, DOCX, TXT, MD · Plain text works best
+              </p>
+            </div>
+            <input ref={fileInputRef} type="file" accept=".pdf,.docx,.doc,.txt,.md" multiple style={{ display: 'none' }}
+              onChange={e => { if (e.target.files?.length) addFilesToQueue(e.target.files); e.target.value = '' }} />
           </div>
 
-          {/* ── File queue ── */}
+          {/* File queue */}
           {queue.length > 0 && (
-            <div className="flex flex-col gap-1.5">
-              {/* Context budget meter */}
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-[10px] text-gray-600 uppercase tracking-widest font-semibold">Context budget</span>
-                <span className={`text-[10px] font-mono ${contextFull ? 'text-red-400' : contextPct > 70 ? 'text-yellow-400' : 'text-gray-500'}`}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+                <span style={{ fontFamily: 'monospace', fontSize: '9px', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'rgba(100,116,139,0.5)' }}>Context budget</span>
+                <span style={{ fontFamily: 'monospace', fontSize: '10px', color: contextFull ? '#f87171' : contextPct > 70 ? '#fbbf24' : 'rgba(100,116,139,0.5)' }}>
                   {fmtBytes(totalQueueBytes)} / {fmtBytes(CONTEXT_BUDGET_BYTES)}
                 </span>
               </div>
-              <div className="h-1 w-full rounded-full bg-gray-800 overflow-hidden mb-2">
-                <div
-                  className="h-full rounded-full transition-all"
-                  style={{
-                    width: `${contextPct}%`,
-                    background: contextFull ? '#ef4444' : contextPct > 70 ? '#eab308' : '#3b82f6',
-                  }}
-                />
+              <div style={{ height: '3px', borderRadius: '2px', background: 'rgba(255,255,255,0.05)', overflow: 'hidden', marginBottom: '4px' }}>
+                <div style={{ height: '100%', borderRadius: '2px', transition: 'width 0.3s', width: `${contextPct}%`, background: contextFull ? '#f87171' : contextPct > 70 ? '#fbbf24' : '#22d3ee', boxShadow: contextFull ? '0 0 6px #f87171' : '0 0 6px rgba(34,211,238,0.4)' }} />
               </div>
-
               {queue.map((qf, i) => (
-                <div
-                  key={qf.id}
-                  className="flex items-center gap-2.5 rounded-lg px-3 py-2.5 group transition-colors"
-                  style={{
-                    background: sendingIdx === i ? 'rgba(59,130,246,0.08)' : 'rgba(255,255,255,0.03)',
-                    border: `1px solid ${sendingIdx === i ? 'rgba(59,130,246,0.25)' : 'rgba(255,255,255,0.06)'}`,
-                  }}
-                >
-                  {/* File icon */}
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
-                    className={sendingIdx === i ? 'text-blue-400' : 'text-gray-600'}>
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                    <polyline points="14 2 14 8 20 8"/>
+                <div key={qf.id} style={{
+                  display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 14px', borderRadius: '8px',
+                  background: sendingIdx === i ? 'rgba(34,211,238,0.06)' : 'rgba(255,255,255,0.02)',
+                  border: `1px solid ${sendingIdx === i ? 'rgba(34,211,238,0.2)' : 'rgba(255,255,255,0.06)'}`,
+                }}>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={sendingIdx === i ? '#22d3ee' : 'rgba(100,116,139,0.5)'} strokeWidth="1.5" strokeLinecap="round">
+                    <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/>
                   </svg>
-
-                  {/* Name — clickable to preview */}
-                  <button
-                    className="flex-1 text-left text-xs text-gray-300 hover:text-white truncate transition-colors"
-                    onClick={() => openPreview(qf)}
-                    title="Click to preview"
-                  >
+                  <button onClick={() => openPreview(qf)} style={{ flex: 1, background: 'none', border: 'none', color: 'rgba(148,163,184,0.8)', fontFamily: 'monospace', fontSize: '11px', textAlign: 'left', cursor: 'pointer', padding: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {qf.file.name}
                   </button>
-
-                  <span className="text-[10px] text-gray-600 font-mono flex-shrink-0">{fmtBytes(qf.file.size)}</span>
-
-                  {sendingIdx === i ? (
-                    <svg className="animate-spin h-3.5 w-3.5 text-blue-400 flex-shrink-0" viewBox="0 0 24 24" fill="none">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
-                    </svg>
-                  ) : (
-                    <button
-                      onClick={() => removeFromQueue(qf.id)}
-                      className="opacity-0 group-hover:opacity-100 text-gray-600 hover:text-red-400 transition-all flex-shrink-0"
-                      title="Remove"
-                    >
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-                      </svg>
-                    </button>
-                  )}
+                  <span style={{ fontFamily: 'monospace', fontSize: '10px', color: 'rgba(100,116,139,0.4)', flexShrink: 0 }}>{fmtBytes(qf.file.size)}</span>
+                  {sendingIdx === i
+                    ? <div style={{ width: '14px', height: '14px', border: '2px solid rgba(34,211,238,0.3)', borderTopColor: '#22d3ee', borderRadius: '50%', animation: 'spin 0.7s linear infinite', flexShrink: 0 }} />
+                    : <button onClick={() => removeFromQueue(qf.id)} style={{ background: 'none', border: 'none', color: 'rgba(100,116,139,0.35)', cursor: 'pointer', padding: 0, flexShrink: 0 }}
+                        onMouseEnter={e => (e.currentTarget.style.color = '#f87171')}
+                        onMouseLeave={e => (e.currentTarget.style.color = 'rgba(100,116,139,0.35)')}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                      </button>
+                  }
                 </div>
               ))}
             </div>
           )}
 
-          {/* ── File preview panel ── */}
+          {/* File preview */}
           {previewFile && (
-            <div
-              className="rounded-xl flex flex-col overflow-hidden"
-              style={{ border: '1px solid rgba(255,255,255,0.08)', background: '#0a0a0a' }}
-            >
-              <div className="flex items-center justify-between px-3 py-2 border-b border-gray-900">
-                <span className="text-xs text-gray-400 font-medium truncate">{previewFile.file.name}</span>
-                <button
-                  onClick={() => setPreviewFile(null)}
-                  className="text-gray-600 hover:text-white ml-2 flex-shrink-0"
-                >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-                  </svg>
+            <div style={{ ...card, padding: 0, overflow: 'hidden' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderBottom: '1px solid rgba(34,211,238,0.08)' }}>
+                <span style={{ fontFamily: 'monospace', fontSize: '11px', color: 'rgba(148,163,184,0.7)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{previewFile.file.name}</span>
+                <button onClick={() => setPreviewFile(null)} style={{ background: 'none', border: 'none', color: 'rgba(100,116,139,0.4)', cursor: 'pointer', padding: 0, flexShrink: 0, marginLeft: '8px' }}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                 </button>
               </div>
-              <div
-                className="overflow-y-auto p-3 text-xs text-gray-400 font-mono leading-relaxed whitespace-pre-wrap [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
-                style={{ maxHeight: 240 }}
-              >
+              <div style={{ maxHeight: '220px', overflowY: 'auto', padding: '12px 14px', fontFamily: 'monospace', fontSize: '11px', color: 'rgba(100,116,139,0.7)', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
                 {previewText !== null
-                  ? previewText || <span className="text-gray-600 italic">Empty file</span>
-                  : <span className="text-gray-600 italic">Preview not available for {previewFile.file.name.split('.').pop()?.toUpperCase()} files — content will be extracted when you send.</span>
+                  ? (previewText || <span style={{ fontStyle: 'italic' }}>Empty file</span>)
+                  : <span style={{ fontStyle: 'italic', color: 'rgba(100,116,139,0.4)' }}>Preview not available for {previewFile.file.name.split('.').pop()?.toUpperCase()} — content extracted on send.</span>
                 }
               </div>
             </div>
           )}
 
-          <div className="flex items-center gap-3">
-            <div className="flex-1 h-px bg-gray-800" />
-            <span className="text-xs text-gray-600">or paste text</span>
-            <div className="flex-1 h-px bg-gray-800" />
+          {/* Divider */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <div style={{ flex: 1, height: '1px', background: 'rgba(34,211,238,0.08)' }} />
+            <span style={{ fontFamily: 'monospace', fontSize: '10px', color: 'rgba(100,116,139,0.35)', letterSpacing: '0.12em', textTransform: 'uppercase' }}>or paste text</span>
+            <div style={{ flex: 1, height: '1px', background: 'rgba(34,211,238,0.08)' }} />
           </div>
 
-          <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 flex flex-col gap-3">
-            <p className="text-sm text-gray-300 font-medium">Paste plain text</p>
-            <p className="text-xs text-gray-500">
-              Copy-paste from your CV, LinkedIn, or just type it out. <strong className="text-gray-400">Plain text works best</strong> — no tables, no columns, no formatting. The AI reads it directly.
+          {/* Paste area */}
+          <div style={card}>
+            <p style={{ fontFamily: 'monospace', fontSize: '11px', fontWeight: 600, color: 'rgba(226,232,240,0.8)', marginBottom: '8px' }}>Paste your profile</p>
+            <p style={{ fontFamily: 'monospace', fontSize: '10px', color: 'rgba(100,116,139,0.5)', marginBottom: '14px', lineHeight: 1.6 }}>
+              Copy from your CV, LinkedIn, or just type it out. Plain text works best — no tables or columns.
             </p>
             <textarea
-              ref={textareaRef}
               value={rawText}
               onChange={e => setRawText(e.target.value)}
               rows={10}
-              placeholder={`Example:\n\nSolomon Jesse\nsenior engineer with 6 years exp\nWorked at Google 2021–2023 as Senior SWE, built distributed caching layer serving 50M requests/day, reduced p99 latency by 40%\nCurrently founding engineer at startup, built the entire backend from scratch in FastAPI + PostgreSQL\nSkills: Python, Go, TypeScript, React, Kubernetes, AWS\nLinkedIn: linkedin.com/in/solomonjesse\nEducation: BSc Computer Science, University of Nairobi, 2018`}
-              className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2.5 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-blue-600 resize-none"
+              placeholder={`Example:\n\nJane Doe\n5 years experience in healthcare administration\nWorked at Nairobi General Hospital 2020–2023 as Ward Manager\nManaged a team of 12 nurses, reduced patient wait time by 30%\nSkills: Patient coordination, scheduling, EMR systems, team leadership\nEmail: jane@example.com · Phone: +254 700 000 000`}
+              style={{
+                width: '100%', boxSizing: 'border-box',
+                background: 'rgba(0,0,0,0.3)',
+                border: '1px solid rgba(34,211,238,0.12)',
+                borderRadius: '8px',
+                padding: '12px 14px',
+                color: 'rgba(226,232,240,0.85)',
+                fontFamily: 'monospace',
+                fontSize: '12px',
+                lineHeight: 1.6,
+                resize: 'none',
+                outline: 'none',
+              }}
+              onFocus={e => (e.currentTarget.style.borderColor = 'rgba(34,211,238,0.3)')}
+              onBlur={e => (e.currentTarget.style.borderColor = 'rgba(34,211,238,0.12)')}
             />
           </div>
 
-          {error && <p className="text-sm text-red-400">{error}</p>}
+          {error && <p style={{ fontFamily: 'monospace', fontSize: '11px', color: '#f87171' }}>{error}</p>}
 
-          <div className="flex gap-3 items-center flex-wrap">
-            <button
-              onClick={queue.length > 0 ? handleSendQueue : handlePasteSubmit}
-              disabled={loading || (queue.length === 0 && !rawText.trim())}
-              className="bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white px-6 py-2.5 rounded-lg font-semibold text-sm transition-colors flex items-center gap-2"
-            >
-              {loading ? (
-                <>
-                  <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
-                  </svg>
-                  {loadingLabel}
-                </>
-              ) : (
-                queue.length > 0
-                  ? `Analyze ${queue.length} file${queue.length > 1 ? 's' : ''} →`
-                  : 'Analyze My Profile →'
-              )}
-            </button>
-          </div>
-        </div>
+          <button
+            onClick={queue.length > 0 ? handleSendQueue : handlePasteSubmit}
+            disabled={!canSubmit}
+            style={{
+              alignSelf: 'flex-start',
+              padding: '12px 28px',
+              background: canSubmit ? 'rgba(34,211,238,0.1)' : 'transparent',
+              border: `1px solid ${canSubmit ? 'rgba(34,211,238,0.4)' : 'rgba(255,255,255,0.07)'}`,
+              borderRadius: '10px',
+              color: canSubmit ? '#22d3ee' : 'rgba(255,255,255,0.18)',
+              fontFamily: '"Orbitron", monospace',
+              fontSize: '11px', fontWeight: 700,
+              letterSpacing: '0.16em', textTransform: 'uppercase',
+              cursor: canSubmit ? 'pointer' : 'not-allowed',
+              display: 'flex', alignItems: 'center', gap: '10px',
+              transition: 'all 0.15s',
+            }}
+            onMouseEnter={e => { if (canSubmit) e.currentTarget.style.background = 'rgba(34,211,238,0.17)' }}
+            onMouseLeave={e => { e.currentTarget.style.background = canSubmit ? 'rgba(34,211,238,0.1)' : 'transparent' }}
+          >
+            {queue.length > 0
+              ? `Analyze ${queue.length} file${queue.length > 1 ? 's' : ''}`
+              : 'Analyze Profile'}
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+          </button>
+        </>
       )}
 
-      {/* ── Step 2: Gap analysis + questions ── */}
-      {step === 'gaps' && analysis && (
-        <div className="flex flex-col gap-5">
-          {/* Score bar */}
-          <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 flex flex-col gap-3">
-            <div className="flex items-center justify-between">
-              <p className="text-sm font-medium text-gray-300">Profile Readiness</p>
-              <span className={`text-lg font-bold ${scoreColor(analysis.score)}`}>{analysis.score}/100</span>
+      {/* ── Step 2: Gap analysis ── */}
+      {step === 'gaps' && analysis && !loading && (
+        <>
+          {/* Score card */}
+          <div style={{ ...card, display: 'flex', alignItems: 'center', gap: '20px' }}>
+            <div style={{ position: 'relative', flexShrink: 0 }}>
+              <ScoreRing score={analysis.score} />
+              <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <span style={{ fontFamily: 'monospace', fontSize: '15px', fontWeight: 700, color: scoreColor(analysis.score) }}>{analysis.score}</span>
+              </div>
             </div>
-            <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
-              <div
-                className={`h-full rounded-full transition-all ${scoreBg(analysis.score)}`}
-                style={{ width: `${analysis.score}%` }}
-              />
+            <div style={{ flex: 1 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                <p style={{ fontFamily: '"Orbitron", monospace', fontSize: '11px', fontWeight: 700, letterSpacing: '0.1em', color: 'rgba(226,232,240,0.9)' }}>Profile Readiness</p>
+                <span style={{ fontFamily: 'monospace', fontSize: '9px', letterSpacing: '0.14em', textTransform: 'uppercase', padding: '2px 7px', borderRadius: '4px', background: analysis.is_ready ? 'rgba(52,211,153,0.1)' : 'rgba(251,191,36,0.1)', border: `1px solid ${analysis.is_ready ? 'rgba(52,211,153,0.25)' : 'rgba(251,191,36,0.25)'}`, color: analysis.is_ready ? '#34d399' : '#fbbf24' }}>
+                  {analysis.is_ready ? 'Ready' : 'Needs info'}
+                </span>
+              </div>
+              <div style={{ height: '4px', borderRadius: '2px', background: 'rgba(255,255,255,0.05)', overflow: 'hidden', marginBottom: '10px' }}>
+                <div style={{ height: '100%', borderRadius: '2px', transition: 'width 0.6s ease', width: `${analysis.score}%`, background: scoreColor(analysis.score), boxShadow: `0 0 8px ${scoreColor(analysis.score)}` }} />
+              </div>
+              <p style={{ fontFamily: 'monospace', fontSize: '11px', color: 'rgba(100,116,139,0.65)', lineHeight: 1.5 }}>{analysis.summary}</p>
             </div>
-            <p className="text-xs text-gray-500">{analysis.summary}</p>
           </div>
 
           {/* Gaps */}
           {analysis.gaps.length > 0 && (
-            <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 flex flex-col gap-2">
-              <p className="text-sm font-medium text-gray-300 mb-1">What's missing</p>
-              {analysis.gaps.map((gap, i) => (
-                <div key={i} className="flex items-start gap-2 text-xs text-gray-400">
-                  <span className="text-yellow-500 mt-0.5 flex-shrink-0">!</span>
-                  <span>{gap}</span>
-                </div>
-              ))}
+            <div style={card}>
+              <p style={{ fontFamily: 'monospace', fontSize: '10px', fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'rgba(251,191,36,0.7)', marginBottom: '14px' }}>
+                What's missing
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {analysis.gaps.map((gap, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+                    <div style={{ width: '5px', height: '5px', borderRadius: '50%', background: '#fbbf24', boxShadow: '0 0 4px #fbbf24', flexShrink: 0, marginTop: '5px' }} />
+                    <span style={{ fontFamily: 'monospace', fontSize: '12px', color: 'rgba(148,163,184,0.75)', lineHeight: 1.5 }}>{gap}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
           {/* Questions */}
           {analysis.questions.length > 0 && (
-            <div className="flex flex-col gap-3">
-              <p className="text-sm font-medium text-gray-300">Answer these to strengthen your profile</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <p style={{ fontFamily: 'monospace', fontSize: '10px', fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'rgba(34,211,238,0.6)' }}>
+                Answer these to strengthen your profile
+              </p>
               {analysis.questions.map((q, i) => (
-                <div key={i} className="bg-gray-900 border border-gray-800 rounded-lg p-4 flex flex-col gap-2">
-                  <p className="text-xs text-blue-400 font-medium">{q.gap}</p>
-                  <p className="text-sm text-gray-300">{q.question}</p>
+                <div key={i} style={card}>
+                  <p style={{ fontFamily: 'monospace', fontSize: '9px', letterSpacing: '0.14em', textTransform: 'uppercase', color: 'rgba(34,211,238,0.5)', marginBottom: '6px' }}>{q.gap}</p>
+                  <p style={{ fontFamily: 'monospace', fontSize: '12px', color: 'rgba(226,232,240,0.85)', marginBottom: '12px', lineHeight: 1.5 }}>{q.question}</p>
                   <textarea
                     value={answers[i] ?? ''}
                     onChange={e => setAnswers(prev => ({ ...prev, [i]: e.target.value }))}
                     rows={3}
                     placeholder="Your answer…"
-                    className="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-blue-600 resize-none mt-1"
+                    style={{
+                      width: '100%', boxSizing: 'border-box',
+                      background: 'rgba(0,0,0,0.3)',
+                      border: '1px solid rgba(34,211,238,0.1)',
+                      borderRadius: '8px',
+                      padding: '10px 12px',
+                      color: 'rgba(226,232,240,0.85)',
+                      fontFamily: 'monospace',
+                      fontSize: '12px',
+                      lineHeight: 1.6,
+                      resize: 'none',
+                      outline: 'none',
+                    }}
+                    onFocus={e => (e.currentTarget.style.borderColor = 'rgba(34,211,238,0.3)')}
+                    onBlur={e => (e.currentTarget.style.borderColor = 'rgba(34,211,238,0.1)')}
                   />
                 </div>
               ))}
             </div>
           )}
 
-          {error && <p className="text-sm text-red-400">{error}</p>}
+          {error && <p style={{ fontFamily: 'monospace', fontSize: '11px', color: '#f87171' }}>{error}</p>}
 
-          <div className="flex gap-3 items-center">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
             {analysis.questions.length > 0 && (
               <button
                 onClick={handleAnswersSubmit}
-                disabled={loading || Object.values(answers).every(a => !a.trim())}
-                className="bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white px-6 py-2.5 rounded-lg font-semibold text-sm transition-colors"
+                disabled={Object.values(answers).every(a => !a.trim())}
+                style={{
+                  padding: '12px 24px',
+                  background: 'rgba(34,211,238,0.1)',
+                  border: '1px solid rgba(34,211,238,0.4)',
+                  borderRadius: '10px',
+                  color: '#22d3ee',
+                  fontFamily: '"Orbitron", monospace',
+                  fontSize: '10px', fontWeight: 700,
+                  letterSpacing: '0.16em', textTransform: 'uppercase',
+                  cursor: 'pointer', transition: 'all 0.15s',
+                }}
+                onMouseEnter={e => (e.currentTarget.style.background = 'rgba(34,211,238,0.17)')}
+                onMouseLeave={e => (e.currentTarget.style.background = 'rgba(34,211,238,0.1)')}
               >
-                {loading ? loadingLabel : 'Submit Answers →'}
+                Submit Answers
               </button>
             )}
             <button
               onClick={() => setStep('paste')}
-              className="text-gray-500 hover:text-gray-300 text-sm transition-colors"
+              style={{ background: 'none', border: 'none', color: 'rgba(100,116,139,0.5)', fontFamily: 'monospace', fontSize: '11px', cursor: 'pointer', padding: 0, transition: 'color 0.15s' }}
+              onMouseEnter={e => (e.currentTarget.style.color = 'rgba(148,163,184,0.8)')}
+              onMouseLeave={e => (e.currentTarget.style.color = 'rgba(100,116,139,0.5)')}
             >
-              ← Paste more context
+              ← Add more context
             </button>
           </div>
-        </div>
+        </>
       )}
 
       {/* ── Step 3: Ready ── */}
-      {step === 'ready' && analysis && (
-        <div className="flex flex-col gap-5">
-          <div className="bg-green-950/40 border border-green-800/50 rounded-lg p-5 flex flex-col gap-2">
-            <div className="flex items-center gap-2">
-              <span className="text-green-400 text-lg">✓</span>
-              <p className="text-green-300 font-semibold">Profile Ready</p>
-              <span className="ml-auto text-green-400 font-bold text-lg">{analysis.score}/100</span>
+      {step === 'ready' && analysis && !loading && (
+        <>
+          <div style={{ ...card, background: 'rgba(52,211,153,0.04)', border: '1px solid rgba(52,211,153,0.15)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '14px' }}>
+              <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: 'rgba(52,211,153,0.1)', border: '1px solid rgba(52,211,153,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#34d399" strokeWidth="2" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>
+              </div>
+              <div>
+                <p style={{ fontFamily: '"Orbitron", monospace', fontSize: '12px', fontWeight: 700, letterSpacing: '0.1em', color: '#34d399', marginBottom: '2px' }}>Profile Ready</p>
+                <p style={{ fontFamily: 'monospace', fontSize: '10px', color: 'rgba(52,211,153,0.5)' }}>Score: {analysis.score}/100</p>
+              </div>
             </div>
-            <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
-              <div className="h-full rounded-full bg-green-500 transition-all" style={{ width: `${analysis.score}%` }} />
+            <div style={{ height: '4px', borderRadius: '2px', background: 'rgba(52,211,153,0.1)', overflow: 'hidden', marginBottom: '12px' }}>
+              <div style={{ height: '100%', borderRadius: '2px', width: `${analysis.score}%`, background: '#34d399', boxShadow: '0 0 8px rgba(52,211,153,0.4)', transition: 'width 0.6s ease' }} />
             </div>
-            <p className="text-sm text-gray-400 mt-1">{analysis.summary}</p>
+            <p style={{ fontFamily: 'monospace', fontSize: '12px', color: 'rgba(100,116,139,0.65)', lineHeight: 1.5 }}>{analysis.summary}</p>
           </div>
 
           {analysis.gaps.length > 0 && (
-            <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
-              <p className="text-xs text-gray-500 mb-2">Optional improvements</p>
+            <div style={card}>
+              <p style={{ fontFamily: 'monospace', fontSize: '9px', letterSpacing: '0.16em', textTransform: 'uppercase', color: 'rgba(100,116,139,0.4)', marginBottom: '10px' }}>Optional improvements</p>
               {analysis.gaps.map((gap, i) => (
-                <p key={i} className="text-xs text-gray-600 py-0.5">· {gap}</p>
+                <p key={i} style={{ fontFamily: 'monospace', fontSize: '11px', color: 'rgba(100,116,139,0.5)', padding: '3px 0' }}>· {gap}</p>
               ))}
             </div>
           )}
 
-          <div className="flex gap-3">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
             <button
               onClick={onReady}
-              className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-2.5 rounded-lg font-semibold text-sm transition-colors"
+              style={{
+                padding: '13px 32px',
+                background: 'rgba(52,211,153,0.1)',
+                border: '1px solid rgba(52,211,153,0.35)',
+                borderRadius: '10px',
+                color: '#34d399',
+                fontFamily: '"Orbitron", monospace',
+                fontSize: '11px', fontWeight: 700,
+                letterSpacing: '0.16em', textTransform: 'uppercase',
+                cursor: 'pointer', transition: 'all 0.15s',
+                display: 'flex', alignItems: 'center', gap: '10px',
+              }}
+              onMouseEnter={e => (e.currentTarget.style.background = 'rgba(52,211,153,0.17)')}
+              onMouseLeave={e => (e.currentTarget.style.background = 'rgba(52,211,153,0.1)')}
             >
-              Start Campaign →
+              Start Campaign
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
             </button>
             <button
               onClick={() => setStep('gaps')}
-              className="text-gray-500 hover:text-gray-300 text-sm transition-colors"
+              style={{ background: 'none', border: 'none', color: 'rgba(100,116,139,0.5)', fontFamily: 'monospace', fontSize: '11px', cursor: 'pointer', padding: 0, transition: 'color 0.15s' }}
+              onMouseEnter={e => (e.currentTarget.style.color = 'rgba(148,163,184,0.8)')}
+              onMouseLeave={e => (e.currentTarget.style.color = 'rgba(100,116,139,0.5)')}
             >
               ← Improve further
             </button>
           </div>
-        </div>
+        </>
       )}
 
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   )
 }

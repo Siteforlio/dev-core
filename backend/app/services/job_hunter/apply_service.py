@@ -883,12 +883,13 @@ class ApplyService:
             if fillable:
                 # Build combobox set: any field where the NEXT raw field has
                 # selector '__idx__N' — these are custom React/Select2 dropdowns.
+                _PHONE_SKIP = ("phone_country", "phoneCountry", "phone-country", "country_code", "dial_code")
                 combobox_selectors: set[str] = set()
                 for i, f in enumerate(fields):
                     nxt = fields[i + 1] if i + 1 < len(fields) else None
                     if nxt and str(nxt.get("selector", "")).startswith("__idx__") and nxt.get("required"):
                         sel = f.get("selector", "")
-                        if sel and not sel.startswith("__idx__"):
+                        if sel and not sel.startswith("__idx__") and not any(p in sel for p in _PHONE_SKIP):
                             combobox_selectors.add(sel)
 
                 # Pre-read real options from every combobox so the LLM gets
@@ -986,6 +987,9 @@ class ApplyService:
             ))
             await asyncio.sleep(0.05)
 
+    # Regex that matches phone country code option text: "Afghanistan+93", "Åland Islands+358"
+    _PHONE_CODE_RE = re.compile(r'[A-Za-zÅÆØåæø].+\+\d{1,4}$')
+
     async def _read_combobox_options(
         self,
         browser: "BrowserService",
@@ -998,6 +1002,12 @@ class ApplyService:
         Does NOT select anything.
         """
         try:
+            # Dismiss any currently open dropdown before clicking the next one
+            await self._cdp_key(page, "Escape", "Escape", 27)
+            await asyncio.sleep(0.1)
+            await page.evaluate("document.body && document.body.click()")
+            await asyncio.sleep(0.3)
+
             el = await page.find(selector, timeout=4)
             if not el:
                 return []
@@ -1018,6 +1028,7 @@ class ApplyService:
                                 try:
                                     html = await oe.get_html()
                                     txt = re.sub(r'<[^>]+>', '', html or '').strip()
+                                    # Skip pure dial codes (+93) and phone-code combo text
                                     if txt and not re.match(r'^\+\d+$', txt):
                                         opts.append(txt)
                                 except Exception:
@@ -1033,6 +1044,18 @@ class ApplyService:
             await asyncio.sleep(0.2)
             await page.evaluate("document.body && document.body.click()")
             await asyncio.sleep(0.2)
+
+            # Reject the result if it looks like a phone country picker
+            # (options like "Afghanistan+93", "Åland Islands+358")
+            if opts:
+                phone_like = sum(1 for o in opts if self._PHONE_CODE_RE.match(o))
+                if phone_like > min(3, len(opts) // 2):
+                    logger.debug(
+                        "_read_combobox_options: %s — looks like phone country picker, discarding",
+                        selector[:50]
+                    )
+                    return []
+
             return opts
 
         except Exception:

@@ -105,16 +105,25 @@ class GreenhouseApplier(BaseBoardApplier):
 
         if fillable:
             # ── 5a. Detect combobox fields ────────────────────────────────────
+            # A field is a combobox when the NEXT scanned field has an __idx__
+            # selector (no id/name — custom React/Select2 dropdown div).
+            # Exclude phone country pickers — they're auto-handled and their
+            # options (country dial codes) pollute the AI mapping.
+            _SKIP_SELECTOR_PATTERNS = (
+                "phone_country", "phoneCountry", "phone-country",
+                "country_code", "dial_code",
+            )
             combobox_selectors: set[str] = set()
             for i, f in enumerate(fields):
                 nxt = fields[i + 1] if i + 1 < len(fields) else None
                 if (nxt and str(nxt.get("selector", "")).startswith("__idx__")
                         and nxt.get("required")):
                     sel = f.get("selector", "")
-                    if sel and not sel.startswith("__idx__"):
+                    if (sel and not sel.startswith("__idx__")
+                            and not any(p in sel for p in _SKIP_SELECTOR_PATTERNS)):
                         combobox_selectors.add(sel)
 
-            # ── 5b. Pre-read real dropdown options so Gemini gets exact choices ─
+            # ── 5b. Pre-read real dropdown options so AI gets exact choices ──
             if combobox_selectors:
                 logger.info("greenhouse: pre-reading %d combobox(es)", len(combobox_selectors))
                 for field in fillable:
@@ -127,6 +136,9 @@ class GreenhouseApplier(BaseBoardApplier):
                             field["options"] = opts
                             logger.info("  [%s] options: %s",
                                         (field.get("label") or sel)[:40], opts[:6])
+                        else:
+                            logger.info("  [%s] — no options read (phone picker or empty)",
+                                        (field.get("label") or sel)[:40])
 
             # ── 5c. Gemini maps every field to exact value ────────────────────
             answers = await ApplyService._ai_map_fields_static(fillable, ctx)

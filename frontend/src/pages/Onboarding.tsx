@@ -1,5 +1,12 @@
 import { useState } from 'react'
 import { useAuthStore } from '../store/authStore'
+import { SaveCredsModal } from '../components/SaveCredsModal'
+
+const eAPI = () => (window as any).electronAPI
+const SAVE_CREDS_SETTING = 'devcore_save_creds_enabled'
+function getSaveCredsSetting(): boolean {
+  return localStorage.getItem(SAVE_CREDS_SETTING) !== '0'
+}
 
 const LANGUAGES = [
   { value: 'en', label: 'English' },
@@ -45,6 +52,7 @@ export default function Onboarding({ onGoToLogin, onRegistered }: { onGoToLogin:
   const [error, setError]     = useState('')
   const [loading, setLoading] = useState(false)
   const [langOpen, setLangOpen] = useState(false)
+  const [showSaveModal, setShowSaveModal] = useState(false)
   const setAuth = useAuthStore((s) => s.setAuth)
 
   const isValid = name.trim().length >= 2 && email.includes('@') && password.length >= 6 && consent
@@ -64,7 +72,11 @@ export default function Onboarding({ onGoToLogin, onRegistered }: { onGoToLogin:
       if (!res.ok) { setError(body.error?.message ?? 'Registration failed'); return }
       const { access_token, refresh_token, user_id, name: userName, language_pref } = body.data
       setAuth(access_token, refresh_token, user_id, userName, language_pref)
-      onRegistered?.()
+      if (eAPI()?.saveCreds && getSaveCredsSetting()) {
+        setShowSaveModal(true)
+      } else {
+        onRegistered?.()
+      }
     } catch {
       setError('Could not reach the server.')
     } finally {
@@ -75,6 +87,14 @@ export default function Onboarding({ onGoToLogin, onRegistered }: { onGoToLogin:
   const selectedLang = LANGUAGES.find(l => l.value === lang)
 
   return (
+    <>
+      {showSaveModal && (
+        <SaveCredsModal
+          email={email}
+          onYes={async () => { await eAPI()?.saveCreds?.(email, password); setShowSaveModal(false); onRegistered?.() }}
+          onNo={() => { setShowSaveModal(false); onRegistered?.() }}
+        />
+      )}
     <div style={{ display: 'flex', minHeight: '100vh', background: '#020810', overflow: 'hidden' }}>
 
       {/* ─── Left brand panel ─── */}
@@ -285,5 +305,6 @@ export default function Onboarding({ onGoToLogin, onRegistered }: { onGoToLogin:
 
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
+    </>
   )
 }

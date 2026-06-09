@@ -57,6 +57,7 @@ let _refreshingToken: Promise<{ accessToken: string; refreshToken: string } | nu
 // ── Secure credential storage paths (set after app ready) ─────────────────
 let _tokenFilePath = ''
 let _pinConfigPath = ''
+let _credsFilePath = ''
 let _pinFailures   = 0
 const PIN_MAX_FAILURES = 5
 
@@ -64,6 +65,7 @@ function _initCredPaths() {
   const userData  = app.getPath('userData')
   _tokenFilePath  = path.join(userData, 'devcore-session.bin')
   _pinConfigPath  = path.join(userData, 'devcore-pin.json')
+  _credsFilePath  = path.join(userData, 'devcore-creds.bin')
 }
 
 /** Persist refresh token to disk using OS-level encryption (Windows DPAPI). */
@@ -109,6 +111,35 @@ function _savePinHash(hash: string): void {
 
 function _clearPin(): void {
   try { if (_pinConfigPath) fs.unlinkSync(_pinConfigPath) } catch {}
+}
+
+// ── Login credential storage (email + password, OS-encrypted) ─────────────
+
+/** Encrypt and persist login credentials to disk using Windows DPAPI. */
+function _saveCreds(email: string, password: string): void {
+  if (!_credsFilePath || !safeStorage.isEncryptionAvailable()) return
+  try {
+    const payload = JSON.stringify({ email, password })
+    fs.writeFileSync(_credsFilePath, safeStorage.encryptString(payload))
+  } catch {}
+}
+
+/** Load saved credentials. Returns null if none saved or decryption fails. */
+function _loadCreds(): { email: string; password: string } | null {
+  if (!_credsFilePath || !safeStorage.isEncryptionAvailable()) return null
+  try {
+    if (!fs.existsSync(_credsFilePath)) return null
+    const raw = safeStorage.decryptString(fs.readFileSync(_credsFilePath))
+    const parsed = JSON.parse(raw)
+    if (typeof parsed.email === 'string' && typeof parsed.password === 'string') {
+      return { email: parsed.email, password: parsed.password }
+    }
+    return null
+  } catch { return null }
+}
+
+function _clearCreds(): void {
+  try { if (_credsFilePath) fs.unlinkSync(_credsFilePath) } catch {}
 }
 
 const BACKEND_HTTP = 'http://localhost:8000'
@@ -218,6 +249,22 @@ ipcMain.handle('auth:clear:stored', () => {
   _clearStoredToken()
   _lastRefreshToken = ''
   _lastToken = ''
+})
+
+// Save login credentials encrypted with Windows DPAPI.
+ipcMain.handle('auth:creds:save', (_e, email: string, password: string) => {
+  if (typeof email !== 'string' || typeof password !== 'string') return { ok: false }
+  _saveCreds(email.slice(0, 512), password.slice(0, 512))
+  return { ok: true }
+})
+
+// Load saved credentials (returns null if none).
+ipcMain.handle('auth:creds:load', () => _loadCreds())
+
+// Clear saved credentials.
+ipcMain.handle('auth:creds:clear', () => {
+  _clearCreds()
+  return { ok: true }
 })
 
 // Single refresh path for all windows — deduplicates concurrent attempts.
@@ -536,6 +583,12 @@ function _startDeviceWatcher() {
     }
   }, 2000)
 }
+
+// ── Shell helpers — open files / folders in the OS ───────────────────────────
+ipcMain.handle('shell:openPath', (_e, filePath: string) => shell.openPath(filePath))
+ipcMain.handle('shell:showItemInFolder', (_e, filePath: string) => {
+  shell.showItemInFolder(filePath)
+})
 
 ipcMain.handle('window:minimize', () => BrowserWindow.getFocusedWindow()?.minimize())
 ipcMain.handle('window:maximize', () => {

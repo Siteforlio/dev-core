@@ -391,7 +391,7 @@ async def add_manual_job(
     # Queue tailoring — same pipeline as scraped jobs
     try:
         from app.workers.tailor_worker import tailor_listing
-        tailor_listing.delay(listing.id, user_id)
+        tailor_listing.apply_async(args=[listing.id, user_id], queue="tailor", priority=9)
     except Exception:
         pass  # tailoring is best-effort; listing is already saved
 
@@ -454,13 +454,6 @@ async def ensure_application(
                 )
             )
             app = app_result2.scalar_one()
-
-        # Queue tailoring
-        try:
-            from app.workers.tailor_worker import tailor_listing
-            tailor_listing.delay(listing_id, user_id)
-        except Exception:
-            pass
 
     return {"data": {"application_id": app.id}, "error": None}
 

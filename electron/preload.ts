@@ -15,12 +15,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   removePin:        () => ipcRenderer.invoke('auth:pin:remove'),
   pinExists:        () => ipcRenderer.invoke('auth:pin:exists'),
   clearStored:      () => ipcRenderer.invoke('auth:clear:stored'),
+  saveCreds:        (email: string, password: string) => ipcRenderer.invoke('auth:creds:save', email, password),
+  loadCreds:        () => ipcRenderer.invoke('auth:creds:load') as Promise<{ email: string; password: string } | null>,
+  clearCreds:       () => ipcRenderer.invoke('auth:creds:clear'),
   window: {
     minimize: () => ipcRenderer.invoke('window:minimize'),
     maximize: () => ipcRenderer.invoke('window:maximize'),
     close:    () => ipcRenderer.invoke('window:close'),
   },
   splashDone: () => ipcRenderer.invoke('app:splash-done'),
+  openPath:           (p: string) => ipcRenderer.invoke('shell:openPath', p),
+  showItemInFolder:   (p: string) => ipcRenderer.invoke('shell:showItemInFolder', p),
   devcore: {
     getStatus:            () => ipcRenderer.invoke('devcore:session:status'),
     listDevices:          () => ipcRenderer.invoke('devcore:devices:list'),

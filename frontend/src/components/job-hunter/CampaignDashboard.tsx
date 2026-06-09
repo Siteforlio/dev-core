@@ -42,6 +42,8 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
   const [activeApplicationId, setActiveApplicationId] = useState<string | null>(null)
   const [prevApplicationId, setPrevApplicationId] = useState<string | null>(null)
   const [showDidYouApply, setShowDidYouApply] = useState(false)
+  // The listing the user clicked that was blocked by the popup
+  const [pendingListingId, setPendingListingId] = useState<string | null>(null)
 
   // Merge persisted + live, deduplicated by message+timestamp
   const feed = [
@@ -236,6 +238,7 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
       const prev = pipeline.find((a) => a.applicationId === activeApplicationId)
       if (prev && (prev.status === 'pending' || prev.status === 'tailored')) {
         setPrevApplicationId(activeApplicationId)
+        setPendingListingId(listingId)
         setShowDidYouApply(true)
         return
       }
@@ -257,6 +260,7 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
       const app = pipeline.find((a) => a.applicationId === activeApplicationId)
       if (app && (app.status === 'pending' || app.status === 'tailored')) {
         setPrevApplicationId(activeApplicationId)
+        setPendingListingId(null) // closing panel — no destination to navigate to
         setShowDidYouApply(true)
         setPanelMode('none')
         return
@@ -280,6 +284,18 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
       setPipelineTab('applied')
     }
     loadDashboard().catch(() => {})
+    // Navigate to the job that was clicked before the popup appeared
+    const next = pendingListingId
+    setPendingListingId(null)
+    if (next) handleApply(next)
+  }
+
+  const handleDidYouApplyDismiss = () => {
+    setShowDidYouApply(false)
+    setPrevApplicationId(null)
+    const next = pendingListingId
+    setPendingListingId(null)
+    if (next) handleApply(next)
   }
 
   const activeApp = activeApplicationId ? pipeline.find((a) => a.id === activeApplicationId) : null
@@ -565,19 +581,26 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
       />
     )}
 
-    {/* "Did you apply?" popup */}
+    {/* "Did you apply?" popup — with blur backdrop */}
     {showDidYouApply && prevApplicationId && (() => {
       const app = pipeline.find((a) => a.applicationId === prevApplicationId)
       if (!app) return null
       return (
-        <DidYouApplyPopup
-          campaignId={campaignId}
-          applicationId={prevApplicationId}
-          company={app.company}
-          title={app.title}
-          onDone={handleDidYouApplyDone}
-          onDismiss={() => { setShowDidYouApply(false); setPrevApplicationId(null) }}
-        />
+        <>
+          {/* Backdrop: blurs everything behind the popup */}
+          <div
+            className="fixed inset-0 z-40"
+            style={{ backdropFilter: 'blur(4px)', background: 'rgba(0,0,0,0.45)' }}
+          />
+          <DidYouApplyPopup
+            campaignId={campaignId}
+            applicationId={prevApplicationId}
+            company={app.company}
+            title={app.title}
+            onDone={handleDidYouApplyDone}
+            onDismiss={handleDidYouApplyDismiss}
+          />
+        </>
       )
     })()}
     </div>

@@ -56,6 +56,7 @@ export default function CampaignForm({ onCreated }: Props) {
   const [allCategories, setAllCategories] = useState<string[]>([])
   const [name, setName] = useState('')
   const [categories, setCategories] = useState<string[]>([])
+  const [categorySearch, setCategorySearch] = useState('')
   const [workTypes, setWorkTypes] = useState<string[]>(['remote'])
   const [anywhere, setAnywhere] = useState(false)
   const [country, setCountry] = useState('')
@@ -70,6 +71,10 @@ export default function CampaignForm({ onCreated }: Props) {
       .catch(() => {})
     return () => { cancelled = true }
   }, [])
+
+  const filteredCategories = allCategories.filter(c =>
+    c.toLowerCase().includes(categorySearch.toLowerCase())
+  )
 
   const filteredCountries = COUNTRIES.filter(c =>
     c.name.toLowerCase().includes(countrySearch.toLowerCase()) ||
@@ -127,8 +132,15 @@ export default function CampaignForm({ onCreated }: Props) {
               <span className="text-xs text-blue-400 font-mono">{categories.length} selected</span>
             )}
           </div>
-          <div className="grid grid-cols-2 gap-1.5">
-            {allCategories.map(cat => {
+          <input
+            type="text"
+            value={categorySearch}
+            onChange={e => setCategorySearch(e.target.value)}
+            placeholder="Search categories…"
+            className="bg-gray-900 border border-gray-800 text-gray-200 text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-blue-600"
+          />
+          <div className="grid grid-cols-2 gap-1.5 max-h-52 overflow-y-auto pr-1 [&::-webkit-scrollbar]:hidden">
+            {filteredCategories.map(cat => {
               const selected = categories.includes(cat)
               return (
                 <button
@@ -152,7 +164,10 @@ export default function CampaignForm({ onCreated }: Props) {
               )
             })}
           </div>
-          {categories.length === 0 && (
+          {filteredCategories.length === 0 && categorySearch && (
+            <p className="text-xs text-gray-600">No categories match "{categorySearch}"</p>
+          )}
+          {categories.length === 0 && !categorySearch && (
             <p className="text-xs text-gray-600">Select one or more categories — the scraper searches all of them.</p>
           )}
         </div>

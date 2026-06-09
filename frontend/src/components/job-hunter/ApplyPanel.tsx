@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useJobHunter } from '../../hooks/useJobHunter'
+import { useAuthStore } from '../../store/authStore'
 import type { ApplicationDetail, ChatMessage } from '../../types/jobHunter'
 
 interface Props {
@@ -50,18 +51,50 @@ export default function ApplyPanel({ campaignId, applicationId, onClose, onAppli
   const [showDesc, setShowDesc] = useState(false)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const stopPolling = () => {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
+  }
+
+  // Poll detail endpoint until resume appears, then stop
+  const startPolling = () => {
+    if (pollRef.current) return
+    pollRef.current = setInterval(async () => {
+      try {
+        const d = await getApplicationDetail(campaignId, applicationId)
+        if (d.resumePath) {
+          setDetail(d)
+          setCoverLetter(prev => prev ?? d.coverLetter)
+          setTailorQueued(false)
+          setMessages(prev => [...prev, {
+            role: 'assistant' as const,
+            content: `Resume ready — **${d.resumeFilename}**. Use the buttons above to view it or open the folder.`,
+          }])
+          stopPolling()
+        }
+      } catch { /* silent */ }
+    }, 5000)
+  }
+
+  useEffect(() => () => stopPolling(), [])
 
   useEffect(() => {
     setLoading(true)
     setError('')
     setMessages([])
+    setTailorQueued(false)
+    stopPolling()
     getApplicationDetail(campaignId, applicationId)
       .then((d) => {
         setDetail(d)
         setCoverLetter(d.coverLetter)
+        const hasResume = !!d.resumeFilename
         setMessages([{
           role: 'assistant',
-          content: `Context loaded for **${d.title}** at **${d.company}**. Your tailored resume is ready${d.resumeFilename ? ` — ${d.resumeFilename}` : ''}. Ask me anything about this application, or use the quick actions below.`,
+          content: hasResume
+            ? `Context loaded for **${d.title}** at **${d.company}**. Resume ready — **${d.resumeFilename}**. Ask me anything or use the quick actions below.`
+            : `Context loaded for **${d.title}** at **${d.company}**. No tailored resume yet — click ⚡ Tailor resume to generate one.`,
         }])
       })
       .catch(() => setError('Failed to load application details.'))
@@ -129,6 +162,7 @@ export default function ApplyPanel({ campaignId, applicationId, onClose, onAppli
     try {
       await triggerTailoring(campaignId, applicationId)
       setTailorQueued(true)
+      startPolling()
     } catch {
       // silent — user can retry
     } finally {
@@ -136,12 +170,39 @@ export default function ApplyPanel({ campaignId, applicationId, onClose, onAppli
     }
   }
 
-  const handleOpenFolder = () => {
-    if (!detail?.resumeFolder) return
-    if (window.electronAPI?.openPath) {
-      window.electronAPI.openPath(detail.resumeFolder)
-    } else {
-      alert(`Resume folder:\n${detail.resumeFolder}`)
+  const BASE_URL = 'http://localhost:8000'
+  const resumeApiUrl = `${BASE_URL}/api/v1/job-hunter/campaigns/${campaignId}/applications/${applicationId}/resume`
+
+  const getAuthHeader = (): string => {
+    const token = useAuthStore.getState().accessToken
+    return token ? `Bearer ${token}` : ''
+  }
+
+  const handleViewResume = async () => {
+    try {
+      const res = await fetch(resumeApiUrl, {
+        headers: { Authorization: getAuthHeader() },
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      window.open(url, '_blank', 'noopener')
+      // Revoke after a short delay so the tab can load it
+      setTimeout(() => URL.revokeObjectURL(url), 30000)
+    } catch (e) {
+      console.error('handleViewResume:', e)
+    }
+  }
+
+  const handleOpenFolder = async () => {
+    try {
+      const res = await fetch(
+        `${BASE_URL}/api/v1/job-hunter/campaigns/${campaignId}/applications/${applicationId}/resume/reveal`,
+        { method: 'POST', headers: { Authorization: getAuthHeader() } }
+      )
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    } catch (e) {
+      console.error('handleOpenFolder:', e)
     }
   }
 
@@ -243,13 +304,21 @@ export default function ApplyPanel({ campaignId, applicationId, onClose, onAppli
               {tailorLoading ? '…' : tailorQueued ? '✓ Queued' : '⚡ Tailor resume'}
             </button>
           )}
-          {detail.resumeFolder && (
-            <button
-              onClick={handleOpenFolder}
-              className="text-[11px] px-2.5 py-1 rounded-md border border-[#1c1c1c] text-[#555] hover:text-[#888] hover:border-[#2a2a2a] transition-all"
-            >
-              Open folder
-            </button>
+          {detail.resumePath && (
+            <>
+              <button
+                onClick={handleViewResume}
+                className="text-[11px] px-2.5 py-1 rounded-md border border-[#1c2e3d] text-[#38bdf8] hover:bg-[#0a1e2e] hover:border-[#1e4a6a] transition-all"
+              >
+                View PDF
+              </button>
+              <button
+                onClick={handleOpenFolder}
+                className="text-[11px] px-2.5 py-1 rounded-md border border-[#1c1c1c] text-[#555] hover:text-[#888] hover:border-[#2a2a2a] transition-all"
+              >
+                Open folder
+              </button>
+            </>
           )}
           <button
             onClick={coverLetter ? () => setShowCover(true) : handleGenerateCoverLetter}
@@ -388,6 +457,9 @@ export default function ApplyPanel({ campaignId, applicationId, onClose, onAppli
 
 declare global {
   interface Window {
-    electronAPI?: { openPath: (path: string) => void }
+    electronAPI?: {
+      openPath: (path: string) => void
+      showItemInFolder: (path: string) => void
+    }
   }
 }

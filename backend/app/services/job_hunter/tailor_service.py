@@ -207,8 +207,9 @@ class TailorService:
         keywords: list[str],
         role: str,
         immutable_facts: str = "",
+        experience: list[dict] | None = None,
     ) -> str:
-        exp = profile.work_experience or []
+        exp = experience if experience is not None else (profile.work_experience or [])
         years = getattr(profile, "years_of_experience", None)
         years_phrase = f"{years} years of" if years else f"{len(exp)} roles of"
         return await self._call_haiku(
@@ -542,6 +543,32 @@ a:hover {{ text-decoration:underline; }}
         finally:
             os.unlink(tmp_html)
 
+    async def _extract_experience_from_raw_context(self, raw_context: str) -> list[dict]:
+        """
+        Parse raw profile text into structured work experience entries.
+        Called when profile.work_experience is empty but raw_context exists.
+        """
+        if not raw_context or not raw_context.strip():
+            return []
+        raw = await self._call_haiku(
+            f"Extract work experience from this candidate profile text. "
+            f"Return a JSON array where each item has: "
+            f'title (string), company (string), location (string), '
+            f'start_date (string, e.g. "Jan 2020"), end_date (string or "Present"), '
+            f'responsibilities (array of bullet strings). '
+            f"Return ONLY valid JSON, no explanation.\n\n"
+            f"Profile text:\n{raw_context[:4000]}",
+            max_tokens=2000,
+        )
+        start, end = raw.find("["), raw.rfind("]") + 1
+        if start == -1 or end == 0:
+            return []
+        try:
+            result = json.loads(raw[start:end])
+            return result if isinstance(result, list) else []
+        except (json.JSONDecodeError, ValueError):
+            return []
+
     async def tailor_for_listing(self, listing_id: str, user_id: str) -> Application | None:
         # Idempotency check — only skip if already tailored
         existing_result = await self.db.execute(
@@ -569,7 +596,11 @@ a:hover {{ text-decoration:underline; }}
         company = (listing.company or "")[:100]
         title = (listing.title or "")[:150]
         location = (listing.location or "remote")[:100]
+
+        # Use structured work_experience if available; fall back to parsing raw_context
         experience = profile.work_experience or []
+        if not experience and profile.raw_context:
+            experience = await self._extract_experience_from_raw_context(profile.raw_context)
 
         # ── Build immutable facts block (injected into every LLM prompt) ──────
         immutable_facts = _build_immutable_facts(profile, experience)
@@ -600,7 +631,7 @@ a:hover {{ text-decoration:underline; }}
         jd_summary = (listing.description or "")[:400]
 
         summary, salary, rewritten = await asyncio.gather(
-            self.generate_summary(profile, keywords, title, immutable_facts=immutable_facts),
+            self.generate_summary(profile, keywords, title, immutable_facts=immutable_facts, experience=experience),
             self.infer_salary(profile.years_of_experience or len(experience), location, company),
             self.rewrite_bullets(
                 bullets_only[:20], keywords,
@@ -659,20 +690,26 @@ a:hover {{ text-decoration:underline; }}
         campaign_obj = campaign_result.scalar_one_or_none()
         campaign_name = (campaign_obj.name if campaign_obj else listing.campaign_id)
 
-        # Folder: resumes/{campaign_name}/{company}/
-        campaign_folder = RESUMES_BASE / slugify(campaign_name) / slugify(company)
-        campaign_folder.mkdir(parents=True, exist_ok=True)
-
-        # Professional filename: "Full Name - Company - Role.pdf"
-        candidate_display = (profile.full_name or "Candidate").strip()
-        company_display = company.strip()
-        role_display = title.strip()
         # Sanitise display chars that are invalid on Windows/macOS filenames
         def safe(s: str, maxlen: int = 50) -> str:
             return re.sub(r'[\\/:*?"<>|]', '', s)[:maxlen].strip()
 
+        candidate_display = (profile.full_name or "Candidate").strip()
+        company_display = company.strip()
+        role_display = title.strip()
+
+        # Folder per job: resumes/{campaign_name}/{company}/{role}/
+        job_folder = (
+            RESUMES_BASE
+            / slugify(campaign_name)
+            / slugify(company)
+            / slugify(title)
+        )
+        job_folder.mkdir(parents=True, exist_ok=True)
+
+        # Filename: "Full Name - Company - Role.pdf"
         pdf_filename = f"{safe(candidate_display)} - {safe(company_display)} - {safe(role_display)}.pdf"
-        pdf_path = campaign_folder / pdf_filename
+        pdf_path = job_folder / pdf_filename
         await asyncio.to_thread(self._generate_pdf_sync, html, pdf_path)
 
         form_answers = {

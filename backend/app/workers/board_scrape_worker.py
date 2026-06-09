@@ -336,6 +336,7 @@ def aggregate_board_results(
             user_country  = preferences.get("user_country", "")
             anywhere      = preferences.get("anywhere", True)
             sub_categories = preferences.get("sub_categories", [])
+            broad_category = preferences.get("search_term", "")
             profile_skills = preferences.get("profile_skills", [])
             search_term   = preferences.get("search_term", "")
 
@@ -370,10 +371,13 @@ def aggregate_board_results(
             ]
             _publish_activity(campaign_id, f"🗺️  Location filter: {len(filtered)}/{len(deduped)} passed")
 
-            # ── 4. Tech pre-filter ─────────────────────────────────────────
+            # ── 4. Category pre-filter ────────────────────────────────────
             tech_filtered = [
                 j for j in filtered
-                if svc._tech_role_prefilter(j.get("title", ""), j.get("description", ""))
+                if svc._category_prefilter(
+                    j.get("title", ""), j.get("description", ""),
+                    broad_category, sub_categories,
+                )
             ]
 
             # ── 5. Score (BERT gate → Gemini) and save ────────────────────

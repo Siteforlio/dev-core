@@ -10,6 +10,7 @@ import CampaignForm from '../components/job-hunter/CampaignForm'
 import CampaignProfileBuilder from '../components/job-hunter/CampaignProfileBuilder'
 import CampaignDashboard from '../components/job-hunter/CampaignDashboard'
 import GlobalIntegrationsPanel from '../components/job-hunter/GlobalIntegrationsPanel'
+import SavedLoginSettings from '../components/SavedLoginSettings'
 import { SessionSetup } from '../components/devcore/SessionSetup'
 import type { Campaign } from '../types/jobHunter'
 
@@ -67,10 +68,9 @@ export default function Dashboard() {
   const handleSelectCampaign = async (campaignId: string) => {
     try {
       const profile = await getCampaignProfile(campaignId)
-      const hasMinimum = profile.full_name && profile.email &&
-        (profile.skills as unknown[])?.length > 0 &&
-        (profile.work_experience as unknown[])?.length > 0
-      if (!hasMinimum) {
+      // Profile exists if raw_context has been submitted or is_complete flag is set
+      const hasProfile = !!(profile as any).raw_context?.trim() || !!(profile as any).is_complete
+      if (!hasProfile) {
         const campaign = campaigns.find(c => c.id === campaignId) ?? { id: campaignId, name: '' }
         setNewCampaign(campaign as Campaign)
         setActiveView('build-profile')
@@ -213,7 +213,8 @@ export default function Dashboard() {
             </div>
           ) : activeModule === 'settings' ? (
             /* ── Settings ── */
-            <div className="p-6 h-full overflow-y-auto">
+            <div className="p-6 h-full overflow-y-auto" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+              <SavedLoginSettings />
               <GlobalIntegrationsPanel />
             </div>
           ) : (
