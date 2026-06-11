@@ -344,7 +344,7 @@ class ScraperService:
             remote=job.get("remote", False),
             url=job.get("url", ""),
             apply_url=job.get("apply_url"),
-            description=_strip_html(job.get("description", ""))[:5000],
+            description=_strip_html(job.get("description", ""))[:10000],
             match_score=score,
             sub_category=job.get("sub_category"),
             url_hash=url_hash,

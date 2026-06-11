@@ -4,7 +4,7 @@ import { useJobHunter } from '../../hooks/useJobHunter'
 interface Props {
   campaignId: string
   onClose: () => void
-  onAdded: () => void
+  onAdded: (listingId: string) => void
 }
 
 type Step = 'compose' | 'sending' | 'done' | 'error'
@@ -20,7 +20,6 @@ export default function ManualJobModal({ campaignId, onClose, onAdded }: Props) 
   const [errorMsg, setErrorMsg] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
-  // Focus the title on mount
   useEffect(() => {
     const timer = setTimeout(() => {
       document.getElementById('mjm-title')?.focus()
@@ -35,18 +34,16 @@ export default function ManualJobModal({ campaignId, onClose, onAdded }: Props) 
     setStep('sending')
     setErrorMsg('')
     try {
-      await addManualJob(campaignId, {
+      const { listingId } = await addManualJob(campaignId, {
         title: title.trim(),
         company: company.trim(),
         description: description.trim(),
         applyUrl: applyUrl.trim() || undefined,
       })
       setStep('done')
-      // Give user a moment to see success, then close and refresh
       setTimeout(() => {
-        onAdded()
-        onClose()
-      }, 1400)
+        onAdded(listingId)
+      }, 800)
     } catch (e: unknown) {
       setErrorMsg(e instanceof Error ? e.message : 'Something went wrong')
       setStep('error')
@@ -55,52 +52,68 @@ export default function ManualJobModal({ campaignId, onClose, onAdded }: Props) 
 
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === 'Escape') onClose()
-    // Ctrl/Cmd+Enter to submit from the description textarea
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') handleSubmit()
   }
 
+  const charCount = description.length
+  const charColor = charCount > 9000 ? '#f87171' : charCount > 7000 ? '#fbbf24' : 'rgba(100,116,139,0.5)'
+
   return (
-    // Backdrop
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)' }}
+      style={{ background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(6px)' }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
       onKeyDown={handleKeyDown}
     >
       <div
-        className="w-full max-w-xl flex flex-col rounded-2xl overflow-hidden"
+        className="w-full max-w-2xl flex flex-col rounded-2xl overflow-hidden"
         style={{
-          background: '#0d0d0d',
-          border: '1px solid rgba(255,255,255,0.08)',
-          boxShadow: '0 24px 64px rgba(0,0,0,0.7)',
-          maxHeight: '90vh',
+          background: 'linear-gradient(160deg, #0d1117 0%, #0a0e14 100%)',
+          border: '1px solid rgba(255,255,255,0.07)',
+          boxShadow: '0 32px 80px rgba(0,0,0,0.8), 0 0 0 1px rgba(34,211,238,0.04)',
+          maxHeight: '92vh',
         }}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-5 pt-5 pb-3 flex-shrink-0">
-          <div>
-            <h2 className="text-white font-semibold text-sm">Add a Job Manually</h2>
-            <p className="text-gray-500 text-xs mt-0.5">Paste the JD — we'll tailor your resume for it</p>
+        <div className="flex items-start justify-between px-6 pt-6 pb-4 flex-shrink-0">
+          <div className="flex items-center gap-3">
+            <div
+              className="flex items-center justify-center w-8 h-8 rounded-lg flex-shrink-0"
+              style={{ background: 'rgba(34,211,238,0.08)', border: '1px solid rgba(34,211,238,0.15)' }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#22d3ee" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="12" y1="18" x2="12" y2="12" />
+                <line x1="9" y1="15" x2="15" y2="15" />
+              </svg>
+            </div>
+            <div>
+              <h2 className="text-white font-semibold text-sm tracking-tight">Add Job</h2>
+              <p className="text-[11px] mt-0.5" style={{ color: 'rgba(100,116,139,0.7)' }}>
+                Paste the JD — AI will tailor your resume and open the apply screen
+              </p>
+            </div>
           </div>
           <button
             onClick={onClose}
-            className="text-gray-600 hover:text-white transition-colors p-1 rounded-md hover:bg-gray-800"
+            className="text-gray-600 hover:text-white transition-colors p-1.5 rounded-lg hover:bg-gray-800 flex-shrink-0"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
             </svg>
           </button>
         </div>
 
-        <div className="border-t border-gray-900 mx-5" />
+        <div style={{ height: '1px', background: 'rgba(255,255,255,0.05)', margin: '0 24px' }} />
 
-        {/* Form body */}
-        <div className="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-3 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+        {/* Form */}
+        <div className="flex-1 overflow-y-auto px-6 py-5 flex flex-col gap-4 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
 
-          {/* Title + Company row */}
+          {/* Title + Company */}
           <div className="flex gap-3">
             <div className="flex-1">
-              <label className="block text-[10px] font-semibold uppercase tracking-widest text-gray-600 mb-1.5">
+              <label className="block text-[10px] font-semibold uppercase tracking-widest mb-1.5" style={{ color: 'rgba(100,116,139,0.6)' }}>
                 Job Title <span className="text-red-500">*</span>
               </label>
               <input
@@ -108,108 +121,155 @@ export default function ManualJobModal({ campaignId, onClose, onAdded }: Props) 
                 type="text"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                placeholder="e.g. Senior Backend Engineer"
+                placeholder="e.g. Content Marketing Lead"
                 disabled={step !== 'compose'}
-                className="w-full bg-gray-900 border border-gray-800 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-gray-600 transition-colors disabled:opacity-50"
+                className="w-full rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-600 focus:outline-none transition-colors disabled:opacity-50"
+                style={{
+                  background: 'rgba(255,255,255,0.03)',
+                  border: '1px solid rgba(255,255,255,0.07)',
+                }}
+                onFocus={e => e.currentTarget.style.borderColor = 'rgba(34,211,238,0.3)'}
+                onBlur={e => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.07)'}
               />
             </div>
             <div className="flex-1">
-              <label className="block text-[10px] font-semibold uppercase tracking-widest text-gray-600 mb-1.5">
+              <label className="block text-[10px] font-semibold uppercase tracking-widest mb-1.5" style={{ color: 'rgba(100,116,139,0.6)' }}>
                 Company <span className="text-red-500">*</span>
               </label>
               <input
                 type="text"
                 value={company}
                 onChange={(e) => setCompany(e.target.value)}
-                placeholder="e.g. Stripe"
+                placeholder="e.g. Bridge"
                 disabled={step !== 'compose'}
-                className="w-full bg-gray-900 border border-gray-800 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-gray-600 transition-colors disabled:opacity-50"
+                className="w-full rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-600 focus:outline-none transition-colors disabled:opacity-50"
+                style={{
+                  background: 'rgba(255,255,255,0.03)',
+                  border: '1px solid rgba(255,255,255,0.07)',
+                }}
+                onFocus={e => e.currentTarget.style.borderColor = 'rgba(34,211,238,0.3)'}
+                onBlur={e => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.07)'}
               />
             </div>
           </div>
 
-          {/* Job description — the main paste area */}
+          {/* Job description */}
           <div>
-            <label className="block text-[10px] font-semibold uppercase tracking-widest text-gray-600 mb-1.5">
-              Job Description <span className="text-red-500">*</span>
-            </label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-[10px] font-semibold uppercase tracking-widest" style={{ color: 'rgba(100,116,139,0.6)' }}>
+                Job Description <span className="text-red-500">*</span>
+              </label>
+              {charCount > 0 && (
+                <span className="text-[10px] font-mono" style={{ color: charColor }}>
+                  {charCount.toLocaleString()} / 10,000
+                </span>
+              )}
+            </div>
             <textarea
               ref={textareaRef}
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder={"Paste the full job description here…\n\nThe more detail you include, the better we can tailor your resume."}
-              rows={10}
+              rows={11}
               disabled={step !== 'compose'}
-              className="w-full bg-gray-900 border border-gray-800 rounded-lg px-3 py-3 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-gray-600 transition-colors resize-none disabled:opacity-50 leading-relaxed"
-              style={{ fontFamily: 'inherit' }}
+              className="w-full rounded-lg px-3 py-3 text-sm text-white placeholder-gray-600 focus:outline-none transition-colors resize-none disabled:opacity-50 leading-relaxed"
+              style={{
+                background: 'rgba(255,255,255,0.03)',
+                border: '1px solid rgba(255,255,255,0.07)',
+                fontFamily: 'inherit',
+              }}
+              onFocus={e => e.currentTarget.style.borderColor = 'rgba(34,211,238,0.3)'}
+              onBlur={e => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.07)'}
             />
-            <p className="text-[10px] text-gray-700 mt-1">
-              {description.length > 0 ? `${description.length} chars` : 'Ctrl+Enter to send'}
-            </p>
+            {charCount === 0 && (
+              <p className="text-[10px] mt-1" style={{ color: 'rgba(100,116,139,0.4)' }}>
+                Ctrl+Enter to submit
+              </p>
+            )}
           </div>
 
-          {/* Apply URL — optional */}
+          {/* Apply URL */}
           <div>
-            <label className="block text-[10px] font-semibold uppercase tracking-widest text-gray-600 mb-1.5">
-              Apply URL <span className="text-gray-700 normal-case tracking-normal font-normal">(optional)</span>
+            <label className="block text-[10px] font-semibold uppercase tracking-widest mb-1.5" style={{ color: 'rgba(100,116,139,0.6)' }}>
+              Apply URL{' '}
+              <span className="normal-case tracking-normal font-normal" style={{ color: 'rgba(100,116,139,0.4)' }}>(optional)</span>
             </label>
             <input
               type="url"
               value={applyUrl}
               onChange={(e) => setApplyUrl(e.target.value)}
-              placeholder="https://jobs.company.com/..."
+              placeholder="https://jobs.company.com/…"
               disabled={step !== 'compose'}
-              className="w-full bg-gray-900 border border-gray-800 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-gray-600 transition-colors disabled:opacity-50"
+              className="w-full rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-600 focus:outline-none transition-colors disabled:opacity-50"
+              style={{
+                background: 'rgba(255,255,255,0.03)',
+                border: '1px solid rgba(255,255,255,0.07)',
+              }}
+              onFocus={e => e.currentTarget.style.borderColor = 'rgba(34,211,238,0.3)'}
+              onBlur={e => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.07)'}
             />
           </div>
 
-          {/* Error message */}
+          {/* Error */}
           {step === 'error' && (
-            <div className="rounded-lg px-3 py-2.5 text-xs text-red-300" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)' }}>
-              {errorMsg}
-              <button
-                onClick={() => setStep('compose')}
-                className="ml-2 underline text-red-400 hover:text-red-300"
-              >
+            <div
+              className="rounded-lg px-4 py-3 text-xs flex items-center gap-3"
+              style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.18)', color: '#fca5a5' }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0">
+                <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
+              </svg>
+              <span className="flex-1">{errorMsg}</span>
+              <button onClick={() => setStep('compose')} className="underline text-red-400 hover:text-red-300 flex-shrink-0">
                 Try again
               </button>
             </div>
           )}
         </div>
 
-        {/* Footer / send button */}
+        {/* Footer */}
         <div
-          className="flex items-center justify-between px-5 py-4 flex-shrink-0"
-          style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}
+          className="flex items-center justify-between px-6 py-4 flex-shrink-0"
+          style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}
         >
-          <p className="text-[10px] text-gray-700">
-            Added as <span className="text-gray-500">MATCH</span> · resume tailored automatically
-          </p>
+          <div className="flex items-center gap-2">
+            <div
+              className="w-1.5 h-1.5 rounded-full"
+              style={{ background: step === 'done' ? '#34d399' : step === 'sending' ? '#fbbf24' : 'rgba(34,211,238,0.4)' }}
+            />
+            <p className="text-[10px] font-mono" style={{ color: 'rgba(100,116,139,0.5)' }}>
+              {step === 'done' ? 'Job added — opening panel…' : step === 'sending' ? 'Adding job…' : 'Added as MATCH · resume tailored on open'}
+            </p>
+          </div>
 
           <button
             onClick={handleSubmit}
             disabled={!canSubmit || step !== 'compose'}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+            className="flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-medium transition-all disabled:opacity-30 disabled:cursor-not-allowed"
             style={{
-              background: step === 'done' ? 'rgba(34,197,94,0.15)' : 'rgba(59,130,246,0.15)',
-              border: step === 'done' ? '1px solid rgba(34,197,94,0.3)' : '1px solid rgba(59,130,246,0.3)',
-              color: step === 'done' ? '#86efac' : '#93c5fd',
+              background: step === 'done'
+                ? 'rgba(52,211,153,0.12)'
+                : 'rgba(34,211,238,0.1)',
+              border: step === 'done'
+                ? '1px solid rgba(52,211,153,0.3)'
+                : '1px solid rgba(34,211,238,0.25)',
+              color: step === 'done' ? '#6ee7b7' : '#67e8f9',
             }}
           >
             {step === 'sending' && (
-              <span className="w-3.5 h-3.5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+              <span className="w-3.5 h-3.5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
             )}
             {step === 'done' && (
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="20 6 9 17 4 12" />
               </svg>
             )}
             {step === 'compose' && (
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" />
               </svg>
             )}
-            {step === 'sending' ? 'Adding…' : step === 'done' ? 'Added!' : step === 'error' ? 'Retry' : 'Add Job'}
+            {step === 'sending' ? 'Adding…' : step === 'done' ? 'Done!' : 'Add Job'}
           </button>
         </div>
       </div>

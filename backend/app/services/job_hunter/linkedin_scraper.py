@@ -43,7 +43,7 @@ def _normalize(job: dict) -> dict:
         "remote":           job.get("remote", False),
         "url":              job.get("url", ""),
         "apply_url":        job.get("apply_url") or job.get("url", ""),
-        "description":      (job.get("description") or "")[:5000],
+        "description":      (job.get("description") or "")[:10000],
     }
 
 
@@ -286,7 +286,7 @@ class LinkedInScraper:
             "remote":           is_remote_flag == "1",
             "url":              job_url,
             "apply_url":        apply_url or job_url,
-            "description":      desc[:5000],
+            "description":      desc[:10000],
         }
 
     # ── Wait helpers ─────────────────────────────────────────────────────────

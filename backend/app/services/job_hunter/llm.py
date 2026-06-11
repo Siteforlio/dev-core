@@ -21,7 +21,7 @@ async def call_llm(
     *,
     json_mode: bool = False,
     quality: bool = False,   # True → deepseek-v4-pro (bullet rewriting, cover letters)
-    thinking: bool = True,   # False → disable chain-of-thought reasoning (faster, no token budget waste)
+    thinking: bool = False,  # False → disable chain-of-thought reasoning (direct output, no empty content bug)
 ) -> str:
     """Send a prompt to DeepSeek and return the text response.
 

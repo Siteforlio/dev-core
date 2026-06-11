@@ -375,7 +375,7 @@ async def add_manual_job(
         remote=False,
         url=body.apply_url or synthetic_url,
         apply_url=body.apply_url,
-        description=body.description.strip()[:5000],
+        description=body.description.strip()[:10000],
         match_score="MATCH",
         url_hash=url_hash,
         status="pending",

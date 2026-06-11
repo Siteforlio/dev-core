@@ -137,7 +137,7 @@ def _normalize(job: dict) -> dict:
         "remote": job.get("remote", False),
         "url": job.get("url", ""),
         "apply_url": job.get("apply_url") or job.get("url", ""),
-        "description": (job.get("description") or "")[:5000],
+        "description": (job.get("description") or "")[:10000],
     }
 
 
@@ -175,7 +175,7 @@ async def scrape_greenhouse(slug: str, client: httpx.AsyncClient) -> list[dict]:
                 "remote": remote,
                 "url": canonical_url,
                 "apply_url": canonical_url,
-                "description": content[:5000],
+                "description": content[:10000],
             }))
         return jobs
     except Exception:
@@ -205,7 +205,7 @@ async def scrape_lever(slug: str, client: httpx.AsyncClient) -> list[dict]:
                 "remote": remote,
                 "url": j.get("hostedUrl", ""),
                 "apply_url": j.get("applyUrl", "") or j.get("hostedUrl", ""),
-                "description": description[:5000],
+                "description": description[:10000],
             }))
         return jobs
     except Exception:

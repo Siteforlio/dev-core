@@ -417,16 +417,24 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
             {/* Manual add button */}
             <button
               onClick={() => setShowManualJob(true)}
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[10px] font-medium transition-all flex-shrink-0 ml-2 mb-1"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-semibold tracking-wide transition-all flex-shrink-0 ml-2 mb-1"
               style={{
-                background: 'rgba(59,130,246,0.08)',
-                border: '1px solid rgba(59,130,246,0.2)',
-                color: 'rgba(147,197,253,0.8)',
+                background: 'rgba(34,211,238,0.08)',
+                border: '1px solid rgba(34,211,238,0.22)',
+                color: '#22d3ee',
+              }}
+              onMouseEnter={e => {
+                e.currentTarget.style.background = 'rgba(34,211,238,0.14)'
+                e.currentTarget.style.borderColor = 'rgba(34,211,238,0.4)'
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.background = 'rgba(34,211,238,0.08)'
+                e.currentTarget.style.borderColor = 'rgba(34,211,238,0.22)'
               }}
               title="Add a job manually"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
               </svg>
               Add Job
             </button>
@@ -574,9 +582,11 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
       <ManualJobModal
         campaignId={campaignId}
         onClose={() => setShowManualJob(false)}
-        onAdded={() => {
+        onAdded={(listingId) => {
           setShowManualJob(false)
-          loadDashboard().catch(() => {})
+          loadDashboard()
+            .catch(() => {})
+            .finally(() => handleApply(listingId))
         }}
       />
     )}

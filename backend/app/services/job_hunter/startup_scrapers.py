@@ -25,7 +25,7 @@ def _normalize(job: dict) -> dict:
         "remote": job.get("remote", False),
         "url": job.get("url", ""),
         "apply_url": job.get("apply_url") or job.get("url", ""),
-        "description": (job.get("description") or "")[:5000],
+        "description": (job.get("description") or "")[:10000],
     }
 
 
@@ -171,7 +171,7 @@ async def scrape_hn_who_is_hiring(search_term: str, client: httpx.AsyncClient) -
                 "remote": is_remote,
                 "url": hn_url,
                 "apply_url": apply_url,
-                "description": clean[:5000],
+                "description": clean[:10000],
             }))
 
         return jobs
@@ -217,7 +217,7 @@ async def scrape_weworkremotely(search_term: str, client: httpx.AsyncClient) -> 
                     "remote": True,
                     "url": link,
                     "apply_url": link,
-                    "description": desc[:5000],
+                    "description": desc[:10000],
                 }))
         except Exception:
             continue
