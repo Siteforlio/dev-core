@@ -32,7 +32,7 @@ function createWindow() {
     frame: false,
     backgroundColor: '#020810',   // prevents white flash before React mounts
     show: false,                   // revealed via ready-to-show below
-    icon: path.join(PROJECT_ROOT, 'frontend', 'public', 'devcore.png'),
+    icon: path.join(PROJECT_ROOT, 'frontend', 'public', 'app-icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
