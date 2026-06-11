@@ -91,13 +91,25 @@ class TailorService:
         self.db = db
 
     async def _call_haiku(self, prompt: str, max_tokens: int = 1000, quality: bool = False) -> str:
+        import logging as _log
         async with _get_haiku_sem():
-            return await call_llm(prompt, max_tokens, quality=quality)
+            result = await call_llm(prompt, max_tokens, quality=quality)
+            if not result and quality:
+                # Pro model returned empty — fall back to Flash
+                _log.getLogger(__name__).warning(
+                    "_call_haiku: Pro model returned empty, retrying with Flash"
+                )
+                result = await call_llm(prompt, max_tokens, quality=False)
+            return result
 
     async def extract_keywords(self, jd: str) -> list[str]:
         raw = await self._call_haiku(
-            f"Extract the 15 most important ATS keywords from this job description. "
-            f"Return a JSON array of strings only, no explanation.\n\n{jd[:3000]}"
+            f"Extract all important ATS keywords from this job description. "
+            f"Include every role-specific skill, tool, platform, domain knowledge term, "
+            f"and competency the employer is clearly screening for. "
+            f"Only include terms that genuinely appear or are strongly implied by the JD — "
+            f"do not pad with generic words. Quality over quantity. "
+            f"Return a JSON array of strings only, no explanation.\n\n{jd[:10000]}"
         )
         start, end = raw.find("["), raw.rfind("]") + 1
         if start == -1 or end == 0:
@@ -154,31 +166,42 @@ class TailorService:
             if target_company:
                 domain_context += f" at {target_company}"
         if jd_summary:
-            domain_context += f"\nROLE CONTEXT: {jd_summary[:300]}"
+            domain_context += f"\nROLE CONTEXT: {jd_summary[:2500]}"
 
         raw = await self._call_haiku(
-            f"You are rewriting resume bullets so a candidate looks like a strong fit for a new role.\n\n"
+            f"You are a senior career strategist rewriting resume bullets for a career pivot or cross-domain application.\n\n"
             f"{domain_context}\n\n"
             f"{immutable_facts}\n\n"
-            f"TASK: For each bullet, keep the achievement (the numbers, the scale, the outcome) "
-            f"but translate the CONTEXT into the language of the target role. "
-            f"The achievement belongs to the candidate — just tell it in the vocabulary of the new field.\n\n"
-            f"DOMAIN TRANSLATION EXAMPLES:\n"
-            f'  Doctor → Software Engineer: "Managed care plans for 200 patients, reducing readmissions by 30%"'
-            f' → "Managed lifecycle for 200+ service accounts, reducing churn by 30%"\n'
-            f'  Teacher → Data Analyst: "Tracked progress of 35 students, improving pass rates by 20%"'
-            f' → "Tracked performance metrics for 35 data pipelines, improving accuracy by 20%"\n\n'
+            f"TASK: For each bullet, extract the underlying achievement (scale, impact, outcome, numbers) "
+            f"and retell it in the language of the target role. "
+            f"The achievement is real and belongs to the candidate — your job is to frame it "
+            f"so a hiring manager in the TARGET field immediately recognises its relevance.\n\n"
+            f"CROSS-DOMAIN TRANSLATION PRINCIPLE:\n"
+            f"Think about WHAT the candidate actually did (built systems, led teams, managed complexity, "
+            f"drove adoption, closed deals, coordinated stakeholders) and express it in the vocabulary "
+            f"the target role uses. The domain changes; the proof of capability does not.\n\n"
+            f"EXAMPLES:\n"
+            f'  Tech → Philanthropy/Partnerships: "Built platform connecting 55M users to 17,000 providers"'
+            f' → "Architected ecosystem connecting 55M+ Kenyans to 17,000+ service providers, '
+            f'demonstrating large-scale stakeholder network development"\n'
+            f'  Tech → Philanthropy: "Integrated payment processing with escrow and compliance"'
+            f' → "Designed compliant financial flows and managed multi-party transaction structures '
+            f'across Kenya\'s financial ecosystem"\n\n'
             f"RULES:\n"
-            f"- NEVER change the numbers or scale (if original says 200, keep 200)\n"
-            f"- NEVER invent achievements that don't exist in the original\n"
-            f"- DO translate domain language to fit the target role\n"
-            f"- Use strong ownership verbs: Architected, Engineered, Led, Built, Designed, Reduced, Increased\n"
-            f"- Naturally weave in these JD keywords where they fit: {', '.join(keywords[:10])}\n"
-            f"- Every bullet MUST end with a measurable outcome (%, count, time saved, cost reduced)\n"
+            f"- NEVER change the numbers or scale (if original says 55M, keep 55M)\n"
+            f"- NEVER invent achievements, roles, or domain experience that don't exist in the original\n"
+            f"- DO fully translate domain language — remove tech jargon, use the target field's vocabulary\n"
+            f"- Use strong ownership verbs: Led, Architected, Drove, Mobilised, Cultivated, Negotiated, Secured, Built\n"
+            f"- Naturally weave in these JD keywords where they fit: {', '.join(keywords[:20])}\n"
+            f"- Every bullet MUST show tangible impact (scale, reach, outcome, or stakeholder value)\n"
+            f"- NEVER add commentary or justification tails. Do NOT end bullets with phrases like "
+            f"'directly applicable to...', 'directly parallels...', 'directly mirroring...', "
+            f"'translates directly to...', or any explanation of relevance. "
+            f"The bullet must stand alone — let the achievement speak for itself.\n"
             f"- Return a JSON array of rewritten bullet strings only, no explanation\n\n"
             f"Bullets to rewrite:\n{json.dumps(bullets)}",
             max_tokens=1500,
-            quality=True,  # Pro model — directly impacts application quality
+            quality=True,
         )
         start, end = raw.find("["), raw.rfind("]") + 1
         if start == -1 or end == 0:
@@ -208,22 +231,34 @@ class TailorService:
         role: str,
         immutable_facts: str = "",
         experience: list[dict] | None = None,
+        jd: str = "",
+        positioning_brief: str = "",
     ) -> str:
         exp = experience if experience is not None else (profile.work_experience or [])
         years = getattr(profile, "years_of_experience", None)
-        years_phrase = f"{years} years of" if years else f"{len(exp)} roles of"
+        years_phrase = f"{years} years of" if years else f"{len(exp)} roles of" if exp else "relevant"
+
+        context_block = ""
+        if positioning_brief:
+            context_block += f"POSITIONING CONTEXT (use this to frame the summary):\n{positioning_brief}\n\n"
+        if jd:
+            context_block += f"JOB DESCRIPTION (first 2500 chars):\n{jd[:2500]}\n\n"
+
         return await self._call_haiku(
-            f"Write a 2-3 sentence professional summary for a {role} application.\n"
-            f"Candidate has {years_phrase} experience. "
-            f"Top skills: {', '.join((profile.skills or [])[:12])}.\n\n"
+            f"Write a punchy 2-sentence professional summary for a {role} application.\n"
+            f"Sentence 1: a sharp value proposition — who this person is and what they bring to this role.\n"
+            f"Sentence 2: the 1-2 most relevant strengths that make them a top contender for THIS specific role.\n\n"
+            f"{context_block}"
             f"{immutable_facts}\n\n"
             f"Rules:\n"
-            f"- Use exactly '{years_phrase}' — do NOT change, round up, or invent a different number\n"
-            f"- Include quantified achievements only if they appear in the profile data below\n"
+            f"- Be specific to THIS role — no generic filler phrases\n"
+            f"- Include quantified achievements only if they appear in the profile data\n"
             f"- Do NOT invent or fabricate any achievements, metrics, or time periods\n"
-            f"- Naturally include these JD keywords: {', '.join(keywords[:6])}\n"
+            f"- Naturally include these JD keywords: {', '.join(keywords[:12])}\n"
+            f"- Make every word earn its place — HMs spend 7 seconds on a resume\n"
             f"- Return plain text only, no markdown, no headers",
             max_tokens=200,
+            quality=True,
         )
 
     def _extract_bullets(self, experience: list[dict]) -> list[tuple[int, str]]:
@@ -252,6 +287,8 @@ class TailorService:
         summary: str,
         salary: str,
         resume_skills: list[str] | None = None,
+        positioning_skills: list[str] | None = None,
+        target_role: str = "",
     ) -> str:
         """Build the full resume HTML matching the exact design template."""
 
@@ -280,17 +317,21 @@ class TailorService:
             if linkedin_url:
                 company_links += f' | <a href="{esc(linkedin_url)}">LinkedIn</a>'
 
+            dates_suffix = f' &nbsp;|&nbsp; {dates_html}' if dates_html else ''
             exp_html += f"""
         <div class="job">
             <div class="job-header">
                 <span class="job-title">{esc(job.get('title', ''))}</span>
-                {dates_html}
             </div>
-            <div class="job-company">{company_name}{f" &mdash; {location}" if location else ""}{company_links}</div>
+            <div class="job-company">{company_name}{f" &mdash; {location}" if location else ""}{company_links}{dates_suffix}</div>
             <ul class="achievements">{bullets_html}</ul>
         </div>"""
 
         # --- Skills grid ---
+        # If positioning_skills were generated by the brief, use those (role-language aware).
+        # Otherwise fall back to JD-matched profile skills.
+        display_skills = (positioning_skills or resume_skills or (profile.skills or []))[:12]
+
         skill_cats = {
             "Languages": ["Python", "JavaScript", "TypeScript", "Java", "Go", "Kotlin", "Swift", "Dart", "SQL", "C++", "Rust", "Ruby", "PHP"],
             "Frontend": ["React", "Next.js", "Vue.js", "Angular", "Svelte", "Tailwind", "Redux", "HTML", "CSS"],
@@ -301,16 +342,24 @@ class TailorService:
             "Mobile": ["React Native", "Flutter", "SwiftUI", "Jetpack", "Firebase", "CoreData"],
             "Tools": ["Git", "Kafka", "Airflow", "Prometheus", "Grafana", "Agile", "Scrum", "TDD"],
         }
-        # Use only the JD-relevant skills selected by pick_resume_skills (max 20)
-        display_skills = resume_skills or (profile.skills or [])[:20]
         skills_html = ""
+        categorised: set[str] = set()
         for cat, markers in skill_cats.items():
             matched = [s for s in display_skills if any(m.lower() in s.lower() for m in markers)]
             if matched:
+                categorised.update(matched)
                 skills_html += f"""
             <div class="skill-category">
                 <span class="skill-label">{cat}: </span>
                 <span class="skill-items">{esc(", ".join(matched))}</span>
+            </div>"""
+        # Catch-all: anything not matched by a tech category renders as "Core Skills"
+        uncategorised = [s for s in display_skills if s not in categorised]
+        if uncategorised:
+            skills_html += f"""
+            <div class="skill-category">
+                <span class="skill-label">Core Skills: </span>
+                <span class="skill-items">{esc(", ".join(uncategorised))}</span>
             </div>"""
 
         # --- Education ---
@@ -381,12 +430,27 @@ class TailorService:
         # Tagline: role title split into ~3 keyword phrases joined with bullet
         # e.g. "Backend / API Engineer, Billing" → "Backend Engineer • API Engineer • Billing"
         import re as _re
-        raw_title = (experience[0].get("title", "") if experience else "") or ""
-        # Use top_competencies + role for tagline keywords (3 items)
-        tagline_parts = [esc(t) for t in top_competencies[:3]] if top_competencies else []
+        # Tagline: target role first, then 2 top competencies (short names only)
+        tagline_parts = []
+        role_label = target_role or (experience[0].get("title", "") if experience else "")
+        if role_label:
+            tagline_parts.append(esc(role_label))
+        for t in top_competencies:
+            if len(tagline_parts) >= 3:
+                break
+            # Skip anything that looks like a verbose description (contains parens or is too long)
+            if "(" not in t and len(t) <= 35:
+                tagline_parts.append(esc(t))
         if not tagline_parts:
-            tagline_parts = [esc(p.strip()) for p in _re.split(r'[,/|&]', raw_title) if p.strip()][:3]
+            tagline_parts = [esc(p.strip()) for p in _re.split(r'[,/|&]', role_label) if p.strip()][:3]
         tagline_html = " &bull; ".join(tagline_parts)
+
+        # Pre-compute to avoid backslash-in-f-string (SyntaxError on Python < 3.12)
+        certs_block = ('<div class="certs-list">' + certs_html + '</div>') if certs_html.strip() else ''
+        edu_section = (
+            '<section class="section"><h2 class="section-title">Education &amp; Credentials</h2>'
+            '<div class="edu-grid">' + edu_html + '</div>' + certs_block + '</section>'
+        ) if (edu_html.strip() or certs_html.strip()) else ''
 
         return f"""<!DOCTYPE html>
 <html lang="en">
@@ -422,17 +486,17 @@ a:hover {{ text-decoration:underline; }}
 .keywords strong {{ color:var(--primary); }}
 .job {{ margin-bottom:8px; }}
 .job:last-child {{ margin-bottom:0; }}
-.job-header {{ display:flex; justify-content:space-between; align-items:baseline; }}
+.job-header {{ margin-bottom:1px; }}
 .job-title {{ font-weight:600; font-size:9.5pt; color:var(--primary); }}
-.job-dates {{ font-size:8.5pt; color:var(--text-light); }}
+.job-dates {{ font-size:8.5pt; color:var(--text-light); font-weight:400; }}
 .job-dates-missing {{ font-size:7.5pt; color:#b91c1c; font-weight:600; }}
 .job-company {{ font-size:8.5pt; color:var(--text-light); margin-bottom:4px; }}
 .job-company a {{ color:var(--accent); }}
 .achievements {{ list-style:none; padding-left:0; }}
 .achievements li {{
-    display:flex; gap:5px; margin-bottom:2px; font-size:8.5pt; line-height:1.35;
+    position:relative; padding-left:10px; margin-bottom:2px; font-size:8.5pt; line-height:1.35;
 }}
-.achievements li::before {{ content:"\u2022"; color:var(--accent); font-size:9pt; flex-shrink:0; margin-top:0; }}
+.achievements li::before {{ content:"›"; position:absolute; left:0; color:var(--accent); font-size:9pt; }}
 .skills-grid {{ display:grid; grid-template-columns:1fr 1fr; gap:3px 18px; }}
 .skill-category {{ margin-bottom:2px; }}
 .skill-label {{ font-weight:600; font-size:8.5pt; color:var(--primary); }}
@@ -449,14 +513,16 @@ a:hover {{ text-decoration:underline; }}
 .project-title {{ font-weight:600; font-size:9pt; color:var(--primary); margin-bottom:1px; }}
 .project-title a {{ color:var(--primary); }}
 .project-desc {{
-    display:flex; gap:5px; font-size:8pt; color:var(--text-light); line-height:1.35;
+    font-size:8pt; color:var(--text-light); line-height:1.35;
+    position:relative; padding-left:10px;
 }}
-.project-desc::before {{ content:"\u2022"; color:var(--accent); flex-shrink:0; }}
+.project-desc::before {{ content:"›"; position:absolute; left:0; color:var(--accent); font-size:7pt; }}
 .tech {{ font-style:italic; }}
 .achievement-item {{
-    display:flex; gap:5px; font-size:8pt; line-height:1.35; margin-bottom:3px;
+    font-size:8pt; line-height:1.35; margin-bottom:2px;
+    position:relative; padding-left:10px;
 }}
-.achievement-item::before {{ content:"\u2022"; color:var(--accent); flex-shrink:0; }}
+.achievement-item::before {{ content:"›"; position:absolute; left:0; color:var(--accent); font-size:7pt; }}
 @media print {{
     body {{ -webkit-print-color-adjust:exact; print-color-adjust:exact; padding:0; }}
     a {{ color:var(--accent) !important; }}
@@ -476,21 +542,11 @@ a:hover {{ text-decoration:underline; }}
     <p class="keywords"><strong>Core Competencies:</strong> {competencies_str}</p>
 </section>
 
-<section class="section">
-    <h2 class="section-title">Professional Experience</h2>
-    {exp_html}
-</section>
+{f'<section class="section"><h2 class="section-title">Professional Experience</h2>{exp_html}</section>' if exp_html.strip() else ''}
 
-<section class="section">
-    <h2 class="section-title">Technical Skills</h2>
-    <div class="skills-grid">{skills_html}</div>
-</section>
+{f'<section class="section"><h2 class="section-title">Skills</h2><div class="skills-grid">{skills_html}</div></section>' if skills_html.strip() else ''}
 
-<section class="section">
-    <h2 class="section-title">Education &amp; Credentials</h2>
-    <div class="edu-grid">{edu_html}</div>
-    {f'<div class="certs-list">{certs_html}</div>' if certs_html else ''}
-</section>
+{edu_section}
 
 {f'<section class="section"><h2 class="section-title">Key Projects</h2>{proj_html}</section>' if proj_html else ''}
 
@@ -534,6 +590,7 @@ a:hover {{ text-decoration:underline; }}
                     "--run-all-compositor-stages-before-draw",
                     f"--print-to-pdf={str(output_path)}",
                     "--print-to-pdf-no-header",
+                    "--no-pdf-header-footer",
                     f"file:///{tmp_html.replace(chr(92), '/')}",
                 ],
                 check=True,
@@ -542,6 +599,74 @@ a:hover {{ text-decoration:underline; }}
             )
         finally:
             os.unlink(tmp_html)
+
+    async def _build_positioning_brief(
+        self,
+        profile,
+        experience: list[dict],
+        jd: str,
+        target_role: str,
+        target_company: str,
+    ) -> dict:
+        """
+        Produce a cross-domain positioning brief before writing any resume content.
+
+        Returns: { "narrative": str, "skills": list[str] }
+
+        The narrative is 2-3 sentences that explain WHY this person is credible for
+        this specific role — even if their background doesn't match on the surface.
+        The skills list contains 10-15 role-relevant skills honestly derivable from
+        the profile, phrased in the target domain's language.
+        """
+        exp_titles = "; ".join(
+            f"{j.get('title', '')} at {j.get('company', '')}" for j in experience[:5] if j.get("title")
+        )
+        raw_ctx = (getattr(profile, "raw_context", None) or "")[:3000]
+        profile_skills = ", ".join((profile.skills or [])[:20])
+        years = getattr(profile, "years_of_experience", None) or len(experience)
+
+        raw = await self._call_haiku(
+            f"You are a senior career strategist. Your job is to position a candidate as a top contender "
+            f"for a role, using ONLY what is genuinely true about them.\n\n"
+            f"TARGET ROLE: {target_role} at {target_company}\n\n"
+            f"CANDIDATE PROFILE:\n"
+            f"  Years of experience: {years}\n"
+            f"  Experience titles: {exp_titles or 'See raw context'}\n"
+            f"  Skills on profile: {profile_skills}\n"
+            f"  Raw context (CV/profile text):\n{raw_ctx}\n\n"
+            f"JOB DESCRIPTION:\n{jd[:3000]}\n\n"
+            f"TASK: Return a JSON object with two keys:\n"
+            f'  "narrative": 2-3 sentences. Identify the GENUINE credibility bridges between this '
+            f"person's background and this role. Be specific — name actual domain knowledge, tools, "
+            f"or experiences that transfer. Don't say 'passion for' or 'quick learner'. "
+            f"Find real hooks: deep technical knowledge of a domain they want to write about, "
+            f"measurable impact, leadership, or niche expertise the competition won't have.\n"
+            f'  "skills": array of 10-15 SHORT skill names. '
+            f"Each must be 1-4 words maximum — e.g. 'Ruby on Rails', 'PostgreSQL', 'M-Pesa API', "
+            f"'Agile/Scrum', 'React.js', 'AWS', 'Technical Leadership'. "
+            f"NO verbose descriptions, NO parenthetical expansions, NO sentences. "
+            f"Derive them honestly from the profile, named in the target industry's vocabulary.\n\n"
+            f"Rules:\n"
+            f"- NEVER invent experience, companies, degrees, or metrics not in the profile\n"
+            f"- Do translate domain language naturally (e.g. 'built payment APIs' → 'deep expertise "
+            f"in stablecoin/fintech infrastructure' for a crypto content role)\n"
+            f"- Return ONLY valid JSON, no explanation",
+            max_tokens=600,
+            quality=True,
+        )
+        # Parse JSON
+        start = raw.find("{")
+        end = raw.rfind("}") + 1
+        if start == -1 or end == 0:
+            return {"narrative": "", "skills": []}
+        try:
+            result = json.loads(raw[start:end])
+            return {
+                "narrative": str(result.get("narrative", "")),
+                "skills": list(result.get("skills", [])),
+            }
+        except (json.JSONDecodeError, ValueError):
+            return {"narrative": "", "skills": []}
 
     async def _extract_experience_from_raw_context(self, raw_context: str) -> list[dict]:
         """
@@ -621,22 +746,39 @@ a:hover {{ text-decoration:underline; }}
         bullet_pairs = self._extract_bullets(experience)
         bullets_only = [b for _, b in bullet_pairs]
 
-        keywords, = await asyncio.gather(self.extract_keywords(listing.description))
+        jd_full = (listing.description or "")
 
-        # Skill matching is now local (sentence-transformers) — no LLM calls
-        top_competencies = self.pick_top_competencies(listing.description, profile.skills or [])
-        resume_skills = self.pick_resume_skills(listing.description, profile.skills or [])
+        keywords, positioning = await asyncio.gather(
+            self.extract_keywords(jd_full),
+            self._build_positioning_brief(profile, experience, jd_full, title, company),
+        )
 
-        # JD summary for domain translation context (first 400 chars of description)
-        jd_summary = (listing.description or "")[:400]
+        # Use positioning skills if the brief produced them (role-language aware)
+        positioning_skills: list[str] = positioning.get("skills") or []
+        positioning_narrative: str = positioning.get("narrative") or ""
+
+        # top_competencies: use first 8 positioning skills if available (role-language aware),
+        # otherwise fall back to sentence-transformers match against profile skills
+        if positioning_skills:
+            top_competencies = positioning_skills[:8]
+        else:
+            top_competencies = self.pick_top_competencies(jd_full, profile.skills or [])
+
+        resume_skills = self.pick_resume_skills(jd_full, profile.skills or [])
 
         summary, salary, rewritten = await asyncio.gather(
-            self.generate_summary(profile, keywords, title, immutable_facts=immutable_facts, experience=experience),
+            self.generate_summary(
+                profile, keywords, title,
+                immutable_facts=immutable_facts,
+                experience=experience,
+                jd=jd_full,
+                positioning_brief=positioning_narrative,
+            ),
             self.infer_salary(profile.years_of_experience or len(experience), location, company),
             self.rewrite_bullets(
                 bullets_only[:20], keywords,
                 target_role=title, target_company=company,
-                jd_summary=jd_summary, immutable_facts=immutable_facts,
+                jd_summary=jd_full, immutable_facts=immutable_facts,
             ),
         )
 
@@ -648,7 +790,7 @@ a:hover {{ text-decoration:underline; }}
             f"Middle: highlight 2-3 specific achievements from their experience that directly match the role.\n"
             f"Closing: express enthusiasm and salary expectation of {salary}.\n"
             f"Candidate skills: {', '.join((profile.skills or [])[:10])}.\n"
-            f"JD keywords to address: {', '.join(keywords[:8])}.\n\n"
+            f"JD keywords to address: {', '.join(keywords[:15])}.\n\n"
             f"{immutable_facts}\n\n"
             f"End the letter with 'Sincerely,' on one line, then '{candidate_name}' on the next line. "
             f"Do NOT use placeholders like [Your Name] — use the actual name above.\n"
@@ -674,6 +816,8 @@ a:hover {{ text-decoration:underline; }}
             summary=summary,
             salary=salary,
             resume_skills=resume_skills,
+            positioning_skills=positioning_skills,
+            target_role=title,
         )
 
         import re
@@ -740,5 +884,26 @@ a:hover {{ text-decoration:underline; }}
             self.db.add(application)
 
         listing.status = "applying"
-        await self.db.commit()
+        try:
+            await self.db.commit()
+        except Exception as exc:
+            # Race condition: ensure_application already created the record between our
+            # initial SELECT and this commit — re-fetch and update instead of insert.
+            if "UniqueViolationError" in str(exc) or "uq_applications_listing_user" in str(exc):
+                await self.db.rollback()
+                race_result = await self.db.execute(
+                    select(Application).where(
+                        Application.job_listing_id == listing_id,
+                        Application.user_id == user_id,
+                    )
+                )
+                application = race_result.scalar_one()
+                application.tailored_resume_pdf_url = str(pdf_path)
+                application.cover_letter = cover_letter
+                application.form_answers = form_answers
+                application.status = "tailored"
+                listing.status = "applying"
+                await self.db.commit()
+            else:
+                raise
         return application
