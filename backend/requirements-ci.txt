@@ -1,0 +1,45 @@
+# Slim requirements for GitHub Actions CI.
+# Excludes heavy ML packages (mediapipe, sentence-transformers, faster-whisper,
+# spacy, resemblyzer, torch, etc.) that are not needed to run the unit/integration
+# test suite.  Keeps CI installs under ~2 minutes instead of 5–15 minutes.
+#
+# Version pins match requirements.txt to avoid drift.
+
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+sqlalchemy[asyncio]==2.0.30
+asyncpg==0.30.0
+psycopg2-binary==2.9.9
+alembic==1.13.1
+pydantic[email]>=2.9.0,<3
+pydantic-settings>=2.2.1
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.0.1
+redis[hiredis]==5.0.4
+celery[redis]==5.4.0
+httpx>=0.28.1,<1
+anthropic==0.28.0
+openai==1.30.0
+numpy
+cryptography==42.0.8
+python-multipart==0.0.9
+structlog==24.2.0
+slowapi==0.1.9
+reportlab==4.4.10
+pdfplumber==0.11.0
+python-docx==1.1.2
+neo4j==5.20.0
+python-jobspy==1.1.82
+caldav==1.3.9
+groq>=0.9.0
+google-genai==1.73.1
+pytest==8.2.0
+pytest-asyncio==0.23.6
+pytest-cov
+pytest-benchmark==4.0.0
+
+# Intentionally excluded (heavy ML / not needed for tests):
+#   mediapipe, sentence-transformers, faster-whisper, spacy, resemblyzer,
+#   torch, torchaudio, semble, keybert, scikit-learn, deepgram-sdk,
+#   crawlee[playwright], nodriver, edge-tts
