@@ -37,6 +37,7 @@ backend/screenshots/
 backend/resumes/
 backend/test_output/
 backend/test_*.py
+backend/=*
 
 # Test/audit output directories
 tailor_audit_output/
@@ -47,3 +48,13 @@ pipeline_test.log
 .claude/settings.local.json
 .superpowers/
 crash.log
+
+# Private internal docs — never publish
+docs/superpowers/
+.claude/
+
+# Personal scratch files
+cv.md
+article-digest.md
+debugg.txt
+test_extraction.py
