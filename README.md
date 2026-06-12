@@ -25,6 +25,13 @@ Developer Core is an open-source AI desktop app that runs entirely on your machi
 - Automated applications with campaign management
 - Cross-campaign duplicate detection
 
+**AI Screen Overlay** *(inspired by [Cluely](https://cluely.com))*
+- Real-time AI overlay that listens to your screen and microphone during live interviews
+- Surfaces relevant talking points, technical definitions, and context on the fly
+- Runs locally — nothing leaves your machine
+
+> **On cheating:** We don't condone it, and frankly it doesn't work. Interviewers notice when answers sound scripted, and a role you got by cheating puts you in a job you can't do. This feature exists for people who genuinely know their stuff but sometimes blank under pressure — it's a confidence aid, not a shortcut. Use it to remind yourself of things you already know.
+
 ---
 
 ## Prerequisites
