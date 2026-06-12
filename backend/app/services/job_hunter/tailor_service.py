@@ -119,6 +119,88 @@ class TailorService:
         except json.JSONDecodeError:
             return []
 
+    async def _tailor_all(
+        self,
+        profile,
+        experience: list[dict],
+        projects: list[dict],
+        jd: str,
+        target_role: str,
+        target_company: str,
+        immutable_facts: str,
+        bullets: list[str],
+    ) -> dict:
+        """
+        Single Pro model call that replaces all individual LLM steps:
+          - keyword extraction
+          - positioning brief (narrative + skills)
+          - professional summary
+          - bullet rewrites
+          - project description rewrites
+
+        Returns a dict with keys:
+          keywords, positioning_narrative, positioning_skills,
+          summary, rewritten_bullets, rewritten_projects
+        """
+        exp_titles = "; ".join(
+            f"{j.get('title','')} at {j.get('company','')}" for j in experience[:5] if j.get("title")
+        )
+        raw_ctx = (getattr(profile, "raw_context", None) or "")[:2500]
+        profile_skills = ", ".join((profile.skills or [])[:20])
+        years = getattr(profile, "years_of_experience", None) or len(experience)
+
+        bullets_json = json.dumps(bullets[:20])
+        projects_json = json.dumps([
+            {"name": p.get("name",""), "description": p.get("description",""), "tech_stack": p.get("tech_stack",[])}
+            for p in projects
+        ])
+
+        prompt = (
+            f"You are a senior career strategist. Complete all sections below for a resume tailoring job. "
+            f"Return a SINGLE valid JSON object with exactly these keys.\n\n"
+            f"TARGET ROLE: {target_role} at {target_company}\n\n"
+            f"CANDIDATE:\n"
+            f"  Years experience: {years}\n"
+            f"  Titles: {exp_titles}\n"
+            f"  Skills: {profile_skills}\n"
+            f"  Profile text: {raw_ctx}\n\n"
+            f"JOB DESCRIPTION:\n{jd[:4000]}\n\n"
+            f"{immutable_facts}\n\n"
+            f"BULLETS TO REWRITE:\n{bullets_json}\n\n"
+            f"PROJECTS TO REWRITE:\n{projects_json}\n\n"
+            f"OUTPUT FORMAT — return this exact JSON structure:\n"
+            f'{{\n'
+            f'  "keywords": ["array of 15-25 ATS keywords from the JD"],\n'
+            f'  "positioning_narrative": "2-3 sentences: genuine credibility hooks between this candidate and this role",\n'
+            f'  "positioning_skills": ["10-15 SHORT skill names 1-4 words each, in target role language"],\n'
+            f'  "summary": "2 sentences: punchy value proposition for THIS role. Sentence 1: who they are + what they bring. Sentence 2: top 1-2 strengths for this role.",\n'
+            f'  "rewritten_bullets": ["same length array as input bullets — rewritten for this role, domain-translated, strong verbs, no justification tails"],\n'
+            f'  "rewritten_projects": [{{"name": "...", "description": "1-2 sentences angled at this role — lead with the aspect the HM cares about"}}]\n'
+            f'}}\n\n'
+            f"RULES (apply to all sections):\n"
+            f"- NEVER invent achievements, companies, degrees, or metrics not in the profile\n"
+            f"- DO translate domain language to match the target role's vocabulary\n"
+            f"- Bullets: keep all numbers/scale, use strong verbs, NO 'directly applicable to...' tails\n"
+            f"- Skills: 1-4 words max each, no verbose descriptions\n"
+            f"- Summary: specific to this role, no generic filler, reference actual profile metrics\n"
+            f"- Projects: only re-angle what actually exists — never add fictional integrations\n"
+            f"- Return ONLY valid JSON, no markdown, no explanation"
+        )
+
+        raw = await self._call_haiku(prompt, max_tokens=3000, quality=True)
+
+        # Extract JSON — handle markdown code fences
+        import re as _re
+        raw = _re.sub(r"```(?:json)?", "", raw).strip()
+        start = raw.find("{")
+        end = raw.rfind("}") + 1
+        if start == -1 or end == 0:
+            return {}
+        try:
+            return json.loads(raw[start:end])
+        except (json.JSONDecodeError, ValueError):
+            return {}
+
     def pick_top_competencies(self, jd_text: str, skills: list[str]) -> list[str]:
         """
         Pick the 8 skills most relevant to this JD using local sentence-transformers.
@@ -289,6 +371,7 @@ class TailorService:
         resume_skills: list[str] | None = None,
         positioning_skills: list[str] | None = None,
         target_role: str = "",
+        projects: list[dict] | None = None,
     ) -> str:
         """Build the full resume HTML matching the exact design template."""
 
@@ -378,14 +461,19 @@ class TailorService:
             else:
                 edu_html += f'<div class="edu-item"><strong>{degree}{f" in {field}" if field else ""}</strong> &mdash; {inst_display}</div>'
 
-        # --- Projects ---
+        # --- Projects --- (max 2 to stay on page 1)
         proj_html = ""
-        for proj in (profile.projects or [])[:4]:
+        for proj in (projects or profile.projects or [])[:2]:
             name = esc(proj.get("name", ""))
-            desc = esc((proj.get("description", ""))[:200])
+            # Truncate at sentence boundary within 220 chars
+            raw_desc = (proj.get("description", "") or "")
+            if len(raw_desc) > 220:
+                cut = raw_desc[:220].rfind(". ")
+                raw_desc = raw_desc[:cut + 1] if cut > 80 else raw_desc[:220].rstrip() + "…"
+            desc = esc(raw_desc)
             tech = proj.get("tech_stack", [])
             if isinstance(tech, list):
-                tech_str = esc(", ".join(tech))
+                tech_str = esc(", ".join(tech[:5]))  # cap at 5 items
             else:
                 tech_str = esc(str(tech))
             link = proj.get("link", "")
@@ -668,6 +756,111 @@ a:hover {{ text-decoration:underline; }}
         except (json.JSONDecodeError, ValueError):
             return {"narrative": "", "skills": []}
 
+    async def _extract_projects_from_raw_context(self, raw_context: str) -> list[dict]:
+        """
+        Parse raw profile text into structured project entries.
+        Called when profile.projects is empty but raw_context exists.
+        """
+        if not raw_context or not raw_context.strip():
+            return []
+        raw = await self._call_haiku(
+            f"Extract personal/side projects from this candidate profile text. "
+            f"Return a JSON array where each item has: "
+            f'name (string), description (string — 1-2 sentences, concrete and specific), '
+            f'tech_stack (array of strings), link (string or null). '
+            f"Include ALL projects mentioned. "
+            f"Return ONLY valid JSON, no explanation.\n\n"
+            f"Profile text:\n{raw_context[:5000]}",
+            max_tokens=1000,
+        )
+        start, end = raw.find("["), raw.rfind("]") + 1
+        if start == -1 or end == 0:
+            return []
+        try:
+            result = json.loads(raw[start:end])
+            return result if isinstance(result, list) else []
+        except (json.JSONDecodeError, ValueError):
+            return []
+
+    async def rewrite_project_descriptions(
+        self,
+        projects: list[dict],
+        keywords: list[str],
+        target_role: str,
+        target_company: str,
+        jd: str,
+    ) -> list[dict]:
+        """
+        Rewrite each project description to highlight the angle most relevant to the JD.
+
+        Developer-Core applied to a fintech role → lead with the payment integrations,
+        financial workflows, and scale. Don't mention the interview simulator.
+        Same project applied to an AI role → lead with Claude API, emotion detection, ML pipeline.
+
+        Rules: never invent features that don't exist. Only re-angle what's actually there.
+        """
+        if not projects:
+            return projects
+
+        projects_json = json.dumps([
+            {"name": p.get("name", ""), "description": p.get("description", ""), "tech_stack": p.get("tech_stack", [])}
+            for p in projects
+        ])
+
+        raw = await self._call_haiku(
+            f"You are rewriting project descriptions on a resume for a specific job application.\n\n"
+            f"TARGET ROLE: {target_role} at {target_company}\n"
+            f"JD CONTEXT: {jd[:1500]}\n\n"
+            f"PROJECTS:\n{projects_json}\n\n"
+            f"TASK: For each project, rewrite the description (1-2 sentences max) to highlight "
+            f"the aspects most relevant to the target role. "
+            f"Focus on the angle the hiring manager cares about — if it's fintech, lead with "
+            f"payments/financial flows/scale. If it's AI, lead with ML/models/pipelines. "
+            f"If it's PM, lead with delivery/coordination/stakeholders.\n\n"
+            f"RULES:\n"
+            f"- NEVER invent features or integrations not present in the original description\n"
+            f"- Keep it to 1-2 tight sentences — no padding\n"
+            f"- Weave in these JD keywords naturally where they genuinely fit: {', '.join(keywords[:10])}\n"
+            f"- Return a JSON array with same length as input, each item has 'name' and 'description' only\n"
+            f"- No explanation, valid JSON only",
+            max_tokens=600,
+            quality=True,
+        )
+
+        start, end = raw.find("["), raw.rfind("]") + 1
+        if start == -1 or end == 0:
+            return projects
+        try:
+            rewritten = json.loads(raw[start:end])
+            result = []
+            for i, proj in enumerate(projects):
+                updated = dict(proj)
+                if i < len(rewritten) and rewritten[i].get("description"):
+                    updated["description"] = rewritten[i]["description"]
+                result.append(updated)
+            return result
+        except (json.JSONDecodeError, ValueError):
+            return projects
+
+    def _pick_relevant_projects(self, projects: list[dict], jd: str, top_n: int = 3) -> list[dict]:
+        """Pick the most JD-relevant projects using sentence-transformers."""
+        if not projects:
+            return []
+        descriptions = [
+            f"{p.get('name', '')} {p.get('description', '')} {' '.join(p.get('tech_stack', []))}"
+            for p in projects
+        ]
+        ranked = matcher.match_skills(jd, descriptions, top_n=top_n)
+        # match_skills returns strings — map back to project dicts by index
+        picked = []
+        for desc in ranked:
+            for i, d in enumerate(descriptions):
+                if d == desc and projects[i] not in picked:
+                    picked.append(projects[i])
+                    break
+        # If matcher failed, fall back to first top_n
+        return picked if picked else projects[:top_n]
+
     async def _extract_experience_from_raw_context(self, raw_context: str) -> list[dict]:
         """
         Parse raw profile text into structured work experience entries.
@@ -748,17 +941,41 @@ a:hover {{ text-decoration:underline; }}
 
         jd_full = (listing.description or "")
 
-        keywords, positioning = await asyncio.gather(
-            self.extract_keywords(jd_full),
-            self._build_positioning_brief(profile, experience, jd_full, title, company),
+        # Extract projects from raw_context if profile.projects is empty
+        profile_projects = profile.projects or []
+        if not profile_projects and profile.raw_context:
+            profile_projects = await self._extract_projects_from_raw_context(profile.raw_context)
+
+        relevant_projects = self._pick_relevant_projects(profile_projects, jd_full, top_n=2)
+
+        # ── Single LLM call — replaces all individual keyword/summary/bullet/project calls ──
+        result = await self._tailor_all(
+            profile=profile,
+            experience=experience,
+            projects=relevant_projects,
+            jd=jd_full,
+            target_role=title,
+            target_company=company,
+            immutable_facts=immutable_facts,
+            bullets=bullets_only,
         )
 
-        # Use positioning skills if the brief produced them (role-language aware)
-        positioning_skills: list[str] = positioning.get("skills") or []
-        positioning_narrative: str = positioning.get("narrative") or ""
+        keywords: list[str]          = result.get("keywords") or []
+        positioning_narrative: str   = result.get("positioning_narrative") or ""
+        positioning_skills: list[str] = result.get("positioning_skills") or []
+        summary: str                 = result.get("summary") or ""
+        rewritten: list[str]         = result.get("rewritten_bullets") or bullets_only
+        rewritten_projects_raw       = result.get("rewritten_projects") or []
 
-        # top_competencies: use first 8 positioning skills if available (role-language aware),
-        # otherwise fall back to sentence-transformers match against profile skills
+        # Merge rewritten descriptions back into project dicts
+        relevant_projects = [
+            {**proj, "description": rewritten_projects_raw[i]["description"]}
+            if i < len(rewritten_projects_raw) and rewritten_projects_raw[i].get("description")
+            else proj
+            for i, proj in enumerate(relevant_projects)
+        ]
+
+        # top_competencies: use positioning skills (role-language aware) or fall back to local matcher
         if positioning_skills:
             top_competencies = positioning_skills[:8]
         else:
@@ -766,38 +983,8 @@ a:hover {{ text-decoration:underline; }}
 
         resume_skills = self.pick_resume_skills(jd_full, profile.skills or [])
 
-        summary, salary, rewritten = await asyncio.gather(
-            self.generate_summary(
-                profile, keywords, title,
-                immutable_facts=immutable_facts,
-                experience=experience,
-                jd=jd_full,
-                positioning_brief=positioning_narrative,
-            ),
-            self.infer_salary(profile.years_of_experience or len(experience), location, company),
-            self.rewrite_bullets(
-                bullets_only[:20], keywords,
-                target_role=title, target_company=company,
-                jd_summary=jd_full, immutable_facts=immutable_facts,
-            ),
-        )
-
-        candidate_name = (profile.full_name or "").strip()
-        cover_letter = await self._call_haiku(
-            f"Write a concise 3-paragraph cover letter for {title} at {company}.\n"
-            f"The candidate's name is {candidate_name}.\n"
-            f"Opening: show genuine interest in the company and role.\n"
-            f"Middle: highlight 2-3 specific achievements from their experience that directly match the role.\n"
-            f"Closing: express enthusiasm and salary expectation of {salary}.\n"
-            f"Candidate skills: {', '.join((profile.skills or [])[:10])}.\n"
-            f"JD keywords to address: {', '.join(keywords[:15])}.\n\n"
-            f"{immutable_facts}\n\n"
-            f"End the letter with 'Sincerely,' on one line, then '{candidate_name}' on the next line. "
-            f"Do NOT use placeholders like [Your Name] — use the actual name above.\n"
-            f"Return plain text only, no markdown.",
-            max_tokens=500,
-            quality=True,  # Pro model — cover letter is what humans read first
-        )
+        # Salary — small fast Flash call, runs after the big call
+        salary = await self.infer_salary(profile.years_of_experience or len(experience), location, company)
 
         # --- Map rewritten bullets back to jobs ---
         rewritten_by_job: dict[int, list[str]] = {}
@@ -806,7 +993,6 @@ a:hover {{ text-decoration:underline; }}
                 rewritten[idx] if idx < len(rewritten) else bullets_only[idx]
             )
 
-        # --- Build HTML and generate PDF ---
         html = self._build_html(
             profile=profile,
             experience=experience,
@@ -818,6 +1004,7 @@ a:hover {{ text-decoration:underline; }}
             resume_skills=resume_skills,
             positioning_skills=positioning_skills,
             target_role=title,
+            projects=relevant_projects,
         )
 
         import re
@@ -866,7 +1053,6 @@ a:hover {{ text-decoration:underline; }}
         if existing:
             # Update the pre-created pending record
             existing.tailored_resume_pdf_url = str(pdf_path)
-            existing.cover_letter = cover_letter
             existing.form_answers = form_answers
             existing.status = "tailored"
             application = existing
@@ -877,7 +1063,6 @@ a:hover {{ text-decoration:underline; }}
                 job_listing_id=listing.id,
                 user_id=user_id,
                 tailored_resume_pdf_url=str(pdf_path),
-                cover_letter=cover_letter,
                 form_answers=form_answers,
                 status="tailored",
             )
