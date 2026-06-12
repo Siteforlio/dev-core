@@ -367,7 +367,6 @@ class TailorService:
         keywords: list[str],
         top_competencies: list[str],
         summary: str,
-        salary: str,
         resume_skills: list[str] | None = None,
         positioning_skills: list[str] | None = None,
         target_role: str = "",
@@ -983,9 +982,6 @@ a:hover {{ text-decoration:underline; }}
 
         resume_skills = self.pick_resume_skills(jd_full, profile.skills or [])
 
-        # Salary — small fast Flash call, runs after the big call
-        salary = await self.infer_salary(profile.years_of_experience or len(experience), location, company)
-
         # --- Map rewritten bullets back to jobs ---
         rewritten_by_job: dict[int, list[str]] = {}
         for idx, (job_idx, _) in enumerate(bullet_pairs[:20]):
@@ -1000,7 +996,6 @@ a:hover {{ text-decoration:underline; }}
             keywords=keywords,
             top_competencies=top_competencies,
             summary=summary,
-            salary=salary,
             resume_skills=resume_skills,
             positioning_skills=positioning_skills,
             target_role=title,
@@ -1044,7 +1039,6 @@ a:hover {{ text-decoration:underline; }}
         await asyncio.to_thread(self._generate_pdf_sync, html, pdf_path)
 
         form_answers = {
-            "salary": salary,
             "summary": summary,
             "rewritten_bullets": rewritten,
             "top_competencies": top_competencies,
