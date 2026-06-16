@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import './SimulationBuilder.css'
-import { useAuthStore } from '../../store/authStore'
 import { useSimulationStore } from '../../store/simulationStore'
+import { apiFetch } from '../../lib/apiFetch'
 
 // ============================================================
 // TYPES
@@ -807,7 +807,6 @@ function stateWord(phase: string, level: number): string {
 }
 
 export default function SimulationBuilder({ onLaunch }: Props) {
-  const token = useAuthStore((s) => s.accessToken)
   const setSession = useSimulationStore((s) => s.setSession)
 
   const [text, setText] = useState('')
@@ -818,6 +817,7 @@ export default function SimulationBuilder({ onLaunch }: Props) {
   const [burst, setBurst] = useState(0)
   const [stats, setStats] = useState<BrainStats>({ nodes:0, active:0, edges:0, pulses:0 })
   const [showLaunch, setShowLaunch] = useState(false)
+  const [launching, setLaunching] = useState(false)
 
   // Chat state
   const [messages, setMessages] = useState<ChatMsg[]>([{
@@ -941,10 +941,10 @@ export default function SimulationBuilder({ onLaunch }: Props) {
 
   const handleConfirmLaunch = async () => {
     setShowLaunch(false)
+    setLaunching(true)
     try {
-      const res = await fetch('/api/v1/sim-sessions?token=' + encodeURIComponent(token ?? ''), {
+      const res = await apiFetch('/api/v1/sim-sessions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ brief: u, attachments }),
       })
       const json = await res.json()
@@ -1143,6 +1143,32 @@ export default function SimulationBuilder({ onLaunch }: Props) {
 
       {showLaunch && (
         <LaunchOverlay u={u} onClose={() => setShowLaunch(false)} onConfirm={handleConfirmLaunch} />
+      )}
+
+      {launching && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 9999,
+          background: '#05090f',
+          display: 'flex', flexDirection: 'column',
+          alignItems: 'center', justifyContent: 'center', gap: 24,
+          fontFamily: "'DM Mono', monospace",
+        }}>
+          <div style={{
+            width: 52, height: 52, borderRadius: '50%',
+            border: '2px solid rgba(34,211,238,0.12)',
+            borderTopColor: '#22d3ee',
+            animation: 'spin 1s linear infinite',
+          }} />
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ fontSize: '0.82rem', color: '#94a3b8', letterSpacing: '0.06em', marginBottom: 6 }}>
+              Setting up your session…
+            </div>
+            <div style={{ fontSize: '0.62rem', color: '#334155', letterSpacing: '0.04em' }}>
+              Briefing the interviewer
+            </div>
+          </div>
+          <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
+        </div>
       )}
     </div>
   )

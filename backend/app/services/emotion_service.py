@@ -141,7 +141,10 @@ class EmotionService:
             image = self._decode_frame(frame_b64)
             if image is None:
                 return None
-            return self._run_facemesh(image)
+            try:
+                return self._run_facemesh(image)
+            except Exception:
+                return None
 
         result = await loop.run_in_executor(None, _process)
 

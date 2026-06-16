@@ -151,8 +151,13 @@ class SimulationEngine:
         content: str,
         modality: str,
         time_offset_seconds: int,
+        cached_turns: list[dict] | None = None,
     ) -> dict:
-        """Process one user turn. Returns AI response dict."""
+        """Process one user turn. Returns AI response dict.
+
+        cached_turns: if provided, used directly as conversation history instead
+        of querying the DB — avoids O(n) DB reads as the session grows.
+        """
         result = await self._db.execute(
             select(SimulationSession).where(SimulationSession.id == session_id)
         )
@@ -171,17 +176,21 @@ class SimulationEngine:
             await self._db.commit()
             return {"cutoff": True, "response": "[HARD STOP]", "session_complete": True}
 
-        # Fetch existing turns
-        turns_result = await self._db.execute(
-            select(SimulationTurn)
-            .where(SimulationTurn.session_id == session_id)
-            .order_by(SimulationTurn.seq)
-        )
-        turns = [
-            {"speaker": t.speaker, "content": t.content, "time_offset_seconds": t.time_offset_seconds}
-            for t in turns_result.scalars().all()
-        ]
-        seq = len(turns)
+        if cached_turns is not None:
+            turns = cached_turns
+            seq = len(turns)
+        else:
+            # Fallback: query DB (e.g. after WS reconnect)
+            turns_result = await self._db.execute(
+                select(SimulationTurn)
+                .where(SimulationTurn.session_id == session_id)
+                .order_by(SimulationTurn.seq)
+            )
+            turns = [
+                {"speaker": t.speaker, "content": t.content, "time_offset_seconds": t.time_offset_seconds}
+                for t in turns_result.scalars().all()
+            ]
+            seq = len(turns)
 
         # Save user turn
         user_turn = SimulationTurn(

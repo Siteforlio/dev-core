@@ -1,6 +1,6 @@
 // frontend/src/components/simulation/SimulationDebrief.tsx
 import { useSimulationStore } from '../../store/simulationStore'
-import { useAuthStore } from '../../store/authStore'
+import { apiFetch } from '../../lib/apiFetch'
 
 interface Props {
   debrief: {
@@ -42,13 +42,16 @@ function ScoreBar({ label, score }: { label: string; score: number }) {
 
 export default function SimulationDebrief({ debrief, onDismiss }: Props) {
   const { activeSimSessionId } = useSimulationStore()
-  const token = useAuthStore((s) => s.accessToken)
 
-  const downloadReport = () => {
-    window.open(
-      `/api/v1/sim-sessions/${activeSimSessionId}/report?token=${encodeURIComponent(token ?? '')}`,
-      '_blank'
-    )
+  const downloadReport = async () => {
+    const res = await apiFetch(`/api/v1/sim-sessions/${activeSimSessionId}/report`)
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `sim-report-${activeSimSessionId?.slice(0, 8) ?? 'report'}.pdf`
+    a.click()
+    URL.revokeObjectURL(url)
   }
 
   const hireColor = HIRE_COLORS[debrief.hire_signal] ?? '#94a3b8'

@@ -12,9 +12,10 @@ from app.core.database import get_db, AsyncSessionLocal
 from app.core.security import decode_token
 from app.core.exceptions import InvalidCredentialsError
 from app.core import ws_registry
-from app.models.pg.simulation import SimulationSession, SimulationDebrief
+from app.models.pg.simulation import SimulationSession, SimulationDebrief, SimulationTurn
 from app.schemas.simulation import CreateSimSessionRequest
 from app.services.simulation_engine import SimulationEngine, utcnow
+from app.services.sim_llm_orchestrator import SimLLMOrchestrator
 from app.services.sim_debrief_service import generate_pdf
 from app.services.speech_service import SpeechService
 
@@ -259,6 +260,91 @@ async def sim_session_ws(
 
     timer_task = asyncio.create_task(timer_loop())
 
+    # In-memory turn cache — avoids DB read on every message as session grows
+    turns_cache: list[dict] = []
+
+    # Generate and send AI opening message, persist to DB so it survives reconnect
+    try:
+        _llm = SimLLMOrchestrator()
+        await websocket.send_json({"type": "thinking", "active": True})
+        opening = await _llm.opening_message(
+            brief=session.brief or {},
+            persona_note=session.persona or "",
+        )
+        opening_turn = SimulationTurn(
+            session_id=session_id,
+            seq=0,
+            speaker="ai",
+            modality="text",
+            content=opening,
+            time_offset_seconds=0,
+        )
+        db.add(opening_turn)
+        await db.commit()
+        turns_cache.append({"speaker": "ai", "content": opening, "time_offset_seconds": 0})
+        await websocket.send_json({"type": "thinking", "active": False})
+        await websocket.send_json({
+            "type": "transcript", "speaker": "ai",
+            "text": opening, "seq": 0, "final": True,
+        })
+        try:
+            async for chunk in speech.synthesize_stream(opening):
+                await websocket.send_json({
+                    "type": "ai_audio",
+                    "data": base64.b64encode(chunk).decode(),
+                })
+        except Exception as e:
+            logger.warning("[sim_ws] TTS error on opening: %s", e)
+    except Exception as e:
+        logger.warning("[sim_ws] Failed to generate opening message: %s", e)
+        await websocket.send_json({"type": "thinking", "active": False})
+
+    # Audio buffer for voice turns
+    audio_buf = bytearray()
+
+    async def handle_user_turn(content: str, modality: str = "text") -> tuple[bool, bool]:
+        """Process a user turn, get AI response, stream TTS. Returns (session_complete, cutoff)."""
+        offset = int((utcnow() - session.started_at).total_seconds())
+        turns_cache.append({"speaker": "user", "content": content, "time_offset_seconds": offset})
+        await websocket.send_json({
+            "type": "transcript", "speaker": "user",
+            "text": content, "seq": 0, "final": True,
+        })
+        await websocket.send_json({"type": "thinking", "active": True})
+
+        turn_result = await engine.submit_turn(
+            session_id=session_id,
+            content=content,
+            modality=modality,
+            time_offset_seconds=offset,
+            cached_turns=turns_cache[:-1],
+        )
+
+        for te in turn_result.get("tool_events", []):
+            await websocket.send_json({"type": "tool_event", **te})
+
+        ai_text = turn_result.get("response", "")
+        turns_cache.append({
+            "speaker": "ai", "content": ai_text,
+            "time_offset_seconds": int((utcnow() - session.started_at).total_seconds()),
+        })
+        await websocket.send_json({"type": "thinking", "active": False})
+        await websocket.send_json({
+            "type": "transcript", "speaker": "ai",
+            "text": ai_text, "seq": 1, "final": True,
+        })
+
+        try:
+            async for chunk in speech.synthesize_stream(ai_text):
+                await websocket.send_json({
+                    "type": "ai_audio",
+                    "data": base64.b64encode(chunk).decode(),
+                })
+        except Exception as e:
+            logger.warning("[sim_ws] TTS error: %s", e)
+
+        return bool(turn_result.get("session_complete")), bool(turn_result.get("cutoff"))
+
     try:
         while True:
             msg = await websocket.receive_json()
@@ -271,44 +357,39 @@ async def sim_session_ws(
                 content = msg.get("content", "").strip()
                 if not content:
                     continue
-                offset = msg.get("elapsed_seconds", 0)
-
-                await websocket.send_json({
-                    "type": "transcript", "speaker": "user",
-                    "text": content, "seq": 0, "final": True,
-                })
-
-                turn_result = await engine.submit_turn(
-                    session_id=session_id,
-                    content=content,
-                    modality="text",
-                    time_offset_seconds=offset,
-                )
-
-                for te in turn_result.get("tool_events", []):
-                    await websocket.send_json({"type": "tool_event", **te})
-
-                ai_text = turn_result.get("response", "")
-                await websocket.send_json({
-                    "type": "transcript", "speaker": "ai",
-                    "text": ai_text, "seq": 1, "final": True,
-                })
-
-                # Stream TTS audio chunks
-                try:
-                    async for chunk in speech.synthesize_stream(ai_text):
-                        await websocket.send_json({
-                            "type": "ai_audio",
-                            "data": base64.b64encode(chunk).decode(),
-                        })
-                except Exception as e:
-                    logger.warning("[sim_ws] TTS error: %s", e)
-
-                if turn_result.get("session_complete") or turn_result.get("cutoff"):
+                done, cutoff = await handle_user_turn(content, modality="text")
+                if done or cutoff:
                     timer_task.cancel()
                     await websocket.send_json({
                         "type": "session_end",
-                        "reason": "time_expired" if turn_result.get("cutoff") else "ai_ended",
+                        "reason": "time_expired" if cutoff else "ai_ended",
+                    })
+                    break
+
+            elif msg_type == "audio_chunk":
+                # Accumulate raw audio bytes from the browser MediaRecorder
+                raw = base64.b64decode(msg.get("data", ""))
+                audio_buf.extend(raw)
+
+            elif msg_type == "audio_flush":
+                # User stopped speaking — transcribe accumulated buffer
+                if not audio_buf:
+                    continue
+                buf_copy = bytes(audio_buf)
+                audio_buf.clear()
+                try:
+                    transcript = await speech.transcribe(buf_copy)
+                except Exception as e:
+                    logger.warning("[sim_ws] Transcription error: %s", e)
+                    transcript = ""
+                if not transcript:
+                    continue
+                done, cutoff = await handle_user_turn(transcript, modality="voice")
+                if done or cutoff:
+                    timer_task.cancel()
+                    await websocket.send_json({
+                        "type": "session_end",
+                        "reason": "time_expired" if cutoff else "ai_ended",
                     })
                     break
 

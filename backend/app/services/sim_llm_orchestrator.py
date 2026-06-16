@@ -106,6 +106,23 @@ class SimLLMOrchestrator:
         )
         return await self._call(prompt)
 
+    async def opening_message(self, brief: dict, persona_note: str) -> str:
+        """Generate the AI interviewer's opening line to kick off the simulation."""
+        scenario = self._get_field(brief, "Scenario")
+        format_field = self._get_field(brief, "Format")
+        role_playing = self._get_field(brief, "I'll play")
+        prompt = (
+            f"You are playing this character:\n{persona_note}\n\n"
+            f"Scenario: {scenario}\n"
+            f"Format: {format_field}\n"
+            f"Your role: {role_playing}\n\n"
+            "Open the simulation with a single in-character statement that sets the scene "
+            "and immediately gives the candidate something to respond to. "
+            "Do NOT introduce yourself at length — get right into it. "
+            "Keep it under 4 sentences. No meta-commentary."
+        )
+        return await self._call(prompt)
+
     async def respond(
         self,
         brief: dict,
