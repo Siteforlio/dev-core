@@ -175,12 +175,16 @@ class TailorService:
             f'  "positioning_skills": ["10-15 SHORT skill names 1-4 words each, in target role language"],\n'
             f'  "summary": "2 sentences: punchy value proposition for THIS role. Sentence 1: who they are + what they bring. Sentence 2: top 1-2 strengths for this role.",\n'
             f'  "rewritten_bullets": ["same length array as input bullets — rewritten for this role, domain-translated, strong verbs, no justification tails"],\n'
-            f'  "rewritten_projects": [{{"name": "...", "description": "1-2 sentences angled at this role — lead with the aspect the HM cares about"}}]\n'
+            f'  "rewritten_projects": [{{"name": "...", "description": "EXACTLY 1 sentence max 150 chars — lead with the most relevant aspect for this role"}}]\n'
             f'}}\n\n'
             f"RULES (apply to all sections):\n"
             f"- NEVER invent achievements, companies, degrees, or metrics not in the profile\n"
             f"- DO translate domain language to match the target role's vocabulary\n"
-            f"- Bullets: keep all numbers/scale, use strong verbs, NO 'directly applicable to...' tails\n"
+            f"- Bullets: keep all numbers/scale, use strong verbs\n"
+            f"- CRITICAL — bullets must NOT contain any of these patterns (remove them entirely):\n"
+            f"  'akin to', 'mirroring', 'directly applicable', 'directly parallels', 'translates to',\n"
+            f"  'similar to', 'analogous to', 'just as', 'much like', 'equivalent to'\n"
+            f"  Each bullet stands alone — never explain its relevance to the role\n"
             f"- Skills: 1-4 words max each, no verbose descriptions\n"
             f"- Summary: specific to this role, no generic filler, reference actual profile metrics\n"
             f"- Projects: only re-angle what actually exists — never add fictional integrations\n"
@@ -424,10 +428,21 @@ class TailorService:
             "Mobile": ["React Native", "Flutter", "SwiftUI", "Jetpack", "Firebase", "CoreData"],
             "Tools": ["Git", "Kafka", "Airflow", "Prometheus", "Grafana", "Agile", "Scrum", "TDD"],
         }
+        import re as _re
+        def _skill_matches(skill: str, markers: list[str]) -> bool:
+            # Word-boundary match — "Go" must not match "governance", "governance", etc.
+            sl = skill.lower()
+            for m in markers:
+                ml = m.lower()
+                # Use word boundary: marker must appear as a whole word or exact token
+                if _re.search(r'(?<![a-z])' + _re.escape(ml) + r'(?![a-z])', sl):
+                    return True
+            return False
+
         skills_html = ""
         categorised: set[str] = set()
         for cat, markers in skill_cats.items():
-            matched = [s for s in display_skills if any(m.lower() in s.lower() for m in markers)]
+            matched = [s for s in display_skills if _skill_matches(s, markers)]
             if matched:
                 categorised.update(matched)
                 skills_html += f"""
@@ -464,11 +479,13 @@ class TailorService:
         proj_html = ""
         for proj in (projects or profile.projects or [])[:2]:
             name = esc(proj.get("name", ""))
-            # Truncate at sentence boundary within 220 chars
+            # Keep first sentence only, hard cap at 160 chars
             raw_desc = (proj.get("description", "") or "")
-            if len(raw_desc) > 220:
-                cut = raw_desc[:220].rfind(". ")
-                raw_desc = raw_desc[:cut + 1] if cut > 80 else raw_desc[:220].rstrip() + "…"
+            dot = raw_desc.find(". ")
+            if dot != -1 and dot < 160:
+                raw_desc = raw_desc[:dot + 1]
+            elif len(raw_desc) > 160:
+                raw_desc = raw_desc[:160].rstrip() + "…"
             desc = esc(raw_desc)
             tech = proj.get("tech_stack", [])
             if isinstance(tech, list):
