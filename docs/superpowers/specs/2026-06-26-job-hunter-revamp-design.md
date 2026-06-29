@@ -273,6 +273,7 @@ Every tool call is rendered in the chat as: **bold action** on one line, *italic
 | `get_interview_prep` | **Loading interview context** | Calls `bridge_service.get_interview_context()` | Existing service method |
 | `update_campaign` | **Updating campaign** | PATCH `status` via `campaign_service.set_status()` (existing). For toggle fields (`email_enabled`, `caldav_enabled`, `linkedin_enabled`): a new `campaign_service.set_toggles(campaign_id, toggles: dict)` method is required — it does a simple column update on `JobHunterCampaign` via the async DB session, matching the pattern of the existing `PATCH /{id}/toggles` route handler. The tool payload: `{ field: "status" \| "email_enabled" \| "caldav_enabled" \| "linkedin_enabled", value: ... }` | `campaign_service.set_status()` (existing) + `campaign_service.set_toggles()` (new, simple column patch) |
 | `update_application_status` | **Updating application** | PATCH `application.status` | Existing `PATCH /applications/{aid}/status` |
+| `save_career_plan` | **Saving career plan** | Writes `plan` (JSONB) to `campaign_profile.career_plan`, sets `campaign.creation_method='ai'`. Used by legacy CTA flow (Section 6) when AI generates a retroactive plan. Payload: `{ campaign_id, plan: CareerPlan }` | New method `campaign_profile_service.save_career_plan(campaign_id, plan)` — simple JSONB column update + `campaign_service.set_creation_method(campaign_id, 'ai')` |
 
 All tool calls are non-blocking — the AI dispatches and continues the conversation. Results surface via the existing WebSocket activity feed which the AI references on subsequent turns.
 
@@ -400,6 +401,8 @@ CREATE INDEX idx_chat_summaries_campaign ON chat_session_summaries(campaign_id, 
 
 **Soft-delete note:** `campaign_id` on `chat_session_summaries` uses `ON DELETE SET NULL` (hard FK). Since campaigns use soft deletes (`deleted_at`), all queries joining to `job_hunter_campaigns` must include `AND job_hunter_campaigns.deleted_at IS NULL` or join via the existing `campaign_service` which already applies this filter.
 
+**`campaign_id` population rule:** The `campaign_id` field on a session summary is set to the `campaign_id` that was most recently passed in a `/chat/message` request during that session (i.e., the campaign the user was last actively discussing). If no `campaign_id` was passed in any message during the session, `campaign_id` is `NULL`. This is resolved at summarization time from the session's message history in Redis.
+
 ---
 
 ## 9. New API Surface
@@ -413,11 +416,11 @@ All paths use the existing base `/api/v1/job-hunter/`. All existing endpoints re
 | POST | `/campaigns/create-session/{session_id}/message` | Send user message into creation stream |
 | POST | `/campaigns/create-session/{session_id}/upload` | Upload file during creation, return `{ file_id }` |
 | DELETE | `/campaigns/create-session/{session_id}` | Cancel creation (ESC) |
-| POST | `/campaigns/market-probe` | Internal: lightweight market data (cached, rate-limited) |
+| POST | `/campaigns/market-probe` | **Server-to-server only** — called by AI backend, not by frontend. No user JWT required; requires internal service header `X-Internal-Token`. Not accessible from the Electron renderer. |
 | POST | `/chat/session` | Start universal chat session, return `{ session_id }` |
 | DELETE | `/chat/session/{session_id}` | End session, trigger summarization |
 | POST | `/chat/message` | Send message to universal AI chat (SSE response, `?session_id=`) |
-| GET | `/chat/history` | Current session history from Redis (`?session_id=`) |
+| GET | `/chat/history` | Current session history from Redis (`?session_id=`). Response: `{ messages: Array<{ role: 'user'\|'assistant', content: string, tool_calls?: ToolCall[], timestamp: number }> }` ordered oldest-first. Tool calls embedded inline on the assistant message that produced them. No pagination — capped at 25 turns by the sliding window. |
 | GET | `/dashboard/summary` | All-campaigns aggregated `CampaignSummary` (all 7 fields) |
 | GET | `/campaigns/{id}/brief` | Campaign brief card data (plan + summary + settings) |
 
@@ -520,7 +523,7 @@ No new infrastructure. Reuses existing patterns:
 | Jobs list load (500 applications, all campaigns) | < 200ms | Single indexed LEFT JOIN query |
 | Market probe (cached) | < 10ms | Redis read |
 | Market probe (uncached, Celery inline) | < 10s | JobSpy via probe queue, streamed progress shown |
-| Session summarization (on close) | < 3s | Synchronous before-quit, DeepSeek Flash < 500 tokens |
+| Session summarization (on close) | < 2.5s | Hard ceiling enforced by 2500ms before-quit timeout; DeepSeek Flash < 500 tokens |
 
 ---
 
