@@ -349,6 +349,7 @@ class ScraperService:
             sub_category=job.get("sub_category"),
             url_hash=url_hash,
             status="pending" if score != "SKIP" else "skipped",
+            posted_at=job.get("posted_at"),
         )
         self.db.add(listing)
         try:
@@ -412,6 +413,19 @@ class ScraperService:
             if dedup_key in seen_hashes:
                 continue
             seen_hashes.add(dedup_key)
+            # Parse date_posted — JobSpy returns a date or datetime object
+            raw_date = row.get("date_posted")
+            posted_at = None
+            if raw_date is not None:
+                try:
+                    from datetime import date as _date, datetime as _datetime, timezone as _tz
+                    if isinstance(raw_date, _datetime):
+                        posted_at = raw_date.replace(tzinfo=_tz.utc) if raw_date.tzinfo is None else raw_date
+                    elif isinstance(raw_date, _date):
+                        posted_at = _datetime(raw_date.year, raw_date.month, raw_date.day, tzinfo=_tz.utc)
+                except Exception:
+                    posted_at = None
+
             jobs.append({
                 "source": str(row.get("site") or "jobspy"),
                 "title": str(row.get("title") or ""),
@@ -422,6 +436,7 @@ class ScraperService:
                 "url": str(row.get("job_url") or ""),
                 "apply_url": apply_url,
                 "description": str(row.get("description") or ""),
+                "posted_at": posted_at,
             })
         return jobs
 

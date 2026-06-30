@@ -90,6 +90,7 @@ class DashboardService:
                 "id": listing.id,
                 "application_id": app.id if app else None,
                 "status": app.status if app else listing.status,
+                "posted_at": listing.posted_at.isoformat() if listing.posted_at else None,
                 "discovered_at": listing.discovered_at.isoformat(),
                 "applied_at": app.applied_at.isoformat() if app else None,
                 "company": listing.company,

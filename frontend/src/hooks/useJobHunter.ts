@@ -228,6 +228,8 @@ export function useJobHunter() {
         title: a.title,
         location: a.location ?? '',
         appliedAt: a.applied_at ?? a.discovered_at ?? '',
+        postedAt: (a.posted_at as string | null) ?? null,
+        discoveredAt: (a.discovered_at as string) ?? '',
         status: a.status,
         matchScore: a.match_score ?? null,
         source: a.source ?? '',

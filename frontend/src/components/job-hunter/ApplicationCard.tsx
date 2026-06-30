@@ -43,11 +43,24 @@ function MatchBar({ score }: { score: string | null }) {
   )
 }
 
+function timeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime()
+  const days = Math.floor(diff / 86_400_000)
+  if (days === 0) return 'Today'
+  if (days === 1) return '1d ago'
+  if (days < 7) return `${days}d ago`
+  if (days < 14) return '1w ago'
+  if (days < 30) return `${Math.floor(days / 7)}w ago`
+  if (days < 60) return '1mo ago'
+  return `${Math.floor(days / 30)}mo ago`
+}
+
 export default function ApplicationCard({ application, onStartInterviewPrep, onApply, onViewTracking, compact, active }: Props) {
-  const { id, company, title, location, appliedAt, status, matchScore, source, appliedElsewhere } = application
+  const { id, company, title, location, appliedAt, postedAt, discoveredAt, status, matchScore, source, appliedElsewhere } = application
   const isApplied = status === 'applied' || status === 'interview' || status === 'offer' || status === 'responded'
   const showInterviewPrep = status === 'interview'
   const appliedDate = appliedAt ? new Date(appliedAt).toLocaleDateString('en-GB') : '—'
+  const postedLabel = postedAt ? `Posted ${timeAgo(postedAt)}` : discoveredAt ? `Found ${timeAgo(discoveredAt)}` : null
 
   const MATCH_CFG = matchScore ? (MATCH_BAR[matchScore] ?? MATCH_BAR.SKIP) : MATCH_BAR.SKIP
 
@@ -189,12 +202,16 @@ export default function ApplicationCard({ application, onStartInterviewPrep, onA
       </div>
 
       {/* Date */}
-      <span
-        className="text-[11px] font-mono"
-        style={{ color: 'rgba(100,116,139,0.7)' }}
-      >
-        {appliedDate}
-      </span>
+      <div className="flex flex-col items-end gap-0.5">
+        {postedLabel && (
+          <span className="text-[10px] font-mono" style={{ color: 'rgba(100,116,139,0.55)' }}>
+            {postedLabel}
+          </span>
+        )}
+        <span className="text-[11px] font-mono" style={{ color: 'rgba(100,116,139,0.7)' }}>
+          {appliedDate}
+        </span>
+      </div>
 
       {/* Actions */}
       <div className="flex items-center gap-1.5 justify-end">

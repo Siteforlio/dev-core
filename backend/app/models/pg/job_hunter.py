@@ -138,6 +138,7 @@ class JobListing(Base):
     match_score: Mapped[str | None] = mapped_column(String(10), nullable=True)
     sub_category: Mapped[str | None] = mapped_column(String(100), nullable=True)
     url_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    posted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     discovered_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="pending")

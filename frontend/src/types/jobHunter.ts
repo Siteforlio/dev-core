@@ -45,6 +45,8 @@ export interface Application {
   title: string
   location: string
   appliedAt: string
+  postedAt: string | null
+  discoveredAt: string
   status: 'pending' | 'applied' | 'responded' | 'interview' | 'offer' | 'rejected' | 'failed' | 'withdrawn' | 'tailored'
   matchScore: 'MATCH' | 'PARTIAL' | 'SKIP' | null
   source: string

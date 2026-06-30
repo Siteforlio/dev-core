@@ -5,10 +5,13 @@ import type { Application } from '../../../types/jobHunter'
 
 const baseApp: Application = {
   id: 'app-1',
+  applicationId: null,
   company: 'Stripe',
   title: 'Backend Engineer',
   location: 'Remote',
   appliedAt: '2026-04-12T10:00:00Z',
+  postedAt: null,
+  discoveredAt: '2026-04-12T10:00:00Z',
   status: 'pending',
   matchScore: 'MATCH',
   source: 'jobspy',
