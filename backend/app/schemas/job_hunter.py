@@ -85,6 +85,12 @@ class CalDAVCredentialsRequest(BaseModel):
     password: str
 
 
+class EmailSendRequest(BaseModel):
+    to: list[str]
+    subject: str
+    body: str
+
+
 class LinkedInCredentialsRequest(BaseModel):
     # Option A — email/password (standard accounts)
     email: str | None = None

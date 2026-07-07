@@ -12,17 +12,19 @@ import CampaignDashboard from '../components/job-hunter/CampaignDashboard'
 import GlobalIntegrationsPanel from '../components/job-hunter/GlobalIntegrationsPanel'
 import SavedLoginSettings from '../components/SavedLoginSettings'
 import { SessionSetup } from '../components/devcore/SessionSetup'
+import DebriefDashboard from './DebriefDashboard'
 import type { Campaign } from '../types/jobHunter'
 
-type Module = 'interview' | 'job-hunter' | 'settings'
+type Module = 'debrief' | 'interview' | 'job-hunter' | 'settings'
 
 export default function Dashboard() {
   const name = useAuthStore((s) => s.name)
   const clearAuth = useAuthStore((s) => s.clearAuth)
   const { startSession } = useInterviewSession()
 
-  const [activeModule, setActiveModule] = useState<Module>('interview')
+  const [activeModule, setActiveModule] = useState<Module>('debrief')
   const [showSessionSetup, setShowSessionSetup] = useState(false)
+  const [pendingSessionId, setPendingSessionId] = useState<string | null>(null)
 
 
   const {
@@ -87,8 +89,8 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="min-h-screen text-white flex flex-col" style={{ background: '#070f1c' }}>
-      {/* Header */}
+    <div className="text-white flex flex-col" style={{ background: '#070f1c', height: '100vh', overflow: 'hidden' }}>
+      {/* Header — sticky, never scrolls */}
       <header
         className="flex items-center justify-between flex-shrink-0"
         style={{
@@ -96,6 +98,9 @@ export default function Dashboard() {
           paddingRight: '0',
           background: '#050d18',
           borderBottom: '1px solid rgba(34,211,238,0.08)',
+          position: 'sticky',
+          top: 0,
+          zIndex: 20,
           // @ts-ignore
           WebkitAppRegion: 'drag',
         }}
@@ -111,36 +116,8 @@ export default function Dashboard() {
           className="flex-1 text-sm font-semibold tracking-[0.15em] uppercase"
           style={{ color: 'rgba(226,232,240,0.9)', fontFamily: 'monospace' }}
         >
-          {activeModule === 'interview' ? 'Interview Prep' : activeModule === 'job-hunter' ? 'Job Hunter' : 'Settings'}
+          {activeModule === 'debrief' ? 'Dashboard' : activeModule === 'interview' ? 'Interview Prep' : activeModule === 'job-hunter' ? 'Job Hunter' : 'Settings'}
         </span>
-        {/* Start Session */}
-        <button
-          onClick={() => setShowSessionSetup(true)}
-          className="flex items-center gap-2 transition-all duration-150 flex-shrink-0 mr-3"
-          style={{
-            fontFamily: 'monospace',
-            fontSize: '11px',
-            fontWeight: 600,
-            letterSpacing: '0.14em',
-            textTransform: 'uppercase',
-            padding: '7px 14px',
-            borderRadius: '6px',
-            background: 'linear-gradient(180deg, rgba(155,123,255,0.18), rgba(90,214,238,0.1))',
-            border: '1px solid rgba(90,74,150,0.6)',
-            color: '#efeaff',
-            WebkitAppRegion: 'no-drag',
-            position: 'relative',
-            overflow: 'hidden',
-          } as React.CSSProperties}
-          onMouseEnter={e => (e.currentTarget.style.borderColor = 'rgba(155,123,255,0.8)')}
-          onMouseLeave={e => (e.currentTarget.style.borderColor = 'rgba(90,74,150,0.6)')}
-        >
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="9"/><path d="M10 8.5 16 12l-6 3.5z" fill="currentColor" stroke="none"/>
-          </svg>
-          Start Session
-        </button>
-
         {/* User chip */}
         <div
           className="flex items-center gap-3 px-3 py-1.5 rounded"
@@ -206,7 +183,10 @@ export default function Dashboard() {
         />
 
         <main className="flex-1 overflow-y-auto">
-          {activeModule === 'interview' ? (
+          {activeModule === 'debrief' ? (
+            /* ── Debrief Dashboard ── */
+            <DebriefDashboard onStartSession={() => setShowSessionSetup(true)} pendingSessionId={pendingSessionId} />
+          ) : activeModule === 'interview' ? (
             /* ── Interview Prep — Simulation Builder ── */
             <div style={{ height: '100%', overflow: 'hidden' }}>
               <SimulationBuilder />
@@ -251,7 +231,15 @@ export default function Dashboard() {
           )}
         </main>
       </div>
-      {showSessionSetup && <SessionSetup onClose={() => setShowSessionSetup(false)} />}
+      {showSessionSetup && (
+        <SessionSetup
+          onClose={() => setShowSessionSetup(false)}
+          onSessionStarted={(id) => {
+            setPendingSessionId(id)
+            setShowSessionSetup(false)
+          }}
+        />
+      )}
     </div>
   )
 }

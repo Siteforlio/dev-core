@@ -59,6 +59,7 @@ from app.api.v1.cluely.ws import router as cluely_ws_router
 from app.api.v1.cluely.sessions import router as cluely_sessions_router
 from app.api.v1.progress import router as progress_router
 from app.api.v1.sim_sessions import router as sim_sessions_router
+from app.api.v1.meeting_debrief import router as meeting_debrief_router
 from app.graph.seed import run_seed
 from app.graph.knowledge_seed import seed_knowledge_profiles
 from app.core.database import AsyncSessionLocal
@@ -82,20 +83,29 @@ def _celery_worker_alive() -> bool:
 
 def _purge_celery_queues() -> None:
     """
-    Purge all pending tasks from Redis queues directly.
-    Called at startup so stale tasks from a previous (possibly unclean) shutdown
-    don't replay. Redis queue keys match the queue name exactly (Kombu Redis transport).
+    Wipe both Celery-owned Redis databases on startup so stale tasks, chord
+    state, and result keys from a previous (possibly unclean) shutdown don't
+    replay.
+
+    Both databases are exclusively owned by Celery — nothing else writes to
+    them — so FLUSHDB is safe and complete regardless of which key patterns
+    Celery happens to use internally.
+
+      celery_broker_url   (db 1) — task queues
+      celery_result_backend (db 2) — task results, chord counters
     """
     _log = logging.getLogger("uvicorn.error")
     try:
         import redis as _redis_lib
         from app.core.config import settings as _s
-        _r = _redis_lib.from_url(_s.celery_broker_url, decode_responses=True)
-        for _q in ("celery", "tailor"):
-            _purged = _r.delete(_q)
-            if _purged:
-                _log.info("celery: purged stale queue '%s'", _q)
-        _r.close()
+        for _url, _label in (
+            (_s.celery_broker_url,      "broker"),
+            (_s.celery_result_backend,  "results"),
+        ):
+            _r = _redis_lib.from_url(_url, decode_responses=True)
+            _r.flushdb()
+            _r.close()
+            _log.info("celery: flushed %s db (%s)", _label, _url)
     except Exception as _pe:
         _log.warning("celery: startup queue purge failed — %s", _pe)
 
@@ -197,6 +207,7 @@ app.include_router(cluely_ws_router,      prefix="/api/v1")
 app.include_router(cluely_sessions_router, prefix="/api/v1")
 app.include_router(progress_router, prefix="/api/v1")
 app.include_router(sim_sessions_router, prefix="/api/v1")
+app.include_router(meeting_debrief_router, prefix="/api/v1")
 
 
 @app.get("/health")

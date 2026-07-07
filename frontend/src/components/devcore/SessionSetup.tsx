@@ -76,7 +76,7 @@ const ASSESSMENT_MODES: { key: AssessmentMode; label: string; sub: string; color
   },
 ]
 
-export function SessionSetup({ onClose }: { onClose: () => void }) {
+export function SessionSetup({ onClose, onSessionStarted }: { onClose: () => void; onSessionStarted?: (sessionId: string) => void }) {
   const [tab, setTab]                   = useState<SourceTab>('job')
   const [selectedJob, setSelectedJob]   = useState<string | null>(null)
   const [description, setDescription]   = useState('')
@@ -152,6 +152,7 @@ export function SessionSetup({ onClose }: { onClose: () => void }) {
       const id = crypto.randomUUID()
       setStoreMode(assessmentMode)
       await startSession({ sessionId: id, context: ctx, audioSource, micDeviceId, sysDeviceId, token: freshToken })
+      onSessionStarted?.(id)
       onClose()
     } catch (err) {
       console.error('[devcore] startSession failed:', err)

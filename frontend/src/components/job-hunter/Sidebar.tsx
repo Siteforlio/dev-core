@@ -1,4 +1,4 @@
-type Module = 'interview' | 'job-hunter' | 'settings'
+type Module = 'debrief' | 'interview' | 'job-hunter' | 'settings'
 
 interface NavItem {
   module: Module
@@ -11,6 +11,13 @@ interface Props {
   onSelect: (module: Module) => void
   onLogout: () => void
 }
+
+const IconDebrief = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="3" y="3" width="18" height="18" rx="3"/>
+    <path d="M8 6h8M8 10h5M8 14h4M8 18h6"/>
+  </svg>
+)
 
 const IconInterview = () => (
   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -52,8 +59,9 @@ const DevCoreLogo = () => (
 )
 
 const NAV_ITEMS: NavItem[] = [
-  { module: 'interview', label: 'Interview Prep', icon: <IconInterview /> },
-  { module: 'job-hunter', label: 'Job Hunter', icon: <IconJobHunter /> },
+  { module: 'debrief',    label: 'Dashboard',     icon: <IconDebrief />   },
+  { module: 'interview',  label: 'Interview Prep', icon: <IconInterview /> },
+  { module: 'job-hunter', label: 'Job Hunter',    icon: <IconJobHunter /> },
 ]
 
 export default function Sidebar({ activeModule, onSelect, onLogout }: Props) {
