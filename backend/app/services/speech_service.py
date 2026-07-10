@@ -1,35 +1,41 @@
-import io
-import openai
-import edge_tts
-from app.core.config import settings
+import logging
+from app.services.tts_service import TTSService
 
-# edge-tts voice — en-US-GuyNeural sounds authoritative (interviewer)
-EDGE_TTS_VOICE = "en-US-GuyNeural"
+_log = logging.getLogger(__name__)
 
 
 class SpeechService:
-    def __init__(self):
-        self._openai_client = openai.AsyncOpenAI(api_key=settings.openai_api_key)
+    """
+    Public speech façade used by HTTP route handlers.
+
+    TTS is delegated to TTSService (Kokoro ONNX).
+    STT uses Deepgram for accurate multilingual transcription.
+    """
+
+    # ------------------------------------------------------------------
+    # TTS
+    # ------------------------------------------------------------------
 
     async def synthesize(self, text: str, language: str = "en") -> bytes:  # noqa: ARG002
-        """Synthesize speech using edge-tts (free, no quota)."""
-        communicate = edge_tts.Communicate(text, EDGE_TTS_VOICE)
-        chunks = []
-        async for chunk in communicate.stream():
-            if chunk["type"] == "audio":
-                chunks.append(chunk["data"])
+        """Return the full audio as a single MP3-compatible byte blob (WAV/PCM)."""
+        svc = TTSService()
+        chunks: list[bytes] = []
+        async for chunk in svc.synthesize_stream(text):
+            chunks.append(chunk)
         return b"".join(chunks)
 
-    async def synthesize_stream(self, text: str):
-        """Yield audio chunks using edge-tts (free, no quota)."""
-        communicate = edge_tts.Communicate(text, EDGE_TTS_VOICE)
-        async for chunk in communicate.stream():
-            if chunk["type"] == "audio" and chunk["data"]:
-                yield chunk["data"]
+    def synthesize_stream(self, text: str, voice_hint: str | None = None):
+        """Async generator — yields raw PCM int16 chunks. Used by the WS endpoint."""
+        return TTSService().synthesize_stream(text, voice_hint=voice_hint)
+
+    # ------------------------------------------------------------------
+    # STT
+    # ------------------------------------------------------------------
 
     async def transcribe(self, audio_bytes: bytes, language_hint: str = "en") -> str:
         from deepgram import AsyncDeepgramClient
         from app.core.config import settings as _settings
+
         client = AsyncDeepgramClient(api_key=_settings.deepgram_api_key)
         response = await client.listen.v1.media.transcribe_file(
             request=audio_bytes,
@@ -43,6 +49,7 @@ class SpeechService:
     async def transcribe_with_language(self, audio_bytes: bytes) -> dict:
         from deepgram import AsyncDeepgramClient
         from app.core.config import settings as _settings
+
         client = AsyncDeepgramClient(api_key=_settings.deepgram_api_key)
         response = await client.listen.v1.media.transcribe_file(
             request=audio_bytes,

@@ -2,13 +2,18 @@ import { useState, useEffect, useRef } from 'react'
 import { useInterviewStore } from '../../store/interviewStore'
 import { useInterviewSession } from '../../hooks/useInterviewSession'
 import { useVoice } from '../../hooks/useVoice'
+import { useCoach } from '../../hooks/useCoach'
 import AvatarPanel from './AvatarPanel'
 import FeedbackStrip from './FeedbackStrip'
 import type { EmotionState } from './FeedbackStrip'
 import DebriefReport from './DebriefReport'
 import CodeEditor from './CodeEditor'
 import SkillsTaskEditor from './SkillsTaskEditor'
+import CoachPanel from './CoachPanel'
 import { pickCharacter } from './InterviewerCharacters'
+
+// Silence threshold — seconds with no answer/speech before nudging user toward coach
+const SILENCE_NUDGE_SECONDS = 25
 
 interface Props {
   token: string
@@ -91,7 +96,37 @@ export default function InterviewSession({ token }: Props) {
   } = useInterviewStore()
 
   const { submitAnswer } = useInterviewSession()
-  const { speak, startRecording, stopRecording, isSpeaking, isRecording } = useVoice()
+
+  // submitWithText is defined below — forward-declared here so useVoice can reference it
+  const submitWithTextRef = useRef<((text: string) => Promise<void>) | null>(null)
+
+  const {
+    speak,
+    isSpeaking,
+    isRecording,
+    muted,
+    setMuted,
+    pendingTranscript,
+    confirmTranscript,
+    cancelTranscript,
+    micStream: voiceMicStream,
+    initMic,
+    destroyMic,
+  } = useVoice({
+    sessionId,
+    token,
+    onTranscriptConfirmed: (text) => submitWithTextRef.current?.(text),
+  })
+
+  // ── Coach ─────────────────────────────────────────────────────────────────
+  const coach = useCoach({
+    sessionId,
+    token,
+    question: currentRound?.questions[currentRound?.currentQuestionIndex ?? 0] ?? '',
+    roundType: currentRound?.type ?? 'behavioral',
+    careerTrack: useInterviewStore.getState().careerTrack,
+    level: useInterviewStore.getState().level,
+  })
 
   // ── Answer / flow state ──
   const [answer, setAnswer] = useState('')
@@ -123,6 +158,7 @@ export default function InterviewSession({ token }: Props) {
   const [timeRemaining, setTimeRemaining] = useState(1800)
   const [showSpeakerMenu, setShowSpeakerMenu] = useState(false)
   const [audioOutputs, setAudioOutputs] = useState<MediaDeviceInfo[]>([])
+  const [silenceNudge, setSilenceNudge] = useState(false)
 
   // ── Refs ──
   const prevQuestionRef = useRef('')
@@ -154,11 +190,12 @@ export default function InterviewSession({ token }: Props) {
     }
   }, [question]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Reset timer + rewrite counter on question change
+  // Reset timer + rewrite counter + silence nudge on question change
   useEffect(() => {
     questionStartTimeRef.current = Date.now()
     rewriteCountRef.current = 0
     prevAnswerLengthRef.current = 0
+    setSilenceNudge(false)
   }, [question])
 
   // Reset round start time on round change
@@ -186,11 +223,29 @@ export default function InterviewSession({ token }: Props) {
       } else {
         setTimeWarning(null)
       }
+
+      // Silence detection — nudge toward coach after SILENCE_NUDGE_SECONDS
+      const questionElapsed = (Date.now() - questionStartTimeRef.current) / 1000
+      if (
+        questionElapsed >= SILENCE_NUDGE_SECONDS &&
+        !feedback &&
+        !answer.trim() &&
+        !isRecording &&
+        !coach.isOpen
+      ) {
+        setSilenceNudge(true)
+      }
     }
     tick()
     const id = setInterval(tick, 1000)
     return () => clearInterval(id)
   }, [currentRound?.id, currentRound?.timeBudgetSeconds]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Mic — initialise on mount, destroy on unmount
+  useEffect(() => {
+    initMic()
+    return () => destroyMic()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // User camera stream
   useEffect(() => {
@@ -327,6 +382,7 @@ export default function InterviewSession({ token }: Props) {
   // ── Handlers ──
 
   const handleAnswerChange = (newValue: string) => {
+    if (newValue.length > 0) setSilenceNudge(false)
     const dropped = prevAnswerLengthRef.current - newValue.length
     if (dropped >= 40) {
       rewriteCountRef.current += 1
@@ -348,13 +404,15 @@ export default function InterviewSession({ token }: Props) {
     setAnswer(newValue)
   }
 
-  const handleSubmit = async () => {
-    if (!answer.trim()) return
+  // Core submit — accepts explicit text so both VAD auto-submit and manual
+  // textarea submit funnel through the same path (§5.1: no business logic in component)
+  const submitWithText = async (text: string) => {
+    if (!text.trim()) return
     setLoading(true)
     const timeTakenSeconds = Math.floor((Date.now() - questionStartTimeRef.current) / 1000)
     const currentQuestion = followUpQuestion ?? question
 
-    const result = await submitAnswer(sessionId, currentRound.id, currentQuestion, answer, {
+    const result = await submitAnswer(sessionId, currentRound.id, currentQuestion, text, {
       totalQuestions,
       emotionState: emotion?.emotion,
       timeTakenSeconds,
@@ -388,6 +446,10 @@ export default function InterviewSession({ token }: Props) {
     setAnswer('')
     setLoading(false)
   }
+  submitWithTextRef.current = submitWithText
+
+  // Keyboard submit (text mode) — reads from controlled textarea state
+  const handleSubmit = async () => submitWithText(answer)
   handleSubmitRef.current = handleSubmit
 
   // Phase 1 submission for skills_task
@@ -430,13 +492,12 @@ export default function InterviewSession({ token }: Props) {
     setLoading(false)
   }
 
-  const handleMic = async () => {
-    if (isRecording) {
-      const transcript = await stopRecording()
-      if (transcript) setAnswer((prev) => (prev ? `${prev} ${transcript}` : transcript))
-    } else {
-      await startRecording()
-    }
+  // Mic button toggles mute — when muted, text input is shown instead of VAD
+  const handleMic = () => setMuted((m) => !m)
+
+  const handleOpenCoach = () => {
+    setSilenceNudge(false)
+    coach.open()
   }
 
   const handleNext = async () => {
@@ -532,19 +593,23 @@ export default function InterviewSession({ token }: Props) {
 
       {/* Center — main action buttons */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        {/* Mic */}
+        {/* Mic — mute toggle (VAD listens automatically when unmuted) */}
         <button
           onClick={handleMic}
-          title={isRecording ? 'Stop recording' : 'Start recording'}
+          title={muted ? 'Unmute mic (switch to voice)' : 'Mute mic (switch to text)'}
           style={{
             ...ctrlBtn,
-            background: isRecording ? 'rgba(239,68,68,0.15)' : '#1a1d28',
-            color: isRecording ? '#f87171' : '#94a3b8',
-            border: isRecording ? '1px solid rgba(239,68,68,0.3)' : '1px solid rgba(255,255,255,0.08)',
+            background: muted ? 'rgba(239,68,68,0.12)' : isRecording ? 'rgba(34,197,94,0.15)' : '#1a1d28',
+            color: muted ? '#f87171' : isRecording ? '#4ade80' : '#94a3b8',
+            border: muted
+              ? '1px solid rgba(239,68,68,0.3)'
+              : isRecording
+              ? '1px solid rgba(34,197,94,0.3)'
+              : '1px solid rgba(255,255,255,0.08)',
             animation: isRecording ? 'micPulse 1s ease-in-out infinite' : 'none',
           }}
         >
-          {isRecording ? '⏹' : '🎙'}
+          {muted ? '🔇' : isRecording ? '🔴' : '🎙'}
         </button>
 
         {/* Camera */}
@@ -653,6 +718,24 @@ export default function InterviewSession({ token }: Props) {
           }} />
         </button>
 
+        {/* Coach toggle */}
+        <button
+          onClick={handleOpenCoach}
+          title="Open coach"
+          style={toggleBtn(coach.isOpen, 'rgba(99,102,241,0.15)', 'rgba(99,102,241,0.35)', '#a5b4fc')}
+        >
+          <span>🧠</span>
+          <span>Coach</span>
+          {silenceNudge && !coach.isOpen && (
+            <span style={{
+              width: 6, height: 6, borderRadius: '50%',
+              background: '#f59e0b',
+              flexShrink: 0,
+              animation: 'coachNudgeDot 1s ease-in-out infinite',
+            }} />
+          )}
+        </button>
+
       </div>
 
       <style>{`
@@ -663,6 +746,10 @@ export default function InterviewSession({ token }: Props) {
         @keyframes emotionPulse {
           0%,100% { opacity: 1; }
           50%      { opacity: 0.35; }
+        }
+        @keyframes coachNudgeDot {
+          0%,100% { opacity: 1; transform: scale(1); }
+          50%      { opacity: 0.4; transform: scale(0.7); }
         }
       `}</style>
     </div>
@@ -855,6 +942,7 @@ export default function InterviewSession({ token }: Props) {
       />
 
       {/* Video area — fills all space above controls */}
+
       <div style={{ flex: 1, position: 'relative', overflow: 'hidden', minHeight: 0 }}>
 
         {/* Timer bar */}
@@ -985,6 +1073,29 @@ export default function InterviewSession({ token }: Props) {
           </div>
         )}
 
+        {/* Silence nudge — appears bottom-center after 25s of no answer */}
+        {silenceNudge && !coach.isOpen && !feedback && (
+          <div
+            onClick={handleOpenCoach}
+            style={{
+              position: 'absolute', bottom: 76, left: '50%', transform: 'translateX(-50%)',
+              background: 'rgba(99,102,241,0.12)',
+              border: '1px solid rgba(99,102,241,0.3)',
+              borderRadius: 20,
+              padding: '5px 14px',
+              fontSize: 11, fontWeight: 600, color: '#a5b4fc',
+              cursor: 'pointer',
+              display: 'flex', alignItems: 'center', gap: 6,
+              zIndex: 25,
+              whiteSpace: 'nowrap',
+              animation: 'fadeInUp 0.3s ease',
+            }}
+          >
+            <span>🧠</span>
+            Stuck? Coach can help decode this →
+          </div>
+        )}
+
         {/* ── Bottom overlay: feedback / text input / question ── */}
 
         {feedback ? (
@@ -1033,8 +1144,56 @@ export default function InterviewSession({ token }: Props) {
             </button>
           </div>
 
-        ) : textMode ? (
-          // Text input overlay
+        ) : pendingTranscript ? (
+          // Transcript confirmation strip — auto-submits in 3 s, user can cancel
+          <div style={{
+            position: 'absolute', bottom: 0, left: 0, right: 0,
+            background: 'linear-gradient(to top, rgba(0,0,0,0.97) 0%, rgba(0,0,0,0.85) 70%, transparent 100%)',
+            padding: '18px 20px 68px',
+            zIndex: 20,
+          }}>
+            <div style={{
+              background: 'rgba(34,197,94,0.08)',
+              border: '1px solid rgba(34,197,94,0.2)',
+              borderRadius: 10, padding: '12px 16px',
+              display: 'flex', alignItems: 'flex-start', gap: 12,
+            }}>
+              <span style={{ fontSize: 15, flexShrink: 0, marginTop: 1 }}>🎤</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, color: '#e2e8f0', lineHeight: 1.55, wordBreak: 'break-word' }}>
+                  {pendingTranscript}
+                </div>
+                <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)', marginTop: 6 }}>
+                  Submitting in 3s…
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+                <button
+                  onClick={confirmTranscript}
+                  style={{
+                    background: '#4ade80', color: '#0f0f13',
+                    border: 'none', borderRadius: 6,
+                    padding: '5px 12px', fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                  }}
+                >
+                  Submit now
+                </button>
+                <button
+                  onClick={cancelTranscript}
+                  style={{
+                    background: 'rgba(255,255,255,0.07)', color: '#94a3b8',
+                    border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6,
+                    padding: '5px 12px', fontSize: 11, fontWeight: 600, cursor: 'pointer',
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+
+        ) : textMode || muted ? (
+          // Text input overlay — shown when muted or text mode toggled
           <div style={{
             position: 'absolute', bottom: 0, left: 0, right: 0,
             background: 'linear-gradient(to top, rgba(0,0,0,0.96) 0%, rgba(0,0,0,0.8) 60%, transparent 100%)',
@@ -1042,7 +1201,7 @@ export default function InterviewSession({ token }: Props) {
             zIndex: 20,
           }}>
             <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)', marginBottom: 8 }}>
-              Q{qIndex + 1} — Type your answer
+              {muted ? '🔇 Mic muted — type your answer' : `Q${qIndex + 1} — Type your answer`}
             </div>
             <textarea
               style={{
@@ -1059,7 +1218,6 @@ export default function InterviewSession({ token }: Props) {
               onChange={(e) => handleAnswerChange(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter' && e.metaKey) handleSubmit() }}
             />
-          </div>
 
         ) : (
           // Question overlay (default)
@@ -1101,6 +1259,22 @@ export default function InterviewSession({ token }: Props) {
       </div>
 
       <ControlsBar />
+
+      {/* Coach panel — fixed position, slides in from right, sits above all overlays */}
+      <CoachPanel
+        isOpen={coach.isOpen}
+        messages={coach.messages}
+        isStreaming={coach.isStreaming}
+        onClose={coach.close}
+        onSend={coach.sendMessage}
+      />
+
+      <style>{`
+        @keyframes fadeInUp {
+          from { opacity: 0; transform: translateX(-50%) translateY(6px); }
+          to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+        }
+      `}</style>
     </div>
   )
 }

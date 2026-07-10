@@ -1,5 +1,6 @@
 import { useInterviewStore } from '../store/interviewStore'
 import { apiFetch } from '../lib/apiFetch'
+import type { SubmitAnswerResponse } from '../types'
 
 const API = 'http://localhost:8000/api/v1'
 
@@ -81,7 +82,7 @@ export function useInterviewSession() {
         is_followup: opts?.isFollowup ?? false,
       }),
     })
-    return (await res.json()).data
+    return (await res.json()).data as SubmitAnswerResponse
   }
 
   const reportCheatSignal = async (

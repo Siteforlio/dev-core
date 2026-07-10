@@ -29,5 +29,12 @@ class Settings(BaseSettings):
     groq_api_key: str = ""
     deepgram_api_key: str = ""
     deepseek_api_key: str = ""
+    # Global job board API keys (free tier — optional, boards skip gracefully if unset)
+    adzuna_app_id: str = ""   # https://developer.adzuna.com/
+    adzuna_api_key: str = ""  # https://developer.adzuna.com/
+    reed_api_key: str = ""    # https://www.reed.co.uk/developers/jobseeker
+    scrapfly_key: str = ""    # https://scrapfly.io/ — used for Wellfound
+    # Kokoro TTS — local ONNX model directory (run backend/scripts/download_kokoro.py first)
+    kokoro_models_dir: str = "backend/models/kokoro"
 
 settings = Settings()

@@ -1,11 +1,11 @@
 from fastapi import APIRouter, Depends
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.security import decode_token
-from app.schemas.session import CreateSessionRequest, AnswerRequest, AdvanceRoundRequest, BehavioralSignalRequest, CheatSignalRequest
+from app.schemas.session import CreateSessionRequest, AnswerRequest, AdvanceRoundRequest, BehavioralSignalRequest, CheatSignalRequest, CoachRequest
 from app.services.llm_orchestrator import LLMOrchestrator
 from app.services.interview_engine import InterviewEngine
 from app.services.debrief_service import DebriefService
@@ -135,6 +135,65 @@ async def record_cheat_signal(
         chars_per_second=body.chars_per_second,
     )
     return {"data": {"recorded": True}, "error": None}
+
+
+@router.post("/{session_id}/coach")
+async def coach(
+    session_id: str,
+    body: CoachRequest,
+    user_id: str = Depends(get_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Stream coaching tokens as SSE.
+
+    Route handler is thin (§4.2) — delegates entirely to LLMOrchestrator.
+    The frontend appends the user's message to conversation_history before
+    calling this, so the handler only needs to add it once more when
+    conversation_history is non-empty.
+    """
+    result = await db.execute(
+        select(InterviewSession).where(
+            InterviewSession.id == session_id,
+            InterviewSession.user_id == user_id,
+        )
+    )
+    session = result.scalar_one_or_none()
+    if not session:
+        return {"data": None, "error": {"code": "SESSION_NOT_FOUND", "message": "Session not found"}}
+
+    # Build conversation history including the new user message (if any)
+    history = [{"role": m.role, "content": m.content} for m in body.conversation_history]
+    if body.message:
+        history.append({"role": "user", "content": body.message})
+
+    orchestrator = LLMOrchestrator()
+
+    async def _sse_stream():
+        try:
+            async for token in orchestrator.coach_candidate(
+                question=body.question,
+                company=session.company,
+                role=session.role,
+                round_type=body.round_type,
+                career_track=body.career_track,
+                level=body.level,
+                conversation_history=history,
+            ):
+                # SSE format: each token as a data event
+                yield f"data: {token}\n\n"
+        except Exception:
+            pass
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        _sse_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/{session_id}/debrief")

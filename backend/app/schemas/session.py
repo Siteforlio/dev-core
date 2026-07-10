@@ -101,6 +101,20 @@ class AdvanceRoundRequest(BaseModel):
     next_round_type: str
 
 
+class CoachMessage(BaseModel):
+    role: str   # "user" | "assistant"
+    content: str
+
+
+class CoachRequest(BaseModel):
+    question: str
+    round_type: str = "behavioral"
+    career_track: str = "technology"
+    level: str = "mid_level"
+    message: Optional[str] = None          # None on first open (decode mode)
+    conversation_history: list[CoachMessage] = []
+
+
 class GradeResponse(BaseModel):
     score: float
     passed: bool

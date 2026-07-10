@@ -22,6 +22,7 @@ reportlab==4.4.10
 slowapi==0.1.9
 pytest-benchmark==4.0.0
 edge-tts==6.1.9
+kokoro-onnx>=0.4.0
 python-jobspy==1.1.82
 crawlee[playwright]==0.4.0
 celery[redis]==5.4.0

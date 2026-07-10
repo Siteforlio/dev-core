@@ -376,6 +376,76 @@ class LLMOrchestrator:
             return "Can you tell me more about how you approached the most challenging part of this task?"
         return None
 
+    async def coach_candidate(
+        self,
+        question: str,
+        company: str,
+        role: str,
+        round_type: str,
+        career_track: str,
+        level: str,
+        conversation_history: list[dict],
+    ):
+        """
+        Async generator — streams coaching tokens for the in-session coach panel.
+
+        On the first call (empty conversation_history) the coach decodes what the
+        question is really testing and asks 1-2 prompts to surface the candidate's
+        own stories.  On follow-up calls it answers the candidate's specific
+        question concisely while keeping them focused on structure and their own
+        experience.
+
+        Yields str chunks as they arrive from DeepSeek V3.
+        """
+        system_prompt = (
+            f"You are a private interview coach helping a candidate in real-time during "
+            f"a {round_type} interview at {company} for a {role} position "
+            f"({level}, {career_track} track).\n\n"
+            "Your coaching rules:\n"
+            "1. NEVER write the candidate's answer for them. They must use their own words and stories.\n"
+            "2. Decode the question: explain in one sentence what the interviewer is really testing.\n"
+            "3. Ask 1-2 short questions to help the candidate surface a relevant story from their own experience.\n"
+            "4. If they ask you something specific, answer in 2-3 sentences max — stay grounded in THIS question and THIS company.\n"
+            "5. If they're stuck, suggest a structure (STAR, problem/solution/impact) — don't fill it in.\n"
+            "6. Be direct. Sound like a coach in a hallway, not a textbook.\n"
+            "7. Max 4 sentences per response. No bullet lists unless the candidate explicitly asks for one.\n"
+        )
+
+        is_first_message = len(conversation_history) == 0
+        if is_first_message:
+            user_content = (
+                f'The interviewer just asked: "{question}"\n\n'
+                "Decode what they are really testing with this question, then ask me 1-2 questions "
+                "to help me find a relevant story from my own experience."
+            )
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content},
+            ]
+        else:
+            messages = [{"role": "system", "content": system_prompt}]
+            # Inject question context as the first exchange if not already there
+            messages.append({
+                "role": "user",
+                "content": f'We are working on this interview question: "{question}"',
+            })
+            messages.append({
+                "role": "assistant",
+                "content": "Got it, I'll help you work through this.",
+            })
+            messages.extend(conversation_history)
+
+        stream = await self._client.chat.completions.create(
+            model=self._model_fast,
+            messages=messages,
+            max_tokens=300,
+            stream=True,
+        )
+        async for chunk in stream:
+            delta = chunk.choices[0].delta.content
+            if delta:
+                yield delta
+
     async def react_to_code(self, code_snapshot: str, question: str, company: str) -> str:
         prompt = (
             f"You are a technical interviewer at {company}.\n"
