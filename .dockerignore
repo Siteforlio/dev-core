@@ -1,0 +1,45 @@
+# Node / Electron frontend — not needed in backend image
+node_modules/
+dist-electron/
+frontend/node_modules/
+frontend/dist/
+frontend/.next/
+
+# Python caches and virtual envs
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+backend/venv/
+backend/.venv/
+venv/
+.venv/
+
+# Test / debug artefacts
+backend/screenshots/
+backend/resumes/
+apply_test_output/
+tailor_audit_output/
+pipeline_test.log
+crash.log
+debugg.txt
+test_extraction.py
+*.log
+*.png
+
+# Git
+.git/
+.gitignore
+
+# Docs / markdown
+docs/
+*.md
+article-digest.md
+cv.md
+
+# Misc
+.env
+.env.*
+*.egg-info/
+.pytest_cache/
+.mypy_cache/

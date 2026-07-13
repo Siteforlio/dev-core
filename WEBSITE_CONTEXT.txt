@@ -1,0 +1,491 @@
+================================================================================
+DEVELOPER CORE — PRODUCT CONTEXT BRIEF
+For Corporate Website Showcase
+================================================================================
+
+PRODUCT NAME: Developer Core
+TAGLINE CANDIDATES:
+  - "Your AI co-pilot for every stage of the job journey."
+  - "From application to offer. AI-powered, end to end."
+  - "Land the job. Ace the interview. Dominate the room."
+
+PRODUCT TYPE: AI-powered career automation platform (Electron desktop app)
+TARGET USER: Job seekers — from new grads to senior professionals
+
+================================================================================
+OVERVIEW
+================================================================================
+
+Developer Core is a three-phase AI platform that automates and augments the
+entire job-hunting lifecycle: finding and applying for jobs, preparing for
+interviews, and getting real-time AI assistance during live interviews or
+meetings. It is a full-stack Electron desktop application with a React frontend,
+FastAPI backend, PostgreSQL, Redis, Neo4j, and a suite of local and cloud AI
+models.
+
+================================================================================
+PHASE 1 — JOB HUNTER
+================================================================================
+
+WHAT IT IS:
+An intelligent job-search agent that learns your career story, scrapes 20+
+job boards on your behalf, tailors your resume for every single role, and
+auto-fills applications — all from one dashboard.
+
+HOW IT WORKS — STEP BY STEP:
+
+  1. CAREER CHAT (Campaign Creation)
+     The user opens a conversational AI chat and explains their career path,
+     target role, location, work type preferences, and uploads their resume
+     (PDF, DOCX, or plain text). The AI — powered by DeepSeek — drives a
+     structured multi-turn conversation to extract everything it needs. When
+     ready, it generates a "Campaign" with a full Career Plan, strategy notes,
+     and a daily application target. The session auto-saves every 24 hours so
+     interrupted conversations resume seamlessly.
+
+  2. AUTOMATED JOB SCRAPING
+     Once the campaign is live, a Celery background worker dispatches parallel
+     scrapers across 20+ job boards simultaneously:
+
+     Global boards:    Indeed, Glassdoor, ZipRecruiter, Google Jobs
+     ATS boards:       Greenhouse, Lever, Ashby
+     Startup/Remote:   Wellfound, Remotive, RemoteOK, Hacker News (Who's Hiring),
+                       We Work Remotely
+     Africa/Kenya:     Zindi Africa, BrighterMonday, MyJobMag Kenya, Kuhustle,
+                       Andela, Arc.dev, Startup Deals Africa
+     LinkedIn:         Optional (user-credential-based, isolated subprocess)
+     Fuzu:             Dedicated Fuzu Africa agent
+
+     Every scraped job passes through a multi-layer filtering pipeline:
+       - Keyword pre-filter (instant, no AI cost)
+       - Work-type and location filter (remote / hybrid / onsite)
+       - AI match scoring (DeepSeek: MATCH / PARTIAL / SKIP)
+       - SMB/startup preference scoring
+       - SHA-256 duplicate detection (cross-run deduplication)
+
+     The frontend shows a LIVE ACTIVITY FEED — the user can watch in real time
+     as each board is scraped, each job is scored, and matched roles appear.
+
+  3. RESUME TAILORING (Per Job)
+     For every matched job, a high-priority background task generates a fully
+     tailored resume in a single LLM call. Key features:
+       - IMMUTABLE FACTS PROTECTION: The AI is given a locked block of the
+         candidate's real education, employer names, and location that it is
+         prohibited from altering — preventing hallucination of credentials.
+       - DOMAIN TRANSLATION: Bullets are rewritten in the target role's
+         vocabulary while preserving real numbers and scale. A candidate from
+         healthcare applying to fintech gets bullets that speak fintech — not
+         "treated 200 patients" but "managed 200 high-stakes client cases."
+       - ATS KEYWORD INJECTION: 15-25 role-specific keywords extracted from
+         the JD are woven into the resume.
+       - SKILLS MATCHING: A local sentence-transformer model (all-MiniLM-L6-v2)
+         picks the most JD-relevant skills without any API call.
+       - OUTPUT: Keywords, positioning narrative, skills list, 2-sentence summary,
+         rewritten bullets, rewritten project descriptions, and salary range estimate.
+
+  4. AUTO-APPLICATION
+     Using nodriver (Chromium automation), Developer Core fills and submits
+     application forms automatically. It handles:
+       - Greenhouse, Lever, Ashby (dedicated fast-path fillers with known selectors)
+       - Workday (universal filler, layout varies per company)
+       - Any generic ATS or careers page (universal JS DOM scanner)
+     The universal strategy: scan all fillable fields, ask DeepSeek to map
+     candidate data to fields as JSON, fill everything, then click through
+     up to 12 form steps. CAPTCHA or manual-final-submit sites prompt the user
+     with a "Did You Apply?" confirmation popup.
+
+  5. JOB PORTAL & AI CHAT
+     A per-application chat lets users ask follow-up questions about any role.
+     The AI has full context of the candidate's profile AND the specific job
+     description — enabling context-aware cover letter generation, role-fit
+     analysis, and question answering.
+
+     The campaign-level AI Chat is a tool-augmented ReAct agent with 8 tools:
+       - Dispatch new scrapes
+       - Look up pipeline jobs
+       - Trigger resume tailoring
+       - Scan emails for interview/rejection signals
+       - Fetch interview prep context (bridged to Phase 2)
+       - Update campaign settings
+       - Update application statuses
+       - Save AI-generated career plans
+
+  6. EMAIL MONITORING
+     IMAP polling detects interview invitations and rejections, classifies them
+     with AI, and auto-drafts gracious rejection replies that request feedback.
+     Interview emails automatically create calendar events (CalDAV-capable).
+
+  7. UNIFIED DASHBOARD
+     Aggregates across all campaigns: total applications, today's applications,
+     week's applications, responses, interviews, offers, rejection rate —
+     filterable by status (all / interview / responded / pending / rejected).
+
+  8. MANUAL JOB ENTRY
+     Users can manually add any job not found by scrapers — it still goes
+     through the full tailoring pipeline.
+
+KEY STATS (as engineered):
+  - 20+ job boards supported
+  - 5 ATS types auto-filled
+  - Parallel scraping with real-time activity feed
+  - Resume tailoring with immutable credential protection
+  - 8-tool AI agent for campaign management
+
+================================================================================
+PHASE 2 — INTERVIEW PREP
+================================================================================
+
+WHAT IT IS:
+A realistic AI interview simulation environment that puts candidates through
+the pressure of a real interview — with live face analysis, emotion detection,
+AI-powered interviewers that simulate real company styles, and deep post-session
+debriefs.
+
+HOW IT WORKS:
+
+  1. SIMULATION BUILDER
+     The user describes what they want to practice in natural language. The system
+     parses 18 signal types from the description:
+       pitch, code-review, live-pairing, system-design, behavioral, named-company,
+       time-boxed, high-pressure, senior-level, junior-level, take-home, sales,
+       panel, roleplay, and more.
+
+     6 preset scenario types are available:
+       - 90-Second Pitch
+       - MR Review + Live Pairing
+       - System Design
+       - Behavioral Panel
+       - Project Demo
+       - Blank Canvas
+
+     Attachments are supported: PDF/DOCX documents, code files, images, code
+     snippets — giving the AI context about the candidate's actual work.
+
+     An AI clarification chat loop confirms the scenario is understood before
+     the simulation begins, showing extracted fields (format, level, company,
+     time limit, etc.).
+
+     A custom canvas-based animated neural network visualization shows "thinking"
+     state with nodes, edges, and pulses during AI processing.
+
+  2. LIVE SIMULATION SESSION
+     The simulation launches with:
+       - Live camera feed (face analysis running in real time)
+       - Live transcript with emotion color-coding
+       - Countdown timer bar (turns red at 20% time, critical at 10 seconds)
+       - AI interviewer "speaking" animation
+       - Voice (mic) or text input
+
+     The AI interviewer is a fully constructed persona generated from the brief:
+     name, style, company, role. It responds in character throughout the session.
+     DeepSeek-V3 (fast) handles turn responses; DeepSeek-R1 (reasoner) handles
+     deep evaluation.
+
+     11 interview round types are supported:
+       behavioral, hr_interview, hr, hiring_manager, skills_task, skills_domain,
+       panel_interview, case_presentation, final_executive, offer_negotiation, leetcode
+
+  3. FACE ANALYSIS & EMOTION DETECTION
+     MediaPipe FaceMesh analyzes the live camera feed using 468 facial landmarks
+     and returns real-time readings:
+
+       EMOTION STATES:  confident, engaged, nervous, uncertain, neutral
+       NERVOUSNESS SCORE (0.0–1.0): based on Eye Aspect Ratio (EAR)
+       CONFIDENCE SCORE (0.0–1.0): EAR openness + brow relaxation + mouth openness
+       EYE CONTACT (bool): detected from average EAR threshold
+       GAZE DIRECTION: left, right, up, down, center — from iris landmark ratios
+
+     Detection is based on:
+       - Eye Aspect Ratio (EAR) from 16 eye landmarks per eye
+       - Brow raise from 5 brow landmarks per side
+       - Mouth gap measurement
+       - Iris center position relative to eye corner landmarks (473, 468)
+
+  4. ANSWER SCORING
+     Answers are graded by DeepSeek on a 1–10 scale:
+       9-10: Hire immediately
+       7-8:  Meets the bar
+       5-6:  Mediocre
+       3-4:  Poor
+     The evaluator is explicitly instructed: "be direct, fair, and brutally
+     honest — do not inflate scores to be encouraging."
+
+     Behavioral signals are factored in:
+       - Response time < 10 seconds: suspiciously fast
+       - Response time > 180 seconds: too slow
+       - Rewrite count: how many times the candidate revised their answer
+
+     Fail threshold: single answer below 3.0 terminates the round immediately.
+     Time budget: round auto-terminates at 80% consumed.
+
+  5. SKILLS TASK ROUNDS (Two-Phase)
+     Phase 1: candidate submits open-ended work (code, design, writing).
+     Phase 2: AI evaluates the submission and generates follow-up questions
+     specifically about what the candidate actually produced.
+
+  6. NEO4J-BACKED PERSONA ENGINE
+     The AI interviewer personas are grounded in a real knowledge graph (Neo4j)
+     containing hiring manager profiles, company interview patterns, and
+     round-level question distributions — seeded at startup and enriched over
+     time. This means simulating a Google System Design interview feels different
+     from simulating a startup behavioral panel.
+
+  7. POST-SESSION DEBRIEF
+     After every session, DeepSeek-R1 (the reasoning model) analyzes the full
+     transcript and emotion timeline and returns:
+       - Overall score
+       - Hire signal
+       - 7 dimension scores: domain_knowledge, communication_clarity,
+         quantified_impact, leadership_narrative, culture_alignment,
+         executive_presence, problem_solving
+       - Strengths
+       - Areas for improvement
+       - Focus areas for next session
+
+     A formatted PDF report is generated via reportlab.
+
+     Anonymized session data (PII stripped) is contributed to the shared Neo4j
+     knowledge graph, making the system smarter over time for all users.
+
+  8. PROGRESS TRACKING
+     Session counts, cumulative scores, and improvement trends are tracked over
+     time with a visual progress dashboard.
+
+KEY STATS (as engineered):
+  - 468-landmark face analysis in real time
+  - 11 interview round types
+  - 18 signal types parsed from natural language
+  - 7 debrief dimensions
+  - Neo4j-backed company-specific interviewer personas
+  - PDF debrief reports generated post-session
+
+================================================================================
+PHASE 3 — SCREEN OVERLAY (AI INTERVIEW CO-PILOT)
+================================================================================
+
+WHAT IT IS:
+An invisible AI assistant that sits on top of your screen during a real interview
+or any meeting. It listens to both sides of the conversation, reads your screen,
+has access to the internet, your files, and a terminal — and gives you real-time
+guidance that no one else can see.
+
+Inspired by Cluely. Built to be undetectable.
+
+HOW THE INVISIBILITY WORKS:
+
+  WINDOWS (primary target):
+  The overlay window calls SetWindowDisplayAffinity from user32.dll via the
+  koffi native FFI library with WDA_EXCLUDEFROMCAPTURE = 0x00000011.
+  This makes the window completely invisible to:
+    - OBS, Zoom, Teams, Microsoft Screen Capture
+    - Any mss-based screen capture tool
+    - Windows 10 Build 2004+ and Windows 11 native capture
+  The affinity is applied before and after window load, and re-applied on every
+  show event (Windows resets it on hidden→visible transitions).
+
+  macOS:
+  Uses Electron's setContentProtection(true), wrapping NSWindow.sharingType =
+  NSWindowSharingNone — hides from screen recording, screenshots, and Dock previews.
+
+  INTERACTION MODEL:
+  The overlay normally ignores all mouse events (click-through). A 30ms polling
+  loop tracks cursor position against the content bounds. When the cursor is over
+  the rendered content area (8px padding), the window becomes interactive.
+  When the cursor leaves, it goes click-through again. Invisible when idle.
+
+  GLOBAL HOTKEYS:
+    Ctrl+Shift+Space   — Show / hide overlay
+    Ctrl+Shift+I       — Toggle interact mode
+    Ctrl+Shift+Right/Left — Cycle overlay position (5 presets), persisted
+    Ctrl+Shift+S       — Capture screenshot → send to AI
+    Ctrl+Shift+X       — Clear screenshot buffer
+    Ctrl+Shift+Enter   — Start session
+    Ctrl+Shift+/       — Focus ask input
+    Ctrl+Shift+G       — Trigger AI suggestion from recent transcript
+    Ctrl+Shift+R       — Force re-trigger AI
+
+WHAT THE OVERLAY CAN DO:
+
+  1. DUAL AUDIO CAPTURE
+     Two independent audio streams run simultaneously:
+       - Microphone: naudiodon (PortAudio WASAPI) — the user's own voice
+       - System/Loopback: Python WASAPI loopback subprocess — the interviewer's
+         voice coming through the speakers of the video call
+     Both streams are multiplexed into a single WebSocket connection with a
+     5-byte binary header per chunk [stream_id | sequence_number].
+     Reconnection: up to 5 attempts with exponential backoff, preserving session.
+
+  2. REAL-TIME TRANSCRIPTION PIPELINE
+     The backend OverlayService runs this pipeline on every audio frame:
+
+     a) SPEAKER DIARIZATION
+        Uses resemblyzer voice embeddings. Enrolls the user from mic frames,
+        then classifies each system-audio frame: cosine similarity ≥ 0.75 →
+        user echo, else → interviewer. Always knows who is speaking.
+
+     b) TRANSCRIPTION
+        Deepgram (primary, real-time). Fallback: OpenAI Whisper.
+
+     c) BERT QUESTION CLASSIFIER
+        Uses cross-encoder/nli-distilroberta-base (zero-shot NLI) downloaded
+        locally. Detects whether each sentence is a question or a statement.
+        Falls back to regex heuristics while the model downloads, then hot-swaps
+        with no restart. 0.5s rate limit between triggers.
+
+     d) OUTCOME INFERENCE
+        When a question is detected, DeepSeek infers what a strong answer must
+        demonstrate in ≤15 words starting with a verb: "Demonstrate," "Show,"
+        "Quantify." Cached in Redis for 30 minutes. Shown as an "outcome pill"
+        in the overlay UI — a real-time coaching nudge.
+
+     e) GAP DETECTION
+        all-MiniLM-L6-v2 computes cosine similarity between the inferred outcome
+        and the user's live spoken response. Below 0.42 similarity → the system
+        fires a suggestion to course-correct in real time.
+
+     f) RAG CONTEXT (Semble Engine)
+        A hybrid code-aware retrieval engine combining:
+          - Static embeddings (Model2Vec / potion-code-16M)
+          - BM25 lexical matching
+          - Reciprocal Rank Fusion
+          - Definition boosting
+          - File coherence scoring
+        Indexes the user's project directory or provided documents. Returns
+        relevant code/document chunks to augment every LLM response.
+
+     g) LLM SUGGESTION
+        DeepSeek streams a response in the first person: "Speak entirely in the
+        first person as the person being asked — naturally, confidently, as if
+        saying this aloud right now. Never identify as an AI."
+        Context model (fits 2+ hour interviews in ~900 tokens):
+          - Key facts: ~75 tokens
+          - Rolling summary (2-min lag): ~300 tokens
+          - Last 15 transcript lines: ~400 tokens
+          - RAG chunks: ~125 tokens
+
+     h) ROLLING SUMMARIZER
+        Background coroutine summarizes transcript chunks every 2 minutes to
+        maintain the context window across long sessions.
+
+     i) DEDUPLICATION
+        Transcript entries within a 4-second window with >75% string similarity
+        are suppressed to avoid duplicate suggestions from audio echo.
+
+  3. SCREENSHOT VISION
+     Powered by Groq API + meta-llama/llama-4-scout-17b-16e-instruct.
+     Maintains a buffer of up to 5 screenshots per session (auto-cleared after
+     3 minutes idle). Ctrl+Shift+S adds to the buffer. When the user asks a
+     question, ALL buffered screenshots are analyzed together — enabling analysis
+     across multiple scrolls of the same content.
+     Modes: coding (LeetCode/DSA), present/live (presentations/meetings), general.
+
+  4. AGENTIC ASSESSMENT (ReAct Loop)
+     A full Reason+Act agent with max 12 steps per action, max 5 solution
+     iterations. Three modes:
+
+       CODING MODE: LeetCode / DSA
+         Reads visible test cases from screenshots, generates a solution, runs
+         it in a terminal sandbox, iterates until all visible test cases pass.
+
+       LIVE MODE: Live project build
+         Has filesystem read/write access and terminal access to work on real
+         code during a take-home or live coding session.
+
+       AI MODEL MODE: Degraded AI assessment
+         Profiles the model, coaches the user with prompts, evaluates outputs.
+
+     Every reasoning step is streamed to the overlay as thinking events.
+     Tool calls stream as start/data/done/error events.
+     Final guidance streams as a response. Code solutions include code, language,
+     and explanation.
+
+  5. TOOL-AUGMENTED CHAT
+     Natural language chat interface (Ctrl+Shift+/ to focus). Type commands like
+     "read main.py", "run the tests", "search for X" — the AI calls the right
+     tool, observes the result, and streams a final answer.
+
+     AVAILABLE TOOLS:
+       Terminal Service  — Runs shell commands invisibly (CREATE_NO_WINDOW on
+                           Windows), 30-second hard cap, streams stdout/stderr.
+       File Service      — Scoped to a user-defined project root. Supports
+                           read_file, write_file, patch_file, list_directory,
+                           search_in_files. Path traversal attacks rejected.
+       Screen Service    — Reads current screen content.
+       Browser Service   — nodriver Chromium automation for web interaction.
+       Search Service    — Web search via SerpAPI or Brave Search.
+
+  6. SESSION HISTORY
+     Every overlay session is persisted to Postgres. On session end, DeepSeek
+     generates a 5-7 word AI title and a 2-3 sentence summary for review.
+
+KEY STATS (as engineered):
+  - WDA_EXCLUDEFROMCAPTURE: invisible to Zoom, Teams, OBS, all capture tools
+  - 5 AI tools available to the agentic loop (terminal, files, browser, search, screen)
+  - Dual audio (mic + system loopback) with speaker diarization
+  - RAG over the user's own codebase/documents
+  - Outcome pill: real-time coaching in ≤15 words per question detected
+  - Gap detection: AI knows when your answer is drifting off target
+
+================================================================================
+TECH STACK SUMMARY
+================================================================================
+
+Desktop Shell:     Electron (TypeScript) — frameless, DPAPI-encrypted credentials
+Frontend:          React + TypeScript + Tailwind CSS, Zustand, React Query
+Backend:           FastAPI (Python 3.11+), asyncpg, structlog, structlog
+Primary LLM:       DeepSeek-V3 (fast turns) + DeepSeek-R1 (grading, debrief)
+Overlay LLM:       DeepSeek default; optional Gemini Flash 2.0 or Groq
+Vision:            Groq API — Llama 4 Scout 17B
+Transcription:     Deepgram (real-time primary), OpenAI Whisper (fallback)
+Question Detect:   cross-encoder/nli-distilroberta-base (local HuggingFace)
+RAG:               Semble (Model2Vec + BM25 + RRF) + all-MiniLM-L6-v2 (local)
+Face Analysis:     MediaPipe FaceMesh (468 landmarks)
+Voice Embeddings:  resemblyzer (speaker diarization)
+Skill Matching:    all-MiniLM-L6-v2 sentence-transformers (local CPU)
+Avatar (optional): HeyGen API or Simli API
+Relational DB:     PostgreSQL 15+ (asyncpg)
+Knowledge Graph:   Neo4j 5.x — hiring manager personas, company interview patterns
+Cache / Pub-Sub:   Redis 7.x — sessions, rate limiting, WebSocket, activity logs
+Task Queue:        Celery + Redis — scrape and tailor workers
+Browser Auto:      nodriver (Chromium CDP) — ATS filling, LinkedIn scraping
+Code Execution:    Judge0 API / local Docker sandbox
+Web Search:        SerpAPI or Brave Search
+PDF Generation:    reportlab
+Audio Capture:     naudiodon (PortAudio/WASAPI) + Python WASAPI loopback subprocess
+Stealth Layer:     Win32 SetWindowDisplayAffinity (koffi FFI) / macOS setContentProtection
+Infrastructure:    Docker Compose, GitHub Actions CI
+Auth:              JWT (access + refresh) + OS-level safeStorage + optional PIN lock
+Encryption:        DPAPI (Windows) / Keychain (macOS) + Fernet symmetric (credentials)
+
+================================================================================
+SECURITY & PRIVACY HIGHLIGHTS
+================================================================================
+
+- Credentials encrypted with OS-level DPAPI / macOS Keychain via Electron safeStorage
+- Fernet symmetric encryption for all stored ATS logins, email, LinkedIn, CalDAV creds
+- JWT with short-lived access tokens + persisted encrypted refresh tokens
+- Optional PIN lock: PBKDF2-SHA256 (100,000 iterations), lockout after 5 failures
+- Path traversal protection in File Service (PathEscapeError)
+- All SQL via SQLAlchemy ORM (no raw queries)
+- All Neo4j Cypher queries parameterized
+- Rate limiting: 100/min global (slowapi) + per-user Redis limits
+- CORS locked to known origins
+- GDPR: permanent account deletion (right-to-erasure) supported
+- Community pipeline strips all PII before Neo4j contribution
+
+================================================================================
+SCALE & ARCHITECTURE DESIGN
+================================================================================
+
+Designed for 5,000 concurrent users with <200ms API response:
+- Stateless backend (all session state in Redis / Postgres)
+- WebSocket scaling via Redis pub/sub (multi-instance FastAPI)
+- asyncpg connection pooling
+- Celery workers for all heavy tasks (scraping, tailoring, PDF generation)
+- Emotion analysis and LLM calls in asyncio executors (never block event loop)
+- Local models (all-MiniLM, MediaPipe, BERT) avoid API cost and latency for
+  high-frequency inference
+
+================================================================================
+END OF CONTEXT BRIEF
+================================================================================
