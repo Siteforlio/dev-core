@@ -1218,6 +1218,7 @@ export default function InterviewSession({ token }: Props) {
               onChange={(e) => handleAnswerChange(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter' && e.metaKey) handleSubmit() }}
             />
+          </div>
 
         ) : (
           // Question overlay (default)
