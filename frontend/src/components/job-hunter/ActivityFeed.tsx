@@ -36,12 +36,23 @@ const REGION_OPTS = [
 ] as const
 
 const BOARD_DISPLAY: Record<string, string> = {
-  indeed: 'Indeed', glassdoor: 'Glassdoor', zip_recruiter: 'ZipRecruiter',
-  google: 'Google', greenhouse: 'Greenhouse', lever: 'Lever', ashby: 'Ashby',
-  remotive: 'Remotive', remoteok: 'RemoteOK', hn_hiring: 'HN Hiring',
-  weworkremotely: 'WWR', zindi: 'Zindi', startupdeals_africa: 'SD Africa',
-  fuzu: 'Fuzu', brightermonday: 'BrighterMonday', myjobmag: 'MyJobMag',
-  kuhustle: 'Kuhustle', andela: 'Andela', arc: 'Arc.dev', linkedin: 'LinkedIn',
+  // JobSpy aggregators
+  indeed: 'Indeed', glassdoor: 'Glassdoor', zip_recruiter: 'ZipRecruiter', google: 'Google',
+  // ATS
+  greenhouse: 'Greenhouse', lever: 'Lever', ashby: 'Ashby',
+  // Startup / remote
+  wellfound: 'Wellfound', remotive: 'Remotive', remoteok: 'RemoteOK',
+  hn_hiring: 'HN Hiring', weworkremotely: 'WWR',
+  // Africa
+  zindi: 'Zindi', startupdeals_africa: 'SD Africa',
+  myjobmag: 'MyJobMag', kuhustle: 'Kuhustle',
+  // Browser-automation (stashed)
+  fuzu: 'Fuzu', brightermonday: 'BrighterMonday', andela: 'Andela', arc: 'Arc.dev',
+  // Global — new boards
+  the_muse: 'The Muse', jobicy: 'Jobicy', himalayas: 'Himalayas',
+  getonboard: 'GetOnBoard', adzuna: 'Adzuna', reed: 'Reed',
+  // Social
+  linkedin: 'LinkedIn',
 }
 
 /* ── Parse a raw feed message into structured parts ── */

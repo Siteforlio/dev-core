@@ -42,16 +42,17 @@ _BOARDS: list[BoardSpec] = [
         priority=2,
         auto_apply="partial",   # external links redirect to company ATS
     ),
-    BoardSpec(
-        id="glassdoor",
-        display_name="Glassdoor",
-        regions=("global",),
-        company_types=("faang", "enterprise", "startup", "sme", "all"),
-        work_types=("remote", "hybrid", "onsite", "any"),
-        avg_yield=60,
-        priority=3,
-        auto_apply="partial",
-    ),
+    # ── Stashed — actively blocks jobspy scraping ─────────────────────────
+    # BoardSpec(
+    #     id="glassdoor",
+    #     display_name="Glassdoor",
+    #     regions=("global",),
+    #     company_types=("faang", "enterprise", "startup", "sme", "all"),
+    #     work_types=("remote", "hybrid", "onsite", "any"),
+    #     avg_yield=60,
+    #     priority=3,
+    #     auto_apply="partial",
+    # ),
     BoardSpec(
         id="zip_recruiter",
         display_name="ZipRecruiter",
@@ -167,28 +168,54 @@ _BOARDS: list[BoardSpec] = [
         priority=4,
         auto_apply="none",      # competition platform — no standard apply form
     ),
-    BoardSpec(
-        id="startupdeals_africa",
-        display_name="Startup Deals Africa",
-        regions=("africa",),
-        company_types=("startup",),
-        work_types=("remote", "hybrid", "onsite", "any"),
-        avg_yield=15,
-        priority=4,
-        auto_apply="partial",   # links to company pages — variable quality
-    ),
+    # ── Stashed — site unreachable / DNS fails ────────────────────────────
+    # BoardSpec(
+    #     id="startupdeals_africa",
+    #     display_name="Startup Deals Africa",
+    #     regions=("africa",),
+    #     company_types=("startup",),
+    #     work_types=("remote", "hybrid", "onsite", "any"),
+    #     avg_yield=15,
+    #     priority=4,
+    #     auto_apply="partial",
+    # ),
     # ── Kenya / Africa boards ──────────────────────────────────────────────
-    BoardSpec(
-        id="brightermonday",
-        display_name="BrighterMonday",
-        regions=("kenya",),
-        company_types=("enterprise", "sme", "all"),
-        work_types=("hybrid", "onsite", "any"),
-        is_static=True,
-        avg_yield=40,
-        priority=3,
-        auto_apply="full",      # consistent apply form — dedicated filler
-    ),
+    # ── Browser-automation boards (stashed — nodriver/Playwright required) ───
+    # Uncomment when browser infrastructure is available.
+    # BoardSpec(
+    #     id="brightermonday",
+    #     display_name="BrighterMonday",
+    #     regions=("kenya",),
+    #     company_types=("enterprise", "sme", "all"),
+    #     work_types=("hybrid", "onsite", "any"),
+    #     is_static=True,
+    #     avg_yield=40,
+    #     priority=3,
+    #     auto_apply="full",
+    # ),
+    # BoardSpec(
+    #     id="andela",
+    #     display_name="Andela",
+    #     regions=("africa",),
+    #     company_types=("startup", "enterprise"),
+    #     work_types=("remote", "hybrid", "any"),
+    #     is_static=True,
+    #     avg_yield=20,
+    #     priority=3,
+    #     auto_apply="full",
+    # ),
+    # BoardSpec(
+    #     id="arc",
+    #     display_name="Arc.dev",
+    #     regions=("africa", "global"),
+    #     company_types=("startup", "sme"),
+    #     work_types=("remote",),
+    #     is_static=True,
+    #     avg_yield=25,
+    #     priority=3,
+    #     auto_apply="full",
+    # ),
+    # ── HTTP-only Kenya boards (no browser needed) ────────────────────────
     BoardSpec(
         id="myjobmag",
         display_name="MyJobMag Kenya",
@@ -200,39 +227,18 @@ _BOARDS: list[BoardSpec] = [
         priority=4,
         auto_apply="partial",   # some jobs have inline forms, others redirect
     ),
-    BoardSpec(
-        id="kuhustle",
-        display_name="Kuhustle",
-        regions=("kenya",),
-        company_types=("startup", "sme"),
-        work_types=("remote", "hybrid", "any"),
-        is_static=True,
-        avg_yield=15,
-        priority=5,
-        auto_apply="none",      # freelance gig platform — no standard job application flow
-    ),
-    BoardSpec(
-        id="andela",
-        display_name="Andela",
-        regions=("africa",),
-        company_types=("startup", "enterprise"),
-        work_types=("remote", "hybrid", "any"),
-        is_static=True,
-        avg_yield=20,
-        priority=3,
-        auto_apply="full",      # talent network with consistent apply form — dedicated filler
-    ),
-    BoardSpec(
-        id="arc",
-        display_name="Arc.dev",
-        regions=("africa", "global"),
-        company_types=("startup", "sme"),
-        work_types=("remote",),
-        is_static=True,
-        avg_yield=25,
-        priority=3,
-        auto_apply="full",      # consistent profile-based apply — dedicated filler
-    ),
+    # ── Stashed — site times out consistently ─────────────────────────────
+    # BoardSpec(
+    #     id="kuhustle",
+    #     display_name="Kuhustle",
+    #     regions=("kenya",),
+    #     company_types=("startup", "sme"),
+    #     work_types=("remote", "hybrid", "any"),
+    #     is_static=True,
+    #     avg_yield=15,
+    #     priority=5,
+    #     auto_apply="none",
+    # ),
     # ── LinkedIn (optional — requires credentials) ─────────────────────────
     BoardSpec(
         id="linkedin",
@@ -243,6 +249,69 @@ _BOARDS: list[BoardSpec] = [
         avg_yield=100,
         priority=1,
         auto_apply="none",      # LinkedIn Easy Apply needs dedicated browser session — explicitly skipped
+    ),
+    # ── Global boards (no auth) ────────────────────────────────────────────
+    BoardSpec(
+        id="the_muse",
+        display_name="The Muse",
+        regions=("global",),
+        company_types=("faang", "enterprise", "startup", "sme", "all"),
+        work_types=("remote", "hybrid", "onsite", "any"),
+        avg_yield=80,
+        priority=3,
+        auto_apply="none",      # links to company pages — varies by listing
+    ),
+    BoardSpec(
+        id="jobicy",
+        display_name="Jobicy",
+        regions=("global",),
+        company_types=("startup", "sme"),
+        work_types=("remote",),
+        avg_yield=50,
+        priority=3,
+        auto_apply="partial",
+    ),
+    BoardSpec(
+        id="himalayas",
+        display_name="Himalayas",
+        regions=("global",),
+        company_types=("startup", "sme"),
+        work_types=("remote",),
+        avg_yield=80,
+        priority=2,
+        auto_apply="partial",
+    ),
+    # ── Stashed — API now requires auth (401) ─────────────────────────────
+    # BoardSpec(
+    #     id="getonboard",
+    #     display_name="GetOnBoard",
+    #     regions=("global",),
+    #     company_types=("startup", "sme"),
+    #     work_types=("remote", "hybrid", "onsite", "any"),
+    #     avg_yield=60,
+    #     priority=3,
+    #     auto_apply="partial",
+    # ),
+    # ── Global boards (optional API key — free tier) ───────────────────────
+    BoardSpec(
+        id="adzuna",
+        display_name="Adzuna",
+        regions=("global",),                # covers 15+ countries in one call
+        company_types=("faang", "enterprise", "startup", "sme", "all"),
+        work_types=("remote", "hybrid", "onsite", "any"),
+        avg_yield=300,                      # ~50 per country × 6+ countries active
+        priority=2,
+        auto_apply="partial",               # redirects to company ATS pages
+    ),
+    BoardSpec(
+        id="reed",
+        display_name="Reed.co.uk",
+        regions=("global",),                # UK primary, some EU listings
+        company_types=("enterprise", "sme", "all"),
+        work_types=("remote", "hybrid", "onsite", "any"),
+        avg_yield=80,
+        priority=3,
+        auto_apply="partial",
     ),
 ]
 

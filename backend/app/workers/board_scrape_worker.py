@@ -175,11 +175,15 @@ async def _run_board(board_id: str, search_term: str, linkedin_creds: dict | Non
             elif board_id == "startupdeals_africa":
                 return await startup_scrapers.scrape_startupdeals_africa(search_term, client)
 
-            elif board_id == "fuzu":
-                return await kenya_scrapers.scrape_fuzu(search_term, client)
-
-            elif board_id == "brightermonday":
-                return await kenya_scrapers.scrape_brightermonday(search_term, client)
+            # ── Browser-automation boards (stashed — nodriver/Playwright required)
+            # elif board_id == "fuzu":
+            #     return await kenya_scrapers.scrape_fuzu(search_term, client)
+            # elif board_id == "brightermonday":
+            #     return await kenya_scrapers.scrape_brightermonday(search_term, client)
+            # elif board_id == "andela":
+            #     return await kenya_scrapers.scrape_andela(search_term, client)
+            # elif board_id == "arc":
+            #     return await kenya_scrapers.scrape_arc(search_term, client)
 
             elif board_id == "myjobmag":
                 return await kenya_scrapers.scrape_myjobmag(search_term, client)
@@ -187,11 +191,31 @@ async def _run_board(board_id: str, search_term: str, linkedin_creds: dict | Non
             elif board_id == "kuhustle":
                 return await kenya_scrapers.scrape_kuhustle(search_term, client)
 
-            elif board_id == "andela":
-                return await kenya_scrapers.scrape_andela(search_term, client)
+            # ── Global boards (no auth) ────────────────────────────────────
+            elif board_id == "the_muse":
+                from app.services.job_hunter.global_scrapers import scrape_the_muse
+                return await scrape_the_muse(search_term, client)
 
-            elif board_id == "arc":
-                return await kenya_scrapers.scrape_arc(search_term, client)
+            elif board_id == "jobicy":
+                from app.services.job_hunter.global_scrapers import scrape_jobicy
+                return await scrape_jobicy(search_term, client)
+
+            elif board_id == "himalayas":
+                from app.services.job_hunter.global_scrapers import scrape_himalayas
+                return await scrape_himalayas(search_term, client)
+
+            elif board_id == "getonboard":
+                from app.services.job_hunter.global_scrapers import scrape_getonboard
+                return await scrape_getonboard(search_term, client)
+
+            # ── Global boards (optional API key) ──────────────────────────
+            elif board_id == "adzuna":
+                from app.services.job_hunter.global_scrapers import scrape_adzuna
+                return await scrape_adzuna(search_term, client)
+
+            elif board_id == "reed":
+                from app.services.job_hunter.global_scrapers import scrape_reed
+                return await scrape_reed(search_term, client)
 
             elif board_id in ("indeed", "glassdoor", "zip_recruiter", "google"):
                 # JobSpy boards — each one is a site_name in jobspy

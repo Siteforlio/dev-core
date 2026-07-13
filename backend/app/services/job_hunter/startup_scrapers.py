@@ -226,35 +226,48 @@ async def scrape_weworkremotely(search_term: str, client: httpx.AsyncClient) -> 
 
 async def scrape_zindi(search_term: str, client: httpx.AsyncClient) -> list[dict]:
     """
-    Zindi Africa — public jobs listing page (HTML scrape).
-    Africa's largest data science community.
+    Zindi Jobs — Africa's largest data science community.
+    Moved to zindi.global; job data is embedded as JSON in the page title patterns.
     """
     try:
         r = await client.get(
-            "https://zindi.africa/jobs",
+            "https://zindi.global/jobs",
             headers={"User-Agent": "Mozilla/5.0"},
             timeout=_HTTP_TIMEOUT,
         )
         if r.status_code != 200:
             return []
-        titles = re.findall(r'class="[^"]*job-title[^"]*"[^>]*>([^<]+)<', r.text)
-        companies = re.findall(r'class="[^"]*company-name[^"]*"[^>]*>([^<]+)<', r.text)
+
+        # Data is in JSON embedded as "title":"Job, Company" pairs
+        raw_titles = re.findall(r'"title":"([^"]{5,120})"', r.text)
         urls_found = re.findall(r'href="(/jobs/[^"]+)"', r.text)
+
         jobs = []
-        for i, title in enumerate(titles[:50]):
-            company = companies[i] if i < len(companies) else "Zindi"
-            path = urls_found[i] if i < len(urls_found) else "/jobs"
-            job_url = f"https://zindi.africa{path}"
+        seen: set[str] = set()
+        for i, raw in enumerate(raw_titles[:60]):
+            raw = raw.strip()
+            if not raw or raw in seen:
+                continue
+            seen.add(raw)
+            # Format is often "Job Title, Company"
+            if ", " in raw:
+                parts = raw.rsplit(", ", 1)
+                title   = parts[0].strip()
+                company = parts[1].strip()
+            else:
+                title   = raw
+                company = "Zindi"
+            path    = urls_found[i] if i < len(urls_found) else "/jobs"
+            job_url = f"https://zindi.global{path}"
             jobs.append(_normalize({
-                "source": "zindi",
-                "title": title.strip(),
-                "company": company.strip(),
+                "source":   "zindi",
+                "title":    title,
+                "company":  company,
                 "location": "Africa / Remote",
-                "location_country": None,
-                "remote": True,
-                "url": job_url,
+                "remote":   True,
+                "url":      job_url,
                 "apply_url": job_url,
-                "description": f"Data science / ML role at {company.strip()} via Zindi Africa.",
+                "description": f"Data science / ML role at {company} via Zindi.",
             }))
         return jobs
     except Exception:
@@ -302,117 +315,97 @@ async def scrape_startupdeals_africa(search_term: str, client: httpx.AsyncClient
 
 async def scrape_wellfound(search_term: str, client: httpx.AsyncClient) -> list[dict]:
     """
-    Wellfound (formerly AngelList Talent) — the primary source for funded startup roles globally.
-    Uses their public job search JSON endpoint (no auth required for browsing).
+    Wellfound (formerly AngelList Talent) via ScrapFly.
+    Uses ScrapFly's ASP bypass + residential proxies + JS rendering to extract
+    the Apollo GraphQL state embedded in __NEXT_DATA__ on each search page.
+
+    Extraction logic mirrors the working reference scraper at:
+    scripts/job-serch/scrapfly-scrapers/wellfound-scraper/get_jobs.py
+
+    Requires SCRAPFLY_KEY env var (https://scrapfly.io/).
+    Returns [] silently if the key is not set.
     """
-    try:
-        # Wellfound exposes a public search API used by their own frontend
-        r = await client.get(
-            "https://wellfound.com/api/v2/jobs",
-            params={
-                "q": search_term,
-                "remote": "true",
-                "page": 1,
-            },
-            headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "Accept": "application/json",
-                "Referer": "https://wellfound.com/jobs",
-            },
-            timeout=_HTTP_TIMEOUT,
-        )
-        if r.status_code != 200:
-            # Fallback: scrape the HTML jobs listing page
-            return await _scrape_wellfound_html(search_term, client)
+    import json as _json
+    import os
+    from datetime import datetime
 
-        data = r.json()
-        jobs = []
-        for j in (data.get("jobs") or data.get("results") or [])[:80]:
-            startup = j.get("startup") or j.get("company") or {}
-            remote = j.get("remote") or j.get("locationTypes", {}).get("remote", False)
-            loc = j.get("location") or ("Remote" if remote else "")
-            slug = j.get("slug") or ""
-            url = f"https://wellfound.com/jobs/{slug}" if slug else "https://wellfound.com/jobs"
-            jobs.append(_normalize({
-                "source": "wellfound",
-                "title": j.get("title") or j.get("role") or "",
-                "company": startup.get("name") or j.get("companyName") or "",
-                "location": loc,
-                "location_country": None,
-                "remote": bool(remote),
-                "url": url,
-                "apply_url": url,
-                "description": (j.get("description") or j.get("jobDescription") or "")[:3000],
-            }))
-        return jobs
+    # Resolve key — prefer settings object, fall back to raw env
+    try:
+        from app.core.config import settings
+        scrapfly_key = settings.scrapfly_key or os.environ.get("SCRAPFLY_KEY", "")
     except Exception:
-        return await _scrape_wellfound_html(search_term, client)
+        scrapfly_key = os.environ.get("SCRAPFLY_KEY", "")
 
+    if not scrapfly_key:
+        return []
 
-async def _scrape_wellfound_html(search_term: str, client: httpx.AsyncClient) -> list[dict]:
-    """Fallback: parse Wellfound HTML search results page."""
     try:
-        query = search_term.replace(" ", "-").lower()
-        r = await client.get(
-            f"https://wellfound.com/role/l/{query}",
-            headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "Accept": "text/html",
-            },
-            timeout=_HTTP_TIMEOUT,
-        )
-        if r.status_code != 200:
+        from scrapfly import ScrapeConfig, ScrapflyClient
+
+        scrapfly = ScrapflyClient(key=scrapfly_key)
+
+        role = search_term.replace(" ", "-").lower()
+        url  = f"https://wellfound.com/role/{role}"
+
+        response = await scrapfly.async_scrape(ScrapeConfig(
+            url,
+            asp=True,
+            country="US",
+            render_js=True,
+            proxy_pool="public_residential_pool",
+        ))
+
+        # ── Extract Apollo graph from __NEXT_DATA__ ───────────────────────
+        raw = response.selector.css("script#__NEXT_DATA__::text").get()
+        if not raw:
             return []
+        graph = _json.loads(raw)["props"]["pageProps"]["apolloState"]["data"]
 
-        # Extract job data from JSON embedded in the page (__NEXT_DATA__ or similar)
-        import json as _json
-        next_data_match = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', r.text, re.DOTALL)
-        if next_data_match:
-            try:
-                page_data = _json.loads(next_data_match.group(1))
-                job_listings = (
-                    page_data.get("props", {})
-                    .get("pageProps", {})
-                    .get("jobListings") or []
-                )
-                jobs = []
-                for j in job_listings[:80]:
-                    startup = j.get("startup") or {}
-                    url = f"https://wellfound.com/jobs/{j.get('slug', '')}"
-                    jobs.append(_normalize({
-                        "source": "wellfound",
-                        "title": j.get("title", ""),
-                        "company": startup.get("name", ""),
-                        "location": j.get("locationNames") or ("Remote" if j.get("remote") else ""),
-                        "location_country": None,
-                        "remote": bool(j.get("remote")),
-                        "url": url,
-                        "apply_url": url,
-                        "description": j.get("description", "")[:3000],
-                    }))
-                return jobs
-            except (_json.JSONDecodeError, KeyError):
-                pass
-
-        # Last resort: extract from visible HTML
-        titles = re.findall(r'data-test="JobListing-title"[^>]*>([^<]+)<', r.text)
-        companies = re.findall(r'data-test="StartupResult-name"[^>]*>([^<]+)<', r.text)
-        links = re.findall(r'href="(/jobs/[^"]+)"', r.text)
+        # ── Extract jobs — same logic as get_jobs.py ──────────────────────
         jobs = []
-        for i, title in enumerate(titles[:60]):
-            url = f"https://wellfound.com{links[i]}" if i < len(links) else "https://wellfound.com/jobs"
+        for key, value in graph.items():
+            if not key.startswith("JobListingSearchResult:"):
+                continue
+
+            job_id    = value.get("id")
+            title     = (value.get("title") or "").strip()
+            posted_ts = value.get("liveStartAt")
+            desc      = re.sub(r'<[^>]+>', ' ', value.get("description") or "")
+            remote    = bool(value.get("remote"))
+            locations = value.get("locationNames") or []
+            location  = locations[0] if locations else ("Remote" if remote else None)
+            job_url   = f"https://wellfound.com/jobs/{job_id}" if job_id else ""
+
+            # Company name: walk StartupResult nodes, find the one that
+            # references this job in highlightedJobListings via __ref
+            company_name = ""
+            ref_key = f"JobListingSearchResult:{job_id}"
+            for skey, sval in graph.items():
+                if not (skey.startswith("StartupResult:") or skey.startswith("Startup:")):
+                    continue
+                for ref in (sval.get("highlightedJobListings") or []):
+                    if isinstance(ref, dict) and ref.get("__ref") == ref_key:
+                        company_name = sval.get("name", "")
+                        break
+                if company_name:
+                    break
+
+            if not title or not job_url:
+                continue
+
             jobs.append(_normalize({
-                "source": "wellfound",
-                "title": title.strip(),
-                "company": companies[i].strip() if i < len(companies) else "",
-                "location": "Remote",
-                "location_country": None,
-                "remote": True,
-                "url": url,
-                "apply_url": url,
-                "description": f"Startup role at {companies[i].strip() if i < len(companies) else 'startup'}. See {url}",
+                "source":    "wellfound",
+                "title":     title,
+                "company":   company_name,
+                "location":  location,
+                "remote":    remote,
+                "url":       job_url,
+                "apply_url": job_url,
+                "description": desc[:10000],
             }))
+
         return jobs
+
     except Exception:
         return []
 

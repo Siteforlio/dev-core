@@ -13,8 +13,18 @@ GREENHOUSE_SLUGS = [
     "affirm", "marqeta", "adyen", "checkout", "patreon", "recurly",
     # AI & ML
     "openai", "anthropic", "scale", "huggingface", "cohere", "mistral",
-    "perplexity", "character", "inflection", "runway", "elevenlabs",
+    "perplexity", "character", "inflection", "runway", "runwayml",
     "replicate", "modal", "together", "groq", "cerebras",
+    # Voice AI & Conversational AI
+    "polyai", "parloa", "humeai", "speechmatics",
+    # AI Platform / LLMOps / Observability
+    "arizeai", "runpod", "coreweave", "gleanwork",
+    # CX / Contact Center AI
+    "ada",
+    # Automation & Integration
+    "boomilp",
+    # Creative AI
+    "stabilityai",
     # Developer Tools & Infra
     "hashicorp", "mongodb", "cockroachlabs", "planetscale",
     "datadog", "newrelic", "pagerduty", "grafana", "influxdata",
@@ -47,9 +57,24 @@ GREENHOUSE_SLUGS = [
     "census", "hightouch", "rudderstack",
     # Health & Bio
     "benchling", "veeva", "tempus", "recursion",
-    # Other
+    # Defence & GovTech
     "palantir", "anduril", "samsara",
+    # Other
     "vercel", "tabnine", "replit",
+    # ── career-ops additions ── DACH ──────────────────────────────────────────
+    "blackforestlabs", "helsing",          # frontier AI (Freiburg, Munich)
+    "celonis", "contentful",               # enterprise SaaS (Munich, Berlin)
+    "getyourguide", "hellofresh",          # consumer / ops (Berlin)
+    "n26", "traderepublicbank", "sumup",   # DACH fintech
+    "factorial",                            # EU HR SaaS (Barcelona)
+    # ── career-ops additions ── UK / Ireland ──────────────────────────────────
+    "wayve", "isomorphiclabs", "physicsx", # frontier AI (London)
+    # ── career-ops additions ── Iberia ────────────────────────────────────────
+    "amplemarket",                          # Lisbon AI sales
+    # ── career-ops additions ── Switzerland ──────────────────────────────────
+    "scandit",                              # Zurich computer vision
+    # ── career-ops additions ── Canada ───────────────────────────────────────
+    "later", "safariai", "hootsuite",      # Vancouver tech
 ]
 
 LEVER_SLUGS = [
@@ -81,6 +106,17 @@ LEVER_SLUGS = [
     "ramp", "mercury", "brex",
     # Other
     "brave", "proton",
+    # ── career-ops additions ── Europe ────────────────────────────────────────
+    "qonto",        # Paris/Berlin neobank
+    "forto",        # Berlin freight forwarder
+    "pigment",      # Paris FP&A platform
+    "clarity-ai",   # Madrid sustainability analytics
+    # ── career-ops additions ── Nordics ──────────────────────────────────────
+    "spotify", "vinted",
+    # ── career-ops additions ── Canada ───────────────────────────────────────
+    "sanctuary",    # Vancouver humanoid robotics
+    # ── career-ops additions ── AI / Dev Tools ───────────────────────────────
+    "mistral",      # Paris AI lab (also on Ashby; try both)
 ]
 
 ASHBY_SLUGS = [
@@ -105,7 +141,7 @@ ASHBY_SLUGS = [
     # Scheduling & Forms
     "cal-com", "formbricks", "documenso",
     # CRM & Sales
-    "attio", "clay", "apollo",
+    "attio", "clay", "claylabs", "apollo",
     # Billing
     "lago", "hyperline", "orb",
     # Analytics & BI
@@ -120,6 +156,30 @@ ASHBY_SLUGS = [
     "boundary", "teleport",
     # Other
     "linear", "highlight",
+    # ── career-ops additions ── Voice AI ─────────────────────────────────────
+    "elevenlabs", "deepgram", "vapi", "bland",
+    # ── career-ops additions ── AI Agents / CX ───────────────────────────────
+    "sierra", "decagon", "lindy",
+    # ── career-ops additions ── Automation ───────────────────────────────────
+    "n8n", "zapier",
+    # ── career-ops additions ── DACH AI ──────────────────────────────────────
+    "AlephAlpha", "DeepL",
+    # ── career-ops additions ── Nordics ──────────────────────────────────────
+    "lovable", "legora",
+    # ── career-ops additions ── Security / AI Safety ─────────────────────────
+    "lakera.ai",
+    # ── career-ops additions ── Bio / Science ────────────────────────────────
+    "cradlebio",
+    # ── career-ops additions ── UK / Ireland ──────────────────────────────────
+    "synthesia", "faculty", "causaly",
+    # ── career-ops additions ── France ───────────────────────────────────────
+    "photoroom",
+    # ── career-ops additions ── Canada ───────────────────────────────────────
+    "klue", "glacis-ai",
+    # ── career-ops additions ── EU ───────────────────────────────────────────
+    "travelperk", "tinybird",
+    # ── career-ops additions ── Dev Tools / Auth ─────────────────────────────
+    "workos", "clerk", "perplexity",
 ]
 
 _HTTP_TIMEOUT = 10.0
