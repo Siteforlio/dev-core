@@ -1,115 +1,99 @@
-import json
+"""
+In-process cache — replaces Redis for single-user desktop app.
+
+Session state and generic cache: TTL dict in-memory (fast, ephemeral).
+JWT blacklist: in-memory with expiry (single-user — restart clears old tokens safely).
+"""
+import asyncio
 import logging
-import redis.asyncio as redis
-from redis.asyncio.retry import Retry
-from redis.backoff import ExponentialBackoff
-from redis.exceptions import ConnectionError, TimeoutError
-from app.core.config import settings
+import time
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_redis: redis.Redis | None = None
+# ── In-memory TTL store ────────────────────────────────────────────────────────
+SESSION_TTL = 14400  # 4 hours (seconds)
 
-SESSION_TTL = 14400  # 4 hours
-
-_RETRY = Retry(ExponentialBackoff(cap=10, base=0.5), retries=3)
-
-
-async def get_redis() -> redis.Redis:
-    global _redis
-    if _redis is None:
-        _redis = redis.from_url(
-            settings.redis_url,
-            decode_responses=True,
-            socket_connect_timeout=5,
-            socket_timeout=5,
-            retry=_RETRY,
-            retry_on_error=[ConnectionError, TimeoutError],
-            health_check_interval=30,  # auto-reconnects on stale connections
-        )
-    return _redis
+_store: dict[str, tuple[Any, float]] = {}  # key → (value, expires_at)
+_store_lock = asyncio.Lock()
 
 
-async def close_redis() -> None:
-    """Call on application shutdown to cleanly close the connection pool."""
-    global _redis
-    if _redis is not None:
-        try:
-            await _redis.aclose()
-        except Exception:
-            pass
-        _redis = None
+async def _mem_set(key: str, value: Any, ttl: int) -> None:
+    async with _store_lock:
+        _store[key] = (value, time.monotonic() + ttl)
 
 
-async def _safe_redis_op(coro):
-    """Execute a Redis coroutine, return None on any connection error."""
-    try:
-        return await coro
-    except (ConnectionError, TimeoutError) as e:
-        logger.warning("[cache] Redis unavailable: %s — resetting connection", e)
-        global _redis
-        _redis = None  # force reconnect on next call
-        return None
-    except Exception as e:
-        logger.error("[cache] Redis error: %s", e)
-        return None
+async def _mem_get(key: str) -> Any | None:
+    async with _store_lock:
+        entry = _store.get(key)
+        if entry is None:
+            return None
+        value, expires_at = entry
+        if time.monotonic() > expires_at:
+            del _store[key]
+            return None
+        return value
 
+
+async def _mem_delete(key: str) -> None:
+    async with _store_lock:
+        _store.pop(key, None)
+
+
+# ── Session state ──────────────────────────────────────────────────────────────
 
 async def set_session_state(session_id: str, state: dict, ttl: int = SESSION_TTL) -> None:
-    r = await get_redis()
-    await _safe_redis_op(
-        r.setex(f"interview:session:{session_id}:state", ttl, json.dumps(state))
-    )
+    await _mem_set(f"interview:session:{session_id}:state", state, ttl)
 
 
 async def get_session_state(session_id: str) -> dict | None:
-    r = await get_redis()
-    raw = await _safe_redis_op(r.get(f"interview:session:{session_id}:state"))
-    return json.loads(raw) if raw else None
+    return await _mem_get(f"interview:session:{session_id}:state")
 
 
 async def delete_session_state(session_id: str) -> None:
-    r = await get_redis()
-    await _safe_redis_op(r.delete(f"interview:session:{session_id}:state"))
+    await _mem_delete(f"interview:session:{session_id}:state")
 
 
-# ── Generic key/value cache helpers ──
+# ── Generic key/value cache ────────────────────────────────────────────────────
 
 async def cache_set(key: str, value: dict | list, ttl: int = 86400) -> None:
-    r = await get_redis()
-    await _safe_redis_op(r.setex(key, ttl, json.dumps(value)))
+    await _mem_set(key, value, ttl)
 
 
 async def cache_get(key: str) -> dict | list | None:
-    r = await get_redis()
-    raw = await _safe_redis_op(r.get(key))
-    return json.loads(raw) if raw else None
+    return await _mem_get(key)
 
 
 async def cache_delete(key: str) -> None:
-    r = await get_redis()
-    await _safe_redis_op(r.delete(key))
+    await _mem_delete(key)
 
 
-# ── JWT refresh-token blacklist ───────────────────────────────────────────────
+# ── JWT refresh-token blacklist ────────────────────────────────────────────────
 
-_JTI_PREFIX = "jwt:blacklist:"
+_jti_store: dict[str, float] = {}  # jti → expires_at (monotonic)
+_jti_lock = asyncio.Lock()
 
 
 async def blacklist_jti(jti: str, ttl_seconds: int) -> None:
-    """Mark a refresh-token JTI as used. Expires automatically after token's natural TTL."""
     if ttl_seconds <= 0:
         return
-    r = await get_redis()
-    await _safe_redis_op(r.setex(f"{_JTI_PREFIX}{jti}", ttl_seconds, "1"))
+    async with _jti_lock:
+        _jti_store[jti] = time.monotonic() + ttl_seconds
 
 
 async def is_jti_blacklisted(jti: str) -> bool:
-    """Return True if this JTI has already been used (replay detected)."""
-    r = await get_redis()
-    result = await _safe_redis_op(r.exists(f"{_JTI_PREFIX}{jti}"))
-    # Redis unavailable → fail open (log warning, don't block auth)
-    if result is None:
-        logger.warning("[cache] Redis unavailable — skipping JTI blacklist check for %s", jti)
-        return False
-    return bool(result)
+    async with _jti_lock:
+        expires_at = _jti_store.get(jti)
+        if expires_at is None:
+            return False
+        if time.monotonic() > expires_at:
+            del _jti_store[jti]
+            return False
+        return True
+
+
+# ── Cleanup (called on shutdown — kept for API compat with main.py) ───────────
+
+async def close_redis() -> None:
+    """No-op: kept so main.py shutdown hook doesn't break."""
+    pass

@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     neo4j_uri: str = "bolt://localhost:7687"
     neo4j_user: str = "neo4j"
     neo4j_password: str = "devcore123"
-    redis_url: str = "redis://localhost:6379"
+    redis_url: str = ""
     jwt_secret: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"
     jwt_access_expire_minutes: int = 10080  # 7 days — practical for dev
@@ -24,8 +24,8 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     environment: str = "development"
     job_hunter_encryption_key: str | None = None  # Fernet 32-byte URL-safe base64 key
-    celery_broker_url: str = "redis://localhost:6379/1"
-    celery_result_backend: str = "redis://localhost:6379/2"
+    celery_broker_url: str = ""
+    celery_result_backend: str = ""
     playwright_max_concurrency: int = 4
     judge0_api_key: str = ""
     serp_api_key: str = ""
