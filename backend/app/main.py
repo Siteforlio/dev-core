@@ -42,6 +42,7 @@ from fastapi.responses import JSONResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+from app.core.config import settings
 from app.core.middleware import setup_middleware
 from app.core.exceptions import register_exception_handlers
 from app.api.v1.auth import router as auth_router
@@ -141,20 +142,24 @@ async def _ensure_celery_worker() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Bootstrap SQLite schema (creates tables that don't exist; safe to run every startup)
-    import app.models.pg.user          # noqa: F401
-    import app.models.pg.session       # noqa: F401
-    import app.models.pg.job_hunter    # noqa: F401
-    import app.models.pg.knowledge     # noqa: F401
-    import app.models.pg.meeting_debrief  # noqa: F401
-    import app.models.pg.simulation    # noqa: F401
-    import app.models.pg.progress      # noqa: F401
-    import app.models.pg.community     # noqa: F401
-    import app.models.pg.cluely_session  # noqa: F401
-    from app.models.pg.base import Base
-    from app.core.database import engine
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    # Bootstrap SQLite schema (creates tables that don't exist; safe every startup)
+    # PostgreSQL path: Alembic handles migrations — skip create_all
+    if settings.database_url.startswith("sqlite+aiosqlite"):
+        # MAINTENANCE: Add new model modules here when new pg model files are created
+        # (each module must be imported so SQLAlchemy registers its tables with Base.metadata)
+        import app.models.pg.user          # noqa: F401
+        import app.models.pg.session       # noqa: F401
+        import app.models.pg.job_hunter    # noqa: F401
+        import app.models.pg.knowledge     # noqa: F401
+        import app.models.pg.meeting_debrief  # noqa: F401
+        import app.models.pg.simulation    # noqa: F401
+        import app.models.pg.progress      # noqa: F401
+        import app.models.pg.community     # noqa: F401
+        import app.models.pg.cluely_session  # noqa: F401
+        from app.models.pg.base import Base
+        from app.core.database import engine
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
 
     await run_seed()
     async with AsyncSessionLocal() as db:
