@@ -1,14 +1,17 @@
 import pytest
 import app.core.cache as _cache
+import app.core.event_bus as _ebus
 
 
 @pytest.fixture(autouse=True)
 def clear_cache_state():
     _cache._store.clear()
     _cache._jti_store.clear()
+    _ebus._subscribers.clear()
     yield
     _cache._store.clear()
     _cache._jti_store.clear()
+    _ebus._subscribers.clear()
 
 
 @pytest.mark.asyncio

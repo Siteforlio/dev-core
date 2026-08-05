@@ -13,7 +13,7 @@ Three-mode system:
      The pill also triggers a full first-person answer on demand (handled
      by the LLM service, not here).
 
-Redis key: cluely:outcome:{session_id}:{question_hash}  TTL=1800 (30 min)
+Cache key: cluely:outcome:{session_id}:{question_hash}  TTL=1800 (30 min)
 """
 import asyncio
 import hashlib

@@ -2,6 +2,7 @@
 Extension API — endpoints called by the Chrome browser extension.
 All auth via Bearer JWT. User-scoped only (no campaign_id in path).
 """
+import html
 import uuid
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException
@@ -70,10 +71,13 @@ async def ext_link_page(t: str, redirect: str = "", fill: str = ""):
     Extension reads data-jh-token, stores JWT, then navigates to redirect URL.
     No session cookie or user lookup needed — the JWT is the credential.
     """
+    t_safe = html.escape(str(t))
+    redirect_safe = html.escape(str(redirect))
+    fill_safe = html.escape(str(fill))
     return HTMLResponse(content=f"""<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><title>Linking Job Hunter…</title></head>
-<body data-jh-token="{t}" data-jh-redirect="{redirect}" data-jh-fill="{fill}"
+<body data-jh-token="{t_safe}" data-jh-redirect="{redirect_safe}" data-jh-fill="{fill_safe}"
       style="margin:0;background:#0f172a;display:flex;align-items:center;justify-content:center;height:100vh;font-family:system-ui;color:#67e8f9;font-size:14px">
   <div>✦ Linking Job Hunter extension…</div>
 </body>

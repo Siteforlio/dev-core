@@ -3,8 +3,8 @@ Rolling interview summariser.
 
 Runs as a background asyncio task per session. Every SUMMARY_INTERVAL_S seconds,
 it picks up new transcript bubbles since the last run, merges them into the
-existing rolling summary, and extracts key facts. Both are stored in Redis so
-the LLM prompt always has full 2-hour context in ~375 tokens.
+existing rolling summary, and extracts key facts. Both are stored in-memory
+(in-process cache) so the LLM prompt always has full 2-hour context in ~375 tokens.
 
 Three-layer context model injected into every LLM call:
   [key facts]        — named entities, tech, decisions  (~75 tokens, always current)

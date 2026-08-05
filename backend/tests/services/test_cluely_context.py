@@ -1,94 +1,88 @@
 import pytest
-from unittest.mock import AsyncMock
+import app.core.cache as _cache
 from app.services.cluely.context_manager import ContextManager
 from app.schemas.cluely import TranscriptEntry
 
 SESSION_ID = "test-123"
 TRANSCRIPT_KEY = f"cluely:session:{SESSION_ID}:transcript"
 STATE_KEY = f"cluely:session:{SESSION_ID}:state"
-TRANSCRIPT_TTL = 4 * 3600  # 14400 seconds
+
+
+@pytest.fixture(autouse=True)
+def clear_cache_state():
+    _cache._store.clear()
+    _cache._jti_store.clear()
+    yield
+    _cache._store.clear()
+    _cache._jti_store.clear()
 
 
 @pytest.mark.asyncio
-async def test_push_transcript_stores_in_redis():
-    """TTL is set only when the key is new (rpush returns 1) — not on every push."""
-    redis = AsyncMock()
-    redis.rpush = AsyncMock(return_value=1)  # new key — length 1
-    redis.ltrim = AsyncMock()
-    redis.expire = AsyncMock()
-    cm = ContextManager(redis=redis, session_id=SESSION_ID)
+async def test_push_transcript_stores_entry():
+    """push_transcript appends a dict to the in-memory list."""
+    cm = ContextManager(session_id=SESSION_ID)
     entry = TranscriptEntry(speaker="interviewer", text="Tell me about yourself.", seq=1)
     await cm.push_transcript(entry)
-    redis.rpush.assert_called_once_with(TRANSCRIPT_KEY, entry.model_dump_json())
-    redis.ltrim.assert_called_once_with(TRANSCRIPT_KEY, -20, -1)
-    redis.expire.assert_called_once_with(TRANSCRIPT_KEY, TRANSCRIPT_TTL)
+    result = await _cache.cache_get(TRANSCRIPT_KEY)
+    assert result is not None
+    assert len(result) == 1
+    assert result[0]["speaker"] == "interviewer"
+    assert result[0]["text"] == "Tell me about yourself."
 
 
 @pytest.mark.asyncio
-async def test_push_transcript_does_not_reset_ttl_on_subsequent_pushes():
-    """TTL must NOT be reset on every push — only on key creation."""
-    redis = AsyncMock()
-    redis.rpush = AsyncMock(return_value=5)  # existing key — length > 1
-    redis.ltrim = AsyncMock()
-    redis.expire = AsyncMock()
-    cm = ContextManager(redis=redis, session_id=SESSION_ID)
-    entry = TranscriptEntry(speaker="user", text="Second push.", seq=2)
-    await cm.push_transcript(entry)
-    redis.expire.assert_not_called()
+async def test_push_transcript_multiple_entries():
+    """Subsequent pushes append rather than replace."""
+    cm = ContextManager(session_id=SESSION_ID)
+    for i in range(3):
+        entry = TranscriptEntry(speaker="user", text=f"Message {i}.", seq=i)
+        await cm.push_transcript(entry)
+    result = await _cache.cache_get(TRANSCRIPT_KEY)
+    assert result is not None
+    assert len(result) == 3
 
 
 @pytest.mark.asyncio
 async def test_get_window_returns_last_n():
-    redis = AsyncMock()
-    entries = [f'{{"speaker":"interviewer","text":"q{i}","seq":{i}}}' for i in range(15)]
-    redis.lrange = AsyncMock(return_value=[e.encode() for e in entries[-10:]])
-    cm = ContextManager(redis=redis, session_id=SESSION_ID)
+    """get_window returns the most recent n entries."""
+    cm = ContextManager(session_id=SESSION_ID)
+    for i in range(15):
+        entry = TranscriptEntry(speaker="interviewer", text=f"q{i}", seq=i)
+        await cm.push_transcript(entry)
     window = await cm.get_window(n=10)
     assert len(window) == 10
+    assert window[-1].text == "q14"
 
 
 @pytest.mark.asyncio
-async def test_set_state_calls_setex():
-    redis = AsyncMock()
-    redis.setex = AsyncMock()
-    cm = ContextManager(redis=redis, session_id=SESSION_ID)
+async def test_set_state_and_get_state():
+    """set_state stores a value; get_state retrieves it."""
+    cm = ContextManager(session_id=SESSION_ID)
     await cm.set_state("active")
-    redis.setex.assert_called_once_with(STATE_KEY, TRANSCRIPT_TTL, "active")
-
-
-@pytest.mark.asyncio
-async def test_get_state_returns_decoded_value():
-    redis = AsyncMock()
-    redis.get = AsyncMock(return_value=b"active")
-    cm = ContextManager(redis=redis, session_id=SESSION_ID)
     result = await cm.get_state()
     assert result == "active"
-    redis.get.assert_called_once_with(STATE_KEY)
 
 
 @pytest.mark.asyncio
 async def test_get_state_returns_none_when_missing():
-    redis = AsyncMock()
-    redis.get = AsyncMock(return_value=None)
-    cm = ContextManager(redis=redis, session_id=SESSION_ID)
+    """get_state returns None when no state has been set."""
+    cm = ContextManager(session_id=SESSION_ID)
     result = await cm.get_state()
     assert result is None
 
 
 @pytest.mark.asyncio
-async def test_session_exists_returns_true_when_key_present():
-    redis = AsyncMock()
-    redis.exists = AsyncMock(return_value=1)
-    cm = ContextManager(redis=redis, session_id=SESSION_ID)
+async def test_session_exists_returns_true_when_state_set():
+    """session_exists returns True after set_state is called."""
+    cm = ContextManager(session_id=SESSION_ID)
+    await cm.set_state("active")
     result = await cm.session_exists()
     assert result is True
-    redis.exists.assert_called_once_with(STATE_KEY)
 
 
 @pytest.mark.asyncio
-async def test_session_exists_returns_false_when_key_absent():
-    redis = AsyncMock()
-    redis.exists = AsyncMock(return_value=0)
-    cm = ContextManager(redis=redis, session_id=SESSION_ID)
+async def test_session_exists_returns_false_when_no_state():
+    """session_exists returns False when no state key exists."""
+    cm = ContextManager(session_id=SESSION_ID)
     result = await cm.session_exists()
     assert result is False

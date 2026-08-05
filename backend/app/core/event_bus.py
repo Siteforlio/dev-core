@@ -15,7 +15,7 @@ _subscribers: dict[str, list[asyncio.Queue]] = defaultdict(list)
 
 def publish(channel: str, message: str) -> None:
     """Publish a message to all subscribers of a channel (sync-safe)."""
-    for q in _subscribers.get(channel, []):
+    for q in list(_subscribers.get(channel, [])):
         try:
             q.put_nowait(message)
         except asyncio.QueueFull:

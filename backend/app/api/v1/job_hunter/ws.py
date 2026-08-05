@@ -42,3 +42,7 @@ async def campaign_activity_feed(
         pass  # shutdown or network error — exit silently
     finally:
         unsubscribe(f"campaign:{campaign_id}:activity", q)
+        try:
+            await websocket.close()
+        except Exception:
+            pass

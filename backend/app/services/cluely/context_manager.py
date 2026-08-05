@@ -1,7 +1,6 @@
-import json
 import logging
 from app.schemas.cluely import TranscriptEntry
-from app.core.cache import cache_set, cache_get, cache_delete, SESSION_TTL
+from app.core.cache import list_append, cache_set, cache_get, SESSION_TTL
 
 logger = logging.getLogger(__name__)
 TRANSCRIPT_TTL = SESSION_TTL  # 4 hours
@@ -17,9 +16,7 @@ class ContextManager:
         self._summarized_key = f"cluely:session:{session_id}:summarized_up_to"
 
     async def push_transcript(self, entry: TranscriptEntry) -> None:
-        existing = await cache_get(self._transcript_key) or []
-        existing.append(entry.model_dump())
-        await cache_set(self._transcript_key, existing, ttl=TRANSCRIPT_TTL)
+        await list_append(self._transcript_key, entry.model_dump(), ttl=SESSION_TTL)
 
     async def get_window(self, n: int = 15) -> list[TranscriptEntry]:
         """Return the most recent n bubbles verbatim."""

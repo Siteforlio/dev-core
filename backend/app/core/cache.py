@@ -69,6 +69,18 @@ async def cache_delete(key: str) -> None:
     await _mem_delete(key)
 
 
+async def list_append(key: str, item: Any, ttl: int = SESSION_TTL) -> None:
+    """Atomically append an item to a cached list. Creates the list if absent."""
+    async with _store_lock:
+        entry = _store.get(key)
+        if entry is None or time.monotonic() > entry[1]:
+            lst: list = []
+        else:
+            lst = list(entry[0])  # copy to avoid mutating cached value
+        lst.append(item)
+        _store[key] = (lst, time.monotonic() + ttl)
+
+
 # ── JWT refresh-token blacklist ────────────────────────────────────────────────
 
 _jti_store: dict[str, float] = {}  # jti → expires_at (monotonic)
