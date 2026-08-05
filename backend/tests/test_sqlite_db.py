@@ -5,6 +5,13 @@ from sqlalchemy.pool import StaticPool
 from app.models.pg.base import Base
 from app.models.pg.user import User
 from app.models.pg.job_hunter import JobHunterProfile
+import app.models.pg.session          # noqa: F401
+import app.models.pg.simulation       # noqa: F401
+import app.models.pg.meeting_debrief  # noqa: F401
+import app.models.pg.knowledge        # noqa: F401
+import app.models.pg.community        # noqa: F401
+import app.models.pg.progress         # noqa: F401
+import app.models.pg.cluely_session   # noqa: F401
 
 @pytest_asyncio.fixture
 async def db():
@@ -34,8 +41,11 @@ async def test_user_create_read(db):
 @pytest.mark.asyncio
 async def test_jsonb_fields_work_as_json(db):
     """JSONB columns must work with SQLite JSON type."""
-    from app.models.pg.job_hunter import JobHunterProfile
     from sqlalchemy import select
+    # Create parent user first (FK constraint)
+    user = User(id="u1", name="Test", email="t@test.com", hashed_password="hash")
+    db.add(user)
+    await db.commit()
     profile = JobHunterProfile(
         user_id="u1",
         skills=["Python", "FastAPI"],
