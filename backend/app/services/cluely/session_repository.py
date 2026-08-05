@@ -1,5 +1,5 @@
 """
-Write-through PostgreSQL repository for cluely overlay sessions.
+Write-through repository for cluely overlay sessions (SQLite or PostgreSQL).
 
 Design principles:
 - Session start/end and interactions write immediately (low volume, high value).
@@ -7,8 +7,8 @@ Design principles:
   a background flusher drains the queue every FLUSH_INTERVAL_MS milliseconds
   using a single bulk INSERT. This avoids one round-trip per spoken word while
   still guaranteeing near-real-time persistence.
-- All DB access is async via asyncpg / SQLAlchemy async session.
-- No business logic here — pure repository pattern (ARCHITECTURE.md §4.2).
+- All DB access is async via SQLAlchemy async session (aiosqlite or asyncpg).
+- No business logic here — pure repository pattern.
 """
 import asyncio
 import logging
