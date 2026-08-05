@@ -67,7 +67,7 @@ class CommunityPipeline:
         return payload
 
     async def _write_to_graph(self, payload: dict):
-        """Write anonymized round data to Neo4j community pool."""
+        """Write anonymized round data to the SQLite community graph tables."""
         for round_data in payload.get("rounds", []):
             await write_community_round(
                 company=payload["company"],
@@ -79,7 +79,7 @@ class CommunityPipeline:
             )
 
     async def flush_pending(self) -> int:
-        """Flush all un-flushed CommunityData rows to Neo4j. Returns count flushed."""
+        """Flush all un-flushed CommunityData rows to the graph store. Returns count flushed."""
         result = await self.db.execute(
             select(CommunityData).where(CommunityData.flushed_to_graph == False)  # noqa: E712
         )

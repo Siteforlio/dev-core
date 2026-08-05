@@ -1,38 +1,39 @@
+"""Tests for round_queries — mocks AsyncSessionLocal (SQLAlchemy/SQLite impl)."""
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
-def _make_neo4j_result(rows: list[dict]):
-    async def _aiter(self):
-        for row in rows:
-            rec = MagicMock()
-            rec.__getitem__ = lambda s, k: row[k]
-            yield rec
+def _make_db_session_for_questions(round_obj, questions):
+    """Return a session mock that returns round_obj on first execute, questions on second."""
+    round_execute = MagicMock()
+    round_execute.scalar_one_or_none.return_value = round_obj
 
-    result = MagicMock()
-    result.__aiter__ = _aiter
-    return result
+    q_execute = MagicMock()
+    q_execute.scalars.return_value.all.return_value = questions
 
+    session = AsyncMock()
+    session.execute = AsyncMock(side_effect=[round_execute, q_execute])
 
-def _make_driver(mock_session):
     ctx = MagicMock()
-    ctx.__aenter__ = AsyncMock(return_value=mock_session)
+    ctx.__aenter__ = AsyncMock(return_value=session)
     ctx.__aexit__ = AsyncMock(return_value=False)
-
-    driver = MagicMock()
-    driver.session.return_value = ctx
-    return driver
+    return ctx
 
 
 async def test_get_questions_for_round_returns_list():
     from app.graph.round_queries import get_questions_for_round
 
-    mock_session = AsyncMock()
-    mock_session.run.return_value = _make_neo4j_result([
-        {"text": "Tell me about a time you led a project.", "difficulty": "medium"},
-        {"text": "How do you handle conflict?", "difficulty": "medium"},
-    ])
+    round_obj = MagicMock()
+    round_obj.id = "round-1"
 
-    with patch("app.graph.round_queries.get_driver", new=AsyncMock(return_value=_make_driver(mock_session))):
+    q1 = MagicMock()
+    q1.text = "Tell me about a time you led a project."
+    q1.difficulty = "medium"
+    q2 = MagicMock()
+    q2.text = "How do you handle conflict?"
+    q2.difficulty = "medium"
+
+    with patch("app.graph.round_queries.AsyncSessionLocal",
+               return_value=_make_db_session_for_questions(round_obj, [q1, q2])):
         result = await get_questions_for_round("Google", "behavioral")
 
     assert len(result) == 2
@@ -42,10 +43,18 @@ async def test_get_questions_for_round_returns_list():
 async def test_get_questions_returns_empty_for_unknown_round():
     from app.graph.round_queries import get_questions_for_round
 
-    mock_session = AsyncMock()
-    mock_session.run.return_value = _make_neo4j_result([])
+    # When round is not found, return None — second execute won't be called
+    round_execute = MagicMock()
+    round_execute.scalar_one_or_none.return_value = None
 
-    with patch("app.graph.round_queries.get_driver", new=AsyncMock(return_value=_make_driver(mock_session))):
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=round_execute)
+
+    ctx = MagicMock()
+    ctx.__aenter__ = AsyncMock(return_value=session)
+    ctx.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("app.graph.round_queries.AsyncSessionLocal", return_value=ctx):
         result = await get_questions_for_round("Google", "unknown_round")
 
     assert result == []
@@ -54,12 +63,15 @@ async def test_get_questions_returns_empty_for_unknown_round():
 async def test_get_round_context_bundles_questions_and_patterns():
     from app.graph.round_queries import get_round_context
 
-    mock_session = AsyncMock()
-    mock_session.run.return_value = _make_neo4j_result([
-        {"text": "System design question?", "difficulty": "hard"},
-    ])
+    round_obj = MagicMock()
+    round_obj.id = "round-2"
 
-    with patch("app.graph.round_queries.get_driver", new=AsyncMock(return_value=_make_driver(mock_session))):
+    q = MagicMock()
+    q.text = "System design question?"
+    q.difficulty = "hard"
+
+    with patch("app.graph.round_queries.AsyncSessionLocal",
+               return_value=_make_db_session_for_questions(round_obj, [q])):
         ctx = await get_round_context("Google", "technical")
 
     assert "company" in ctx

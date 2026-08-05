@@ -1,22 +1,28 @@
-from app.graph.connection import get_driver
+"""Interview round graph queries — SQLAlchemy/SQLite implementation (replaces Neo4j Cypher)."""
+from sqlalchemy import select
+from app.core.database import AsyncSessionLocal
+from app.models.pg.graph import InterviewRound, InterviewQuestion
 
 
 async def get_questions_for_round(company_name: str, round_type: str) -> list[dict]:
-    driver = await get_driver()
-    async with driver.session() as session:
-        result = await session.run(
-            """
-            MATCH (c:Company {name: $name})-[:HAS_ROUND]->(r:RoundType {type: $round_type})
-                  -[:HAS_QUESTION]->(q:Question)
-            RETURN q.text AS text, q.difficulty AS difficulty
-            """,
-            name=company_name,
-            round_type=round_type,
+    async with AsyncSessionLocal() as db:
+        # Find the round
+        round_result = await db.execute(
+            select(InterviewRound).where(
+                InterviewRound.company_name == company_name,
+                InterviewRound.type == round_type,
+            )
         )
-        rows = []
-        async for rec in result:
-            rows.append({"text": rec["text"], "difficulty": rec["difficulty"]})
-        return rows
+        round_obj = round_result.scalar_one_or_none()
+        if round_obj is None:
+            return []
+
+        # Fetch questions for this round
+        q_result = await db.execute(
+            select(InterviewQuestion).where(InterviewQuestion.round_id == round_obj.id)
+        )
+        questions = q_result.scalars().all()
+        return [{"text": q.text, "difficulty": q.difficulty} for q in questions]
 
 
 async def get_round_context(company_name: str, round_type: str) -> dict:
@@ -30,27 +36,38 @@ async def get_round_context(company_name: str, round_type: str) -> dict:
 
 async def seed_rounds(round_data: list[dict]):
     """round_data: [{company, type, questions: [{text, difficulty}]}]"""
-    driver = await get_driver()
-    async with driver.session() as session:
+    async with AsyncSessionLocal() as db:
         for entry in round_data:
-            await session.run(
-                """
-                MATCH (c:Company {name: $company})
-                MERGE (r:RoundType {type: $type})<-[:HAS_ROUND]-(c)
-                """,
-                company=entry["company"],
-                type=entry["type"],
-            )
-            for q in entry.get("questions", []):
-                await session.run(
-                    """
-                    MATCH (c:Company {name: $company})-[:HAS_ROUND]->(r:RoundType {type: $type})
-                    MERGE (q:Question {text: $text})
-                    SET q.difficulty = $difficulty
-                    MERGE (r)-[:HAS_QUESTION]->(q)
-                    """,
-                    company=entry["company"],
-                    type=entry["type"],
-                    text=q["text"],
-                    difficulty=q.get("difficulty", "medium"),
+            # Upsert the round
+            round_result = await db.execute(
+                select(InterviewRound).where(
+                    InterviewRound.company_name == entry["company"],
+                    InterviewRound.type == entry["type"],
                 )
+            )
+            round_obj = round_result.scalar_one_or_none()
+            if round_obj is None:
+                round_obj = InterviewRound(
+                    company_name=entry["company"],
+                    type=entry["type"],
+                )
+                db.add(round_obj)
+                await db.flush()  # get round_obj.id before inserting questions
+
+            # Upsert questions: load existing texts to avoid duplicates
+            existing_q_result = await db.execute(
+                select(InterviewQuestion.text).where(
+                    InterviewQuestion.round_id == round_obj.id
+                )
+            )
+            existing_texts = set(existing_q_result.scalars().all())
+
+            for q in entry.get("questions", []):
+                if q["text"] not in existing_texts:
+                    db.add(InterviewQuestion(
+                        round_id=round_obj.id,
+                        text=q["text"],
+                        difficulty=q.get("difficulty", "medium"),
+                    ))
+
+        await db.commit()

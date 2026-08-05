@@ -1,31 +1,30 @@
-from app.graph.connection import get_driver
+"""Company graph queries — SQLAlchemy/SQLite implementation (replaces Neo4j Cypher)."""
+from sqlalchemy import select, distinct
+from app.core.database import AsyncSessionLocal
+from app.models.pg.graph import Company, InterviewRound
 
 
 async def get_all_companies() -> list[dict]:
-    driver = await get_driver()
-    async with driver.session() as session:
-        result = await session.run(
-            "MATCH (c:Company) RETURN c.name AS name, c.industry AS industry ORDER BY c.name"
-        )
-        return [{"name": r["name"], "industry": r["industry"]} async for r in result]
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(Company).order_by(Company.name))
+        companies = result.scalars().all()
+        return [{"name": c.name, "industry": c.industry} for c in companies]
 
 
 async def get_round_types(company_name: str) -> list[str]:
-    driver = await get_driver()
-    async with driver.session() as session:
-        result = await session.run(
-            "MATCH (c:Company {name: $name})-[:HAS_ROUND]->(r:RoundType) RETURN DISTINCT r.type AS type",
-            name=company_name,
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(distinct(InterviewRound.type)).where(
+                InterviewRound.company_name == company_name
+            )
         )
-        return [r["type"] async for r in result]
+        return list(result.scalars().all())
 
 
 async def seed_companies(companies: list[dict]):
-    driver = await get_driver()
-    async with driver.session() as session:
+    async with AsyncSessionLocal() as db:
         for company in companies:
-            await session.run(
-                "MERGE (c:Company {name: $name}) SET c.industry = $industry",
-                name=company["name"],
-                industry=company["industry"],
-            )
+            existing = await db.get(Company, company["name"])
+            if existing is None:
+                db.add(Company(name=company["name"], industry=company.get("industry")))
+        await db.commit()

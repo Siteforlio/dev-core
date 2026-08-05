@@ -1,4 +1,7 @@
-from app.graph.connection import get_driver
+"""Community round queries — SQLAlchemy/SQLite implementation (replaces Neo4j Cypher)."""
+from sqlalchemy import select
+from app.core.database import AsyncSessionLocal
+from app.models.pg.graph import CommunityRound
 
 
 async def write_community_round(
@@ -9,42 +12,54 @@ async def write_community_round(
     passed: bool | None,
     moments: list[dict],
 ):
-    """Write an anonymized round outcome into the community knowledge graph."""
-    driver = await get_driver()
-    async with driver.session() as session:
-        await session.run(
-            """
-            MATCH (c:Company {name: $company})
-            MATCH (r:RoundType {type: $round_type})<-[:HAS_ROUND]-(c)
-            MERGE (cr:CommunityRound {
-                company: $company,
-                role: $role,
-                round_type: $round_type
-            })
-            SET cr.sample_count = coalesce(cr.sample_count, 0) + 1,
-                cr.avg_grade    = (coalesce(cr.avg_grade, 0) * coalesce(cr.sample_count - 1, 0) + coalesce($grade, 0))
-                                  / cr.sample_count
-            """,
-            company=company,
-            role=role,
-            round_type=round_type,
-            grade=grade,
+    """Upsert a CommunityRound, incrementing sample_count and updating rolling avg_grade."""
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(CommunityRound).where(
+                CommunityRound.company_name == company,
+                CommunityRound.role == role,
+                CommunityRound.round_type == round_type,
+            )
         )
+        cr = result.scalar_one_or_none()
+
+        if cr is None:
+            cr = CommunityRound(
+                company_name=company,
+                role=role,
+                round_type=round_type,
+                sample_count=1,
+                avg_grade=grade,
+            )
+            db.add(cr)
+        else:
+            new_count = cr.sample_count + 1
+            if grade is not None:
+                old_avg = cr.avg_grade or 0.0
+                cr.avg_grade = (old_avg * cr.sample_count + grade) / new_count
+            cr.sample_count = new_count
+
+        await db.commit()
 
 
 async def get_community_stats(company: str, round_type: str) -> dict:
     """Return aggregated community performance data for a company+round."""
-    driver = await get_driver()
-    async with driver.session() as session:
-        result = await session.run(
-            """
-            MATCH (cr:CommunityRound {company: $company, round_type: $round_type})
-            RETURN cr.avg_grade AS avg_grade, cr.sample_count AS sample_count
-            """,
-            company=company,
-            round_type=round_type,
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(CommunityRound).where(
+                CommunityRound.company_name == company,
+                CommunityRound.round_type == round_type,
+            )
         )
-        rows = [r async for r in result]
+        rows = result.scalars().all()
         if not rows:
             return {"avg_grade": None, "sample_count": 0}
-        return {"avg_grade": rows[0]["avg_grade"], "sample_count": rows[0]["sample_count"]}
+
+        # Aggregate across all roles for the given company+round_type
+        total_samples = sum(r.sample_count for r in rows)
+        weighted_sum = sum(
+            (r.avg_grade or 0.0) * r.sample_count for r in rows if r.avg_grade is not None
+        )
+        graded_samples = sum(r.sample_count for r in rows if r.avg_grade is not None)
+        avg = weighted_sum / graded_samples if graded_samples > 0 else None
+        return {"avg_grade": avg, "sample_count": total_samples}

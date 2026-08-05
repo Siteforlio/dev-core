@@ -85,6 +85,7 @@ async def lifespan(app: FastAPI):
         import app.models.pg.progress      # noqa: F401
         import app.models.pg.community     # noqa: F401
         import app.models.pg.cluely_session  # noqa: F401
+        import app.models.pg.graph          # noqa: F401
         from app.models.pg.base import Base
         from app.core.database import engine
         async with engine.begin() as conn:

@@ -1,43 +1,41 @@
-from app.graph.connection import get_driver
+"""Manager graph queries — SQLAlchemy/SQLite implementation (replaces Neo4j Cypher)."""
+from sqlalchemy import select
+from app.core.database import AsyncSessionLocal
+from app.models.pg.graph import Manager
 
 
 async def get_managers_for_company(company_name: str) -> list[dict]:
-    driver = await get_driver()
-    async with driver.session() as session:
-        result = await session.run(
-            """
-            MATCH (m:HiringManager)-[:WORKS_AT]->(c:Company {name: $name})
-            OPTIONAL MATCH (m)-[:HAS_TRAIT]->(t:Trait)
-            WITH m, collect(t.name) AS traits
-            RETURN m.name AS name, m.title AS title, traits
-            """,
-            name=company_name,
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(Manager).where(Manager.company_name == company_name)
         )
-        rows = []
-        async for r in result:
-            rows.append({"name": r["name"], "title": r["title"], "traits": r["traits"]})
-        return rows
+        managers = result.scalars().all()
+        return [
+            {"name": m.name, "title": m.title, "traits": m.traits or []}
+            for m in managers
+        ]
 
 
 async def get_manager_history(manager_name: str) -> list[dict]:
-    """Return all companies a manager has been associated with (current + previous)."""
-    driver = await get_driver()
-    async with driver.session() as session:
-        result = await session.run(
-            """
-            MATCH (m:HiringManager {name: $name})-[rel:WORKS_AT|PREVIOUSLY_AT]->(c:Company)
-            RETURN c.name AS company, m.title AS title, type(rel) AS relationship
-            """,
-            name=manager_name,
+    """Return current company association for a manager.
+
+    Note: PREVIOUSLY_AT relationships don't exist in the SQLite model (single-user
+    desktop app). Returns current WORKS_AT only.
+    """
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(Manager).where(Manager.name == manager_name)
         )
-        rows = []
-        async for r in result:
-            rows.append({
-                "company": r["company"],
-                "title": r["title"],
-                "relationship": r["relationship"],
-            })
-        return rows
+        manager = result.scalar_one_or_none()
+        if manager is None or manager.company_name is None:
+            return []
+        return [
+            {
+                "company": manager.company_name,
+                "title": manager.title,
+                "relationship": "WORKS_AT",
+            }
+        ]
 
 
 async def record_manager_move(
@@ -46,46 +44,35 @@ async def record_manager_move(
     to_company: str,
     new_title: str,
 ):
-    """Demote current WORKS_AT to PREVIOUSLY_AT and create new WORKS_AT."""
-    driver = await get_driver()
-    async with driver.session() as session:
-        await session.run(
-            """
-            MATCH (m:HiringManager {name: $name})-[old:WORKS_AT]->(old_co:Company {name: $from_company})
-            MATCH (new_co:Company {name: $to_company})
-            DELETE old
-            MERGE (m)-[:PREVIOUSLY_AT]->(old_co)
-            MERGE (m)-[:WORKS_AT]->(new_co)
-            SET m.title = $new_title
-            """,
-            name=manager_name,
-            from_company=from_company,
-            to_company=to_company,
-            new_title=new_title,
+    """Update manager's company and title (no PREVIOUSLY_AT tracking in SQLite model)."""
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(Manager).where(Manager.name == manager_name)
         )
+        manager = result.scalar_one_or_none()
+        if manager:
+            manager.company_name = to_company
+            manager.title = new_title
+            await db.commit()
 
 
 async def seed_managers(managers: list[dict]):
     """managers: [{name, title, company, traits: [str]}]"""
-    driver = await get_driver()
-    async with driver.session() as session:
+    async with AsyncSessionLocal() as db:
         for m in managers:
-            await session.run(
-                """
-                MERGE (mgr:HiringManager {name: $name})
-                SET mgr.title = $title
-                WITH mgr
-                MATCH (c:Company {name: $company})
-                MERGE (mgr)-[:WORKS_AT]->(c)
-                """,
-                name=m["name"], title=m["title"], company=m["company"],
+            result = await db.execute(
+                select(Manager).where(Manager.name == m["name"])
             )
-            for trait in m.get("traits", []):
-                await session.run(
-                    """
-                    MATCH (mgr:HiringManager {name: $name})
-                    MERGE (t:Trait {name: $trait})
-                    MERGE (mgr)-[:HAS_TRAIT]->(t)
-                    """,
-                    name=m["name"], trait=trait,
-                )
+            existing = result.scalar_one_or_none()
+            if existing is None:
+                db.add(Manager(
+                    name=m["name"],
+                    title=m.get("title"),
+                    company_name=m.get("company"),
+                    traits=m.get("traits", []),
+                ))
+            else:
+                existing.title = m.get("title")
+                existing.company_name = m.get("company")
+                existing.traits = m.get("traits", [])
+        await db.commit()
