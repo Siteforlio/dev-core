@@ -50,8 +50,11 @@ class TaskRunner:
         self._periodic.append(task)
 
     async def shutdown(self) -> None:
+        global _runner
         self._running = False
         for t in self._periodic:
             t.cancel()
-        if self._tasks:
-            await asyncio.gather(*self._tasks, return_exceptions=True)
+        all_tasks = list(self._tasks) + self._periodic
+        if all_tasks:
+            await asyncio.gather(*all_tasks, return_exceptions=True)
+        _runner = None

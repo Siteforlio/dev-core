@@ -392,7 +392,8 @@ async def add_manual_job(
     # Queue tailoring — same pipeline as scraped jobs
     try:
         from app.workers.tailor_worker import tailor_listing
-        tailor_listing.apply_async(args=[listing.id, user_id], queue="tailor", priority=9)
+        from app.core.task_runner import get_runner
+        get_runner().submit(tailor_listing(listing.id, user_id))
     except Exception:
         pass  # tailoring is best-effort; listing is already saved
 
@@ -470,19 +471,18 @@ async def get_scrape_status(
     Each board entry: {status: queued|running|done|failed, count: int, error: str|None}
     Also returns the overall run status.
     """
-    from app.workers.board_scrape_worker import _get_all_board_statuses, _redis
+    from app.workers.board_scrape_worker import _get_all_board_statuses
+    from app.core.cache import cache_get
     from app.services.job_hunter.board_registry import all_boards
-    import json
 
-    board_statuses = _get_all_board_statuses(campaign_id)
+    board_statuses = await _get_all_board_statuses(campaign_id)
 
     # Overall run status
     run_status: dict = {}
     try:
-        r = _redis()
-        raw = r.get(f"scrape_run:{campaign_id}")
-        if raw:
-            run_status = json.loads(raw)
+        cached_raw = await cache_get(f"scrape_run:{campaign_id}")
+        if cached_raw:
+            run_status = cached_raw
     except Exception:
         pass
 
