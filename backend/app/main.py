@@ -90,10 +90,9 @@ async def lifespan(app: FastAPI):
         from app.core.database import engine
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-
-    await run_seed()
-    async with AsyncSessionLocal() as db:
-        await seed_knowledge_profiles(db)
+        await run_seed()
+        async with AsyncSessionLocal() as db:
+            await seed_knowledge_profiles(db)
     flush_task = asyncio.create_task(flush_loop())
     from app.core.task_runner import get_runner
     from app.workers.scraper_worker import scrape_all_active_campaigns

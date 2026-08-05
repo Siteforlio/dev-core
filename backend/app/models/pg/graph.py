@@ -18,7 +18,7 @@ class Company(Base):
 class Manager(Base):
     __tablename__ = "graph_managers"
 
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
     title: Mapped[str | None] = mapped_column(String(255), nullable=True)
     company_name: Mapped[str | None] = mapped_column(
@@ -30,7 +30,7 @@ class Manager(Base):
 class InterviewRound(Base):
     __tablename__ = "graph_interview_rounds"
 
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     company_name: Mapped[str] = mapped_column(
         String(255), ForeignKey("graph_companies.name"), nullable=False
     )
@@ -45,14 +45,15 @@ class InterviewRound(Base):
 class InterviewQuestion(Base):
     __tablename__ = "graph_interview_questions"
 
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     round_id: Mapped[str] = mapped_column(
-        String, ForeignKey("graph_interview_rounds.id"), nullable=False
+        String(36), ForeignKey("graph_interview_rounds.id"), nullable=False
     )
     text: Mapped[str] = mapped_column(String, nullable=False)
     difficulty: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     __table_args__ = (
+        UniqueConstraint("round_id", "text", name="uq_interview_question_round_text"),
         Index("ix_interview_questions_round", "round_id"),
     )
 
@@ -60,7 +61,7 @@ class InterviewQuestion(Base):
 class CommunityRound(Base):
     __tablename__ = "graph_community_rounds"
 
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     company_name: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[str] = mapped_column(String(255), nullable=False)
     round_type: Mapped[str] = mapped_column(String(50), nullable=False)

@@ -1,5 +1,6 @@
 """Community round queries — SQLAlchemy/SQLite implementation (replaces Neo4j Cypher)."""
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from app.core.database import AsyncSessionLocal
 from app.models.pg.graph import CommunityRound
 
@@ -31,15 +32,37 @@ async def write_community_round(
                 sample_count=1,
                 avg_grade=grade,
             )
-            db.add(cr)
+            try:
+                db.add(cr)
+                await db.commit()
+            except IntegrityError:
+                # Concurrent call inserted the row between our SELECT and INSERT — re-fetch and update
+                await db.rollback()
+                result = await db.execute(
+                    select(CommunityRound).where(
+                        CommunityRound.company_name == company,
+                        CommunityRound.role == role,
+                        CommunityRound.round_type == round_type,
+                    )
+                )
+                cr = result.scalar_one()
+                new_count = cr.sample_count + 1
+                if grade is not None:
+                    if cr.avg_grade is None:
+                        cr.avg_grade = grade
+                    else:
+                        cr.avg_grade = (cr.avg_grade * cr.sample_count + grade) / new_count
+                cr.sample_count = new_count
+                await db.commit()
         else:
             new_count = cr.sample_count + 1
             if grade is not None:
-                old_avg = cr.avg_grade or 0.0
-                cr.avg_grade = (old_avg * cr.sample_count + grade) / new_count
+                if cr.avg_grade is None:
+                    cr.avg_grade = grade  # first graded sample — don't dilute with ungraded entries
+                else:
+                    cr.avg_grade = (cr.avg_grade * cr.sample_count + grade) / new_count
             cr.sample_count = new_count
-
-        await db.commit()
+            await db.commit()
 
 
 async def get_community_stats(company: str, round_type: str) -> dict:

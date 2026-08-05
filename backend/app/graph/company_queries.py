@@ -23,8 +23,13 @@ async def get_round_types(company_name: str) -> list[str]:
 
 async def seed_companies(companies: list[dict]):
     async with AsyncSessionLocal() as db:
+        # Bulk pre-load all existing company names in one query — eliminates N+1
+        names = [c["name"] for c in companies]
+        existing_result = await db.execute(
+            select(Company).where(Company.name.in_(names))
+        )
+        existing_names = {c.name for c in existing_result.scalars().all()}
         for company in companies:
-            existing = await db.get(Company, company["name"])
-            if existing is None:
+            if company["name"] not in existing_names:
                 db.add(Company(name=company["name"], industry=company.get("industry")))
         await db.commit()

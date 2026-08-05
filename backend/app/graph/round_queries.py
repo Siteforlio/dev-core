@@ -6,22 +6,15 @@ from app.models.pg.graph import InterviewRound, InterviewQuestion
 
 async def get_questions_for_round(company_name: str, round_type: str) -> list[dict]:
     async with AsyncSessionLocal() as db:
-        # Find the round
-        round_result = await db.execute(
-            select(InterviewRound).where(
+        result = await db.execute(
+            select(InterviewQuestion)
+            .join(InterviewRound, InterviewRound.id == InterviewQuestion.round_id)
+            .where(
                 InterviewRound.company_name == company_name,
                 InterviewRound.type == round_type,
             )
         )
-        round_obj = round_result.scalar_one_or_none()
-        if round_obj is None:
-            return []
-
-        # Fetch questions for this round
-        q_result = await db.execute(
-            select(InterviewQuestion).where(InterviewQuestion.round_id == round_obj.id)
-        )
-        questions = q_result.scalars().all()
+        questions = result.scalars().all()
         return [{"text": q.text, "difficulty": q.difficulty} for q in questions]
 
 

@@ -59,11 +59,15 @@ async def record_manager_move(
 async def seed_managers(managers: list[dict]):
     """managers: [{name, title, company, traits: [str]}]"""
     async with AsyncSessionLocal() as db:
+        # Bulk pre-load all existing managers in one query — eliminates N+1
+        names = [m["name"] for m in managers]
+        existing_result = await db.execute(
+            select(Manager).where(Manager.name.in_(names))
+        )
+        existing_map = {mgr.name: mgr for mgr in existing_result.scalars().all()}
+
         for m in managers:
-            result = await db.execute(
-                select(Manager).where(Manager.name == m["name"])
-            )
-            existing = result.scalar_one_or_none()
+            existing = existing_map.get(m["name"])
             if existing is None:
                 db.add(Manager(
                     name=m["name"],
