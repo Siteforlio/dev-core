@@ -34,12 +34,34 @@ async function startBackend(): Promise<void> {
       { cwd: backendDir, stdio: ['ignore', 'pipe', 'pipe'] }
     )
 
+    let stderrBuf = ''
+    let startupDone = false
+
     _backendProcess.stdout?.on('data', (d: Buffer) => process.stdout.write(`[backend] ${d}`))
-    _backendProcess.stderr?.on('data', (d: Buffer) => process.stderr.write(`[backend] ${d}`))
-    _backendProcess.on('error', (err: Error) => reject(err))
+    _backendProcess.stderr?.on('data', (d: Buffer) => {
+      const text = d.toString()
+      stderrBuf += text
+      process.stderr.write(`[backend] ${text}`)
+    })
+
+    _backendProcess.on('error', (err: Error) => {
+      if (!startupDone) {
+        clearInterval(poll)
+        reject(err)
+      }
+    })
+
     _backendProcess.on('exit', (code: number | null) => {
-      if (code !== 0 && code !== null) {
+      if (!startupDone) {
+        // Process exited before health check passed — reject immediately with stderr context
+        clearInterval(poll)
+        reject(new Error(`Backend exited with code ${code}.\n${stderrBuf.slice(-500)}`))
+      } else if (code !== 0 && code !== null) {
+        // Mid-session crash — notify all renderer windows
         console.error(`[devcore] backend exited with code ${code}`)
+        BrowserWindow.getAllWindows().forEach(w => {
+          if (!w.isDestroyed()) w.webContents.send('devcore:backend:crashed', { code })
+        })
       }
     })
 
@@ -48,7 +70,7 @@ async function startBackend(): Promise<void> {
     const poll = setInterval(async () => {
       if (Date.now() - start > 30_000) {
         clearInterval(poll)
-        reject(new Error('Backend did not start within 30s'))
+        reject(new Error(`Backend did not start within 30s.\n${stderrBuf.slice(-500)}`))
         return
       }
       try {
@@ -57,6 +79,7 @@ async function startBackend(): Promise<void> {
         req.on('response', (res) => {
           if (res.statusCode === 200) {
             clearInterval(poll)
+            startupDone = true
             resolve()
           }
         })
@@ -704,6 +727,5 @@ app.whenReady().then(async () => {
   createWindow()          // main app window (overlay deferred until splash-done IPC)
   _startDeviceWatcher()   // hot-plug detection
 })
-app.on('before-quit', () => stopBackend())
 app.on('will-quit', () => stopBackend())
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
