@@ -1,7 +1,6 @@
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import String, DateTime, Text, Date, Index
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import String, DateTime, Text, Date, Index, JSON
 from sqlalchemy.orm import Mapped, mapped_column
 from app.models.pg.base import Base
 
@@ -33,13 +32,13 @@ class MeetingDebrief(Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # [{text, owner, due, done}]
-    actions: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    actions: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
 
     # [{text, meta}]
-    decisions: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    decisions: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
 
     # [{name, email, role, initials, color, status}]
-    attendees: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    attendees: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
 
     # Linked Cluely overlay session — transcript is pulled in for AI summary
     cluely_session_id: Mapped[str | None] = mapped_column(String, nullable=True)

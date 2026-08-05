@@ -4,18 +4,18 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy.pool import StaticPool
 from app.models.pg.base import Base
 from app.models.pg.user import User
+from app.models.pg.job_hunter import JobHunterProfile
 
 @pytest_asyncio.fixture
 async def db():
-    # Inline engine for test isolation — only the users table is created here
-    # because other models use JSONB (fixed in Task 2)
+    # Inline engine for test isolation — create all tables now that JSONB has been replaced with JSON
     engine = create_async_engine(
         "sqlite+aiosqlite:///:memory:",
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all, tables=[User.__table__])  # only create the table under test
+        await conn.run_sync(Base.metadata.create_all)  # create all tables
     session = async_sessionmaker(engine, expire_on_commit=False)
     async with session() as s:
         yield s
@@ -30,3 +30,20 @@ async def test_user_create_read(db):
     result = await db.execute(select(User).where(User.id == "u1"))
     found = result.scalar_one()
     assert found.email == "t@test.com"
+
+@pytest.mark.asyncio
+async def test_jsonb_fields_work_as_json(db):
+    """JSONB columns must work with SQLite JSON type."""
+    from app.models.pg.job_hunter import JobHunterProfile
+    from sqlalchemy import select
+    profile = JobHunterProfile(
+        user_id="u1",
+        skills=["Python", "FastAPI"],
+        work_experience=[{"company": "Acme", "role": "Engineer"}],
+    )
+    db.add(profile)
+    await db.commit()
+    result = await db.execute(select(JobHunterProfile).where(JobHunterProfile.user_id == "u1"))
+    found = result.scalar_one()
+    assert found.skills == ["Python", "FastAPI"]
+    assert found.work_experience[0]["company"] == "Acme"

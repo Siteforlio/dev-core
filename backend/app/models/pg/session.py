@@ -1,6 +1,5 @@
 from datetime import datetime, timezone
-from sqlalchemy import String, DateTime, ForeignKey, Boolean, Float, Text, Integer
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import String, DateTime, ForeignKey, Boolean, Float, Text, Integer, JSON
 from sqlalchemy.orm import Mapped, mapped_column
 from app.models.pg.base import Base
 
@@ -32,9 +31,9 @@ class Round(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, default=utcnow, nullable=True)
     time_budget_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    evaluation: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    cheating_signals: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    task_brief: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    evaluation: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    cheating_signals: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    task_brief: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 class RoundMoment(Base):
     __tablename__ = "round_moments"

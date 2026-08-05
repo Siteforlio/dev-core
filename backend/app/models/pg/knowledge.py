@@ -1,7 +1,6 @@
 # backend/app/models/pg/knowledge.py
 from datetime import datetime, timezone
-from sqlalchemy import String, DateTime, UniqueConstraint
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import String, DateTime, UniqueConstraint, JSON
 from sqlalchemy.orm import Mapped, mapped_column
 from app.models.pg.base import Base
 
@@ -18,6 +17,6 @@ class KnowledgeProfile(Base):
     track: Mapped[str] = mapped_column(String(100), nullable=False)
     level: Mapped[str] = mapped_column(String(50), nullable=False)
     stage: Mapped[str] = mapped_column(String(100), nullable=False)
-    profile: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    profile: Mapped[dict] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)

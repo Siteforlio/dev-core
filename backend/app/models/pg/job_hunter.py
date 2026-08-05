@@ -1,8 +1,7 @@
 # backend/app/models/pg/job_hunter.py
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import String, DateTime, Boolean, Integer, Text, Index, UniqueConstraint, ForeignKey
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import String, DateTime, Boolean, Integer, Text, Index, UniqueConstraint, ForeignKey, JSON
 from sqlalchemy.orm import Mapped, mapped_column
 from app.models.pg.base import Base
 
@@ -15,11 +14,11 @@ class JobHunterProfile(Base):
     user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
     is_complete: Mapped[bool] = mapped_column(Boolean, default=False)
     completion_score: Mapped[int] = mapped_column(Integer, default=0)
-    work_experience: Mapped[list] = mapped_column(JSONB, default=list)
-    education: Mapped[list] = mapped_column(JSONB, default=list)
-    skills: Mapped[list] = mapped_column(JSONB, default=list)
-    projects: Mapped[list] = mapped_column(JSONB, default=list)
-    languages_spoken: Mapped[list] = mapped_column(JSONB, default=list)
+    work_experience: Mapped[list] = mapped_column(JSON, default=list)
+    education: Mapped[list] = mapped_column(JSON, default=list)
+    skills: Mapped[list] = mapped_column(JSON, default=list)
+    projects: Mapped[list] = mapped_column(JSON, default=list)
+    languages_spoken: Mapped[list] = mapped_column(JSON, default=list)
     full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
@@ -60,8 +59,8 @@ class JobHunterCampaign(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="active")
     broad_category: Mapped[str] = mapped_column(String(255), nullable=False)
-    sub_categories: Mapped[list] = mapped_column(JSONB, default=list)
-    profile_overrides: Mapped[dict] = mapped_column(JSONB, default=dict)
+    sub_categories: Mapped[list] = mapped_column(JSON, default=list)
+    profile_overrides: Mapped[dict] = mapped_column(JSON, default=dict)
     # Per-campaign integration toggles (credentials live in UserIntegration)
     email_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     caldav_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -75,7 +74,7 @@ class JobHunterCampaign(Base):
     user_country: Mapped[str | None] = mapped_column(String(100), nullable=True)
     anywhere: Mapped[bool] = mapped_column(Boolean, default=False)
     work_type: Mapped[str] = mapped_column(String(20), default="remote")
-    work_types: Mapped[list | None] = mapped_column(JSONB, nullable=True)  # multi-select; None = use work_type
+    work_types: Mapped[list | None] = mapped_column(JSON, nullable=True)  # multi-select; None = use work_type
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -100,20 +99,20 @@ class CampaignProfile(Base):
     linkedin_url: Mapped[str | None] = mapped_column(String, nullable=True)
     github_url: Mapped[str | None] = mapped_column(String, nullable=True)
     portfolio_url: Mapped[str | None] = mapped_column(String, nullable=True)
-    # Resume sections (JSONB)
-    work_experience: Mapped[list] = mapped_column(JSONB, default=list)
-    education: Mapped[list] = mapped_column(JSONB, default=list)
-    skills: Mapped[list] = mapped_column(JSONB, default=list)
-    projects: Mapped[list] = mapped_column(JSONB, default=list)
-    languages_spoken: Mapped[list] = mapped_column(JSONB, default=list)
-    achievements: Mapped[list] = mapped_column(JSONB, default=list)  # quantified impact statements
+    # Resume sections (JSON)
+    work_experience: Mapped[list] = mapped_column(JSON, default=list)
+    education: Mapped[list] = mapped_column(JSON, default=list)
+    skills: Mapped[list] = mapped_column(JSON, default=list)
+    projects: Mapped[list] = mapped_column(JSON, default=list)
+    languages_spoken: Mapped[list] = mapped_column(JSON, default=list)
+    achievements: Mapped[list] = mapped_column(JSON, default=list)  # quantified impact statements
     # User-provided experience length — never calculated or fabricated
     years_of_experience: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Free-form context the user provides for AI to work with
     raw_context: Mapped[str | None] = mapped_column(Text, nullable=True)
     # AI completeness tracking
     is_complete: Mapped[bool] = mapped_column(Boolean, default=False)
-    completion_gaps: Mapped[list] = mapped_column(JSONB, default=list)  # list of gap strings AI identified
+    completion_gaps: Mapped[list] = mapped_column(JSON, default=list)  # list of gap strings AI identified
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
     __table_args__ = (
@@ -157,7 +156,8 @@ class Application(Base):
     user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
     tailored_resume_pdf_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     cover_letter: Mapped[str | None] = mapped_column(Text, nullable=True)
-    form_answers: Mapped[dict] = mapped_column(JSONB, default=dict)
+    form_answers: Mapped[dict] = mapped_column(JSON, default=dict)
+    chat_log: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     status: Mapped[str] = mapped_column(String(20), default="pending")
     applied_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     status_updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
