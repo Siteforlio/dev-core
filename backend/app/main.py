@@ -55,6 +55,7 @@ from app.api.v1.job_hunter.campaigns import router as jh_campaigns_router
 from app.api.v1.job_hunter.applications import router as jh_applications_router
 from app.api.v1.job_hunter.overlay import router as jh_overlay_router
 from app.api.v1.job_hunter.ws import router as jh_ws_router
+from app.api.v1.job_hunter.ext import router as jh_ext_router
 from app.api.v1.cluely.ws import router as cluely_ws_router
 from app.api.v1.cluely.sessions import router as cluely_sessions_router
 from app.api.v1.progress import router as progress_router
@@ -140,6 +141,21 @@ async def _ensure_celery_worker() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Bootstrap SQLite schema (creates tables that don't exist; safe to run every startup)
+    import app.models.pg.user          # noqa: F401
+    import app.models.pg.session       # noqa: F401
+    import app.models.pg.job_hunter    # noqa: F401
+    import app.models.pg.knowledge     # noqa: F401
+    import app.models.pg.meeting_debrief  # noqa: F401
+    import app.models.pg.simulation    # noqa: F401
+    import app.models.pg.progress      # noqa: F401
+    import app.models.pg.community     # noqa: F401
+    import app.models.pg.cluely_session  # noqa: F401
+    from app.models.pg.base import Base
+    from app.core.database import engine
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
     await run_seed()
     async with AsyncSessionLocal() as db:
         await seed_knowledge_profiles(db)
@@ -203,6 +219,7 @@ app.include_router(jh_campaigns_router, prefix="/api/v1")
 app.include_router(jh_applications_router, prefix="/api/v1")
 app.include_router(jh_overlay_router, prefix="/api/v1")
 app.include_router(jh_ws_router, prefix="/api/v1")
+app.include_router(jh_ext_router, prefix="/api/v1")
 app.include_router(cluely_ws_router,      prefix="/api/v1")
 app.include_router(cluely_sessions_router, prefix="/api/v1")
 app.include_router(progress_router, prefix="/api/v1")
