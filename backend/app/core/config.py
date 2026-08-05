@@ -24,8 +24,6 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     environment: str = "development"
     job_hunter_encryption_key: str | None = None  # Fernet 32-byte URL-safe base64 key
-    celery_broker_url: str = ""
-    celery_result_backend: str = ""
     playwright_max_concurrency: int = 4
     judge0_api_key: str = ""
     serp_api_key: str = ""

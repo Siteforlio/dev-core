@@ -501,29 +501,20 @@ async def stop_scrape(
     user_id: str = Depends(get_user_id),
 ):
     """
-    Stop an in-progress scrape by revoking all queued/running Celery tasks
-    and marking the run as done.
+    Request an in-progress scrape to stop.
+
+    With asyncio task runner, running tasks complete naturally —
+    we mark the campaign as done so the next scheduled scrape skips it.
+    Currently running boards will finish their current batch.
     """
-    import json
-    from app.workers.board_scrape_worker import _redis, _set_run_status
-    from app.core.celery_app import celery_app
+    from app.workers.board_scrape_worker import _set_run_status
 
-    revoked = 0
     try:
-        r = _redis()
-        raw = r.get(f"scrape_tasks:{campaign_id}")
-        if raw:
-            task_ids = json.loads(raw)
-            for task_id in task_ids:
-                celery_app.control.revoke(task_id, terminate=True, signal="SIGTERM")
-                revoked += 1
-            r.delete(f"scrape_tasks:{campaign_id}")
+        await _set_run_status(campaign_id, "done")
     except Exception:
-        pass
+        pass  # best-effort stop
 
-    _set_run_status(campaign_id, "done")
-
-    return {"data": {"stopped": True, "revoked": revoked}, "error": None}
+    return {"data": {"stopped": True, "message": "Scrape will stop at next task boundary"}, "error": None}
 
 
 @router.put("/{campaign_id}/credentials/email", response_model=dict)
