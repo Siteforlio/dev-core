@@ -196,14 +196,13 @@ class EmailService:
                     except Exception:
                         logger.exception("Calendar booking failed for campaign %s", campaign_id)
 
-            # Publish activity to Redis pub/sub
+            # Publish activity to in-process event bus
             try:
-                from app.core.cache import get_redis
-                r = await get_redis()
+                from app.core.event_bus import publish
                 company_label = matched_listing.company if matched_listing else sender_domain
-                await r.publish(
+                publish(
                     f"campaign:{campaign_id}:activity",
                     f"{'📅' if email_type == 'interview' else '❌'} {email_type.capitalize()} email from {company_label} — {raw['subject'][:80]}"
                 )
             except Exception:
-                logger.warning("Redis publish failed for campaign %s", campaign_id)
+                logger.warning("event_bus publish failed for campaign %s", campaign_id)

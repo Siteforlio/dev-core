@@ -22,6 +22,7 @@ import threading
 from typing import Optional
 
 from app.services.cluely.deepseek_client import deepseek_generate
+from app.core.cache import cache_set, cache_get
 
 logger = logging.getLogger(__name__)
 
@@ -61,8 +62,8 @@ def _cosine(a, b) -> float:
 
 
 class OutcomeService:
-    def __init__(self, redis=None):
-        self._r = redis
+    def __init__(self):
+        pass
 
     def _outcome_key(self, session_id: str, q_hash: str) -> str:
         return f"cluely:outcome:{session_id}:{q_hash}"
@@ -79,10 +80,10 @@ class OutcomeService:
         key = self._outcome_key(session_id, q_hash)
 
         # Cache check
-        if self._r:
-            cached = await self._r.get(key)
-            if cached:
-                outcome = cached.decode() if isinstance(cached, (bytes, bytearray)) else str(cached)
+        cached = await cache_get(key)
+        if cached:
+            outcome = cached.get("outcome", "")
+            if outcome:
                 logger.debug("[outcome] cache hit | q_hash=%s | outcome=%r", q_hash, outcome)
                 return outcome
 
@@ -109,8 +110,8 @@ class OutcomeService:
             logger.warning("[outcome] inference failed: %s", e)
             outcome = f"Demonstrate relevant experience for {job_title}"
 
-        if self._r and outcome:
-            await self._r.setex(key, OUTCOME_TTL, outcome)
+        if outcome:
+            await cache_set(key, {"outcome": outcome}, ttl=OUTCOME_TTL)
 
         logger.info("[outcome] inferred | q_hash=%s | outcome=%r", q_hash, outcome)
         return outcome

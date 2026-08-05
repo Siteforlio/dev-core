@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 SESSION_TTL = 14400  # 4 hours (seconds)
 
 _store: dict[str, tuple[Any, float]] = {}  # key → (value, expires_at)
+# Requires Python 3.10+: asyncio.Lock binds to event loop lazily (not at creation time)
 _store_lock = asyncio.Lock()
 
 

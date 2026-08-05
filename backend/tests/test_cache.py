@@ -1,4 +1,14 @@
 import pytest
+import app.core.cache as _cache
+
+
+@pytest.fixture(autouse=True)
+def clear_cache_state():
+    _cache._store.clear()
+    _cache._jti_store.clear()
+    yield
+    _cache._store.clear()
+    _cache._jti_store.clear()
 
 
 @pytest.mark.asyncio
@@ -35,3 +45,13 @@ async def test_jti_blacklist():
     assert not await is_jti_blacklisted(jti)
     await blacklist_jti(jti, ttl_seconds=3600)
     assert await is_jti_blacklisted(jti)
+
+
+@pytest.mark.asyncio
+async def test_cache_ttl_expiry():
+    import asyncio
+    from app.core.cache import cache_set, cache_get
+    await cache_set("ttl-key", {"v": 1}, ttl=1)
+    assert await cache_get("ttl-key") == {"v": 1}
+    await asyncio.sleep(1.1)
+    assert await cache_get("ttl-key") is None

@@ -162,9 +162,8 @@ class ScraperService:
             pass
         # Broadcast to live WebSocket subscribers
         try:
-            from app.core.cache import get_redis
-            r = await get_redis()
-            await r.publish(f"campaign:{self._campaign_id}:activity", message)
+            from app.core.event_bus import publish
+            publish(f"campaign:{self._campaign_id}:activity", message)
         except Exception:
             pass
 

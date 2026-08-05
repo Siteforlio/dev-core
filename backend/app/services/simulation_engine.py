@@ -9,7 +9,7 @@ from sqlalchemy import select, update
 from app.models.pg.simulation import SimulationSession, SimulationTurn, SimulationDebrief
 from app.models.pg.progress import UserProgress
 from app.services.sim_llm_orchestrator import SimLLMOrchestrator
-from app.core.cache import get_redis, SESSION_TTL
+from app.core.cache import cache_set, cache_get, SESSION_TTL
 import logging
 
 logger = logging.getLogger(__name__)
@@ -119,11 +119,10 @@ class SimulationEngine:
         await self._db.commit()
 
         # Cache attachments under sim namespace
-        r = await get_redis()
         try:
-            await r.setex(f"sim:{session.id}:attachments", SESSION_TTL, json.dumps(attachment_analysis))
+            await cache_set(f"sim:{session.id}:attachments", {"_raw": attachment_analysis}, ttl=SESSION_TTL)
         except Exception as e:
-            logger.warning("[sim_engine] Redis cache write failed for %s: %s", session.id, e)
+            logger.warning("[sim_engine] cache write failed for %s: %s", session.id, e)
 
         return {
             "session_id": session.id,
@@ -204,13 +203,13 @@ class SimulationEngine:
         self._db.add(user_turn)
         await self._db.flush()
 
-        # Get attachment context from Redis
-        r = await get_redis()
+        # Get attachment context from cache
         try:
-            raw_att = await r.get(f"sim:{session_id}:attachments")
+            cached_att = await cache_get(f"sim:{session_id}:attachments")
+            raw_att = cached_att.get("_raw", "") if cached_att else ""
         except Exception as e:
-            logger.warning("[sim_engine] Redis cache read failed for %s: %s", session_id, e)
-            raw_att = None
+            logger.warning("[sim_engine] cache read failed for %s: %s", session_id, e)
+            raw_att = ""
         attachment_context = raw_att or ""
 
         # Compute time remaining

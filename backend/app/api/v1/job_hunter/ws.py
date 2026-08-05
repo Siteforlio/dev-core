@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
-from app.core.cache import get_redis
+from app.core.event_bus import subscribe, unsubscribe
 from app.core.security import decode_token
 from app.core import ws_registry
 
@@ -25,26 +25,20 @@ async def campaign_activity_feed(
 
     ws_registry.register(asyncio.current_task())
     await websocket.accept()
-    r = await get_redis()
-    pubsub = r.pubsub()
-    await pubsub.subscribe(f"campaign:{campaign_id}:activity")
+    q = subscribe(f"campaign:{campaign_id}:activity")
     try:
-        async for message in pubsub.listen():
-            if message["type"] == "message":
-                data = message["data"]
-                if isinstance(data, bytes):
-                    data = data.decode()
+        while True:
+            try:
+                message = await asyncio.wait_for(q.get(), timeout=30.0)
                 try:
-                    await websocket.send_text(data)
+                    await websocket.send_text(message)
                 except Exception:
                     break  # client disconnected — exit cleanly
+            except asyncio.TimeoutError:
+                pass  # no messages — loop again (keepalive via silence)
     except (WebSocketDisconnect, asyncio.CancelledError):
         pass
     except Exception:
         pass  # shutdown or network error — exit silently
     finally:
-        try:
-            await pubsub.unsubscribe(f"campaign:{campaign_id}:activity")
-            await pubsub.aclose()
-        except Exception:
-            pass
+        unsubscribe(f"campaign:{campaign_id}:activity", q)

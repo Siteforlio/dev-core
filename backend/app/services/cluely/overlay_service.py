@@ -148,6 +148,10 @@ class OverlayService:
                         if ctx_mgr:
                             await ctx_mgr.set_state("paused")
                         await _safe_send(ws, {"type": "status", "state": "paused", "latency_ms": 0})
+                    elif mtype == "session_resume":
+                        if ctx_mgr:
+                            await ctx_mgr.set_state("listening")
+                        await _safe_send(ws, {"type": "status", "state": "listening", "latency_ms": 0})
                     elif mtype == "session_end":
                         break
                     elif mtype == "manual_ask":
@@ -288,7 +292,6 @@ class OverlayService:
     # ------------------------------------------------------------------
 
     async def _start_session(self, ws: WebSocket, data: dict, user_id: str):
-        from app.core.cache import get_redis
         from app.core.database import AsyncSessionLocal
         from app.schemas.cluely import SessionStartRequest
         from pydantic import ValidationError
@@ -308,15 +311,13 @@ class OverlayService:
         ctx = req.context.model_dump()
         ctx["_session_id"] = sid
 
-        r = await get_redis()
-
-        # Outcome service — Redis-backed cache for outcome inference
-        outcome_svc = OutcomeService(redis=r)
+        # Outcome service — in-memory cache for outcome inference
+        outcome_svc = OutcomeService()
         ctx["_outcome_svc"] = outcome_svc
 
         self._diarizer.reset()
 
-        ctx_mgr = ContextManager(redis=r, session_id=sid)
+        ctx_mgr = ContextManager(session_id=sid)
         if not await ctx_mgr.session_exists():
             await ctx_mgr.set_state("listening")
 
@@ -378,7 +379,7 @@ class OverlayService:
                     from pathlib import Path as _Path
                     p = _Path(fpath).expanduser().resolve()
                     if p.is_file() and p.stat().st_size < 2 * 1024 * 1024:  # skip >2MB
-                        text = p.read_text(encoding="utf-8", errors="ignore")[:3000]
+                        text = p.read_text(encoding="utf-8", errors="ignore")
                         extra_parts.append(f"--- {p.name} ---\n{text}")
                         logger.info("[session] Loaded context file: %s (%d chars)", p.name, len(text))
                 except Exception as e:
@@ -398,7 +399,7 @@ class OverlayService:
             )
 
         # Utterance buffer — accumulate chunks into paragraphs before emitting
-        SILENCE_FLUSH_S = 2.5
+        SILENCE_FLUSH_S = 1.0
         utterance: dict[str, list[str]] = {"user": [], "interviewer": []}
         flush_tasks: dict[str, asyncio.Task | None] = {"user": None, "interviewer": None}
         bubble_seq = [0]
@@ -482,7 +483,9 @@ class OverlayService:
     # ------------------------------------------------------------------
 
     async def _handle_audio(self, ws, raw, ctx_mgr, rag, session_ctx):
+        logger.debug("[audio-raw] binary frame received: %d bytes | ctx_mgr=%s", len(raw), ctx_mgr is not None)
         if ctx_mgr is None:
+            logger.warning("[audio-raw] ctx_mgr is None — dropping frame (%d bytes)", len(raw))
             return
         try:
             stream, seq, pcm = parse_audio_frame(raw)
@@ -649,23 +652,23 @@ class OverlayService:
         question_text: str = "",
         trigger_type: str = "auto_gap",
     ):
-        from app.core.cache import get_redis
+        from app.core.cache import cache_set, cache_get
 
         session_id = session_ctx.get("_session_id", "unknown")
         q_hash = hashlib.md5(question_text.encode()).hexdigest() if question_text else ""
 
-        # --- Suggestion cache in Redis (shared across restarts) ---
-        r = await get_redis()
+        # --- Suggestion cache (in-memory) ---
         cache_key = f"cluely:sugg_cache:{session_id}:{q_hash}" if q_hash else ""
 
         if cache_key:
-            cached = await r.get(cache_key)
+            cached = await cache_get(cache_key)
             if cached:
-                cached_response = cached.decode() if isinstance(cached, (bytes, bytearray)) else str(cached)
-                logger.debug("Suggestion cache hit | q_hash=%s", q_hash)
-                await _safe_send(ws, {"type": "suggestion_delta", "delta": cached_response})
-                await _safe_send(ws, {"type": "suggestion_end"})
-                return
+                cached_response = cached.get("text", "")
+                if cached_response:
+                    logger.debug("Suggestion cache hit | q_hash=%s", q_hash)
+                    await _safe_send(ws, {"type": "suggestion_delta", "delta": cached_response})
+                    await _safe_send(ws, {"type": "suggestion_end"})
+                    return
 
         await _safe_send(ws, {"type": "status", "state": "thinking", "latency_ms": 0})
 
@@ -716,9 +719,9 @@ class OverlayService:
 
             full_text = "".join(full_response)
 
-            # Cache in Redis
+            # Cache suggestion in-memory
             if cache_key and full_text:
-                await r.setex(cache_key, SUGGESTION_CACHE_TTL, full_text)
+                await cache_set(cache_key, {"text": full_text}, ttl=SUGGESTION_CACHE_TTL)
 
             # Persist interaction
             repo = session_ctx.get("_repo")
@@ -736,11 +739,13 @@ class OverlayService:
 
         except LLMRateLimitedError:
             if cache_key:
-                cached = await r.get(cache_key)
+                cached = await cache_get(cache_key)
                 if cached:
-                    await _safe_send(ws, {"type": "suggestion_delta", "delta": cached.decode() if isinstance(cached, (bytes, bytearray)) else str(cached)})
-                    await _safe_send(ws, {"type": "suggestion_end"})
-                    return
+                    cached_text = cached.get("text", "")
+                    if cached_text:
+                        await _safe_send(ws, {"type": "suggestion_delta", "delta": cached_text})
+                        await _safe_send(ws, {"type": "suggestion_end"})
+                        return
             await _safe_send(ws, {"type": "error", "code": "LLM_RATE_LIMITED", "message": "Rate limited"})
             await _safe_send(ws, {"type": "status", "state": "listening", "latency_ms": 0})
         except Exception:
@@ -842,20 +847,20 @@ class OverlayService:
 
         # Analyze immediately — all buffered images together
         mode = session_ctx.get("assessmentMode") or session_ctx.get("_assessment_mode")
-        extra_context = None
-        ctx_parts = []
-        if session_ctx.get("job_title"):
-            ctx_parts.append(f"Role: {session_ctx['job_title']}")
-        if session_ctx.get("company"):
-            ctx_parts.append(f"Company: {session_ctx['company']}")
-        if ctx_parts:
-            extra_context = ", ".join(ctx_parts)
 
         await _safe_send(ws, {"type": "status", "state": "thinking", "latency_ms": 0})
 
-        result = await self._vision.analyze(sid, mode=mode, extra_context=extra_context)
+        # Pass full session_ctx so the vision service can inject role, resume,
+        # JD, and recent transcript for a context-aware response.
+        result = await self._vision.analyze(sid, mode=mode, session_ctx=session_ctx)
 
         if result["text"]:
+            # Store this response so future screenshots don't repeat the same answer
+            prev = session_ctx.setdefault("_vision_responses", [])
+            prev.append(result["text"][:300])
+            if len(prev) > 5:
+                session_ctx["_vision_responses"] = prev[-5:]
+
             # Stream the response token by token via suggestion events
             words = result["text"].split(" ")
             for i, word in enumerate(words):
@@ -891,6 +896,26 @@ class OverlayService:
         self._ask_rate[key] = (count + 1, window_start)
         return False
 
+    @staticmethod
+    def _needs_tools(text: str) -> bool:
+        """
+        Heuristic: does this message actually require tools (terminal, file, web search)?
+        If not, we skip ChatAgent's non-streaming tool-loop and stream directly.
+        """
+        import re
+        t = text.lower()
+        # File path patterns (Windows or Unix)
+        if re.search(r'[a-zA-Z]:\\|/home/|/usr/|/var/', text):
+            return True
+        # Explicit tool intent keywords
+        tool_keywords = [
+            "run ", "execute ", "npm ", "pip ", "python ", "node ",
+            "search the web", "search online", "look up ", "google ",
+            "read the file", "open the file", "write to ", "create a file",
+            "ls ", "dir ", "git ", "docker ", "curl ", "wget ",
+        ]
+        return any(kw in t for kw in tool_keywords)
+
     async def _handle_manual_ask(self, ws, data: dict, session_ctx: dict, rag, ctx_mgr=None, repo=None):
         text = data.get("text", "")
         if not text:
@@ -913,10 +938,68 @@ class OverlayService:
             summary, facts = "", ""
         recent = session_ctx.get("_transcript_buf", [])[-15:]
         chat_history: list[dict] = data.get("history", [])
+        mode = data.get("mode", "hints")
 
         await _safe_send(ws, {"type": "status", "state": "thinking", "latency_ms": 0})
         t0 = time.monotonic()
         full_response: list[str] = []
+
+        # ------------------------------------------------------------------
+        # Fast path: conversational/interview questions — stream immediately,
+        # no tool-loop blocking. Only use ChatAgent when tools are actually needed.
+        # ------------------------------------------------------------------
+        use_agent = self._needs_tools(text) or mode in ("solve", "ultra")
+
+        if not use_agent:
+            try:
+                first = True
+                batch: list[str] = []
+                async for delta in self._llm.stream_manual_ask(
+                    text=text,
+                    mode=mode,
+                    context=session_ctx,
+                    rag_chunks=rag_chunks,
+                    summary=summary,
+                    facts=facts,
+                    recent=recent,
+                ):
+                    if first:
+                        latency = round((time.monotonic() - t0) * 1000)
+                        await _safe_send(ws, {"type": "status", "state": "listening", "latency_ms": latency})
+                        first = False
+                    full_response.append(delta)
+                    batch.append(delta)
+                    if sum(len(d) for d in batch) >= WS_BATCH_CHARS:
+                        await _safe_send(ws, {"type": "suggestion_delta", "delta": "".join(batch)})
+                        batch = []
+                if batch:
+                    await _safe_send(ws, {"type": "suggestion_delta", "delta": "".join(batch)})
+                await _safe_send(ws, {"type": "suggestion_end"})
+
+                full_text = "".join(full_response)
+                if repo and full_text:
+                    try:
+                        await repo.append_interaction(
+                            session_id=session_id,
+                            trigger_type="manual_ask",
+                            ai_response=full_text,
+                            question_text=text,
+                            mode=mode,
+                        )
+                    except Exception as e:
+                        logger.error("[repo] manual ask write failed: %s", e)
+            except LLMRateLimitedError:
+                await _safe_send(ws, {"type": "error", "code": "LLM_RATE_LIMITED", "message": "Rate limited"})
+                await _safe_send(ws, {"type": "status", "state": "listening", "latency_ms": 0})
+            except Exception:
+                logger.exception("Manual ask (fast path) error")
+                await _safe_send(ws, {"type": "error", "code": "LLM_ERROR", "message": "Request failed"})
+                await _safe_send(ws, {"type": "status", "state": "listening", "latency_ms": 0})
+            return
+
+        # ------------------------------------------------------------------
+        # Tool path: ChatAgent with full ReAct loop
+        # ------------------------------------------------------------------
 
         # Build a tool-aware send that also records tool usage to DB
         sid_for_tools = session_id
@@ -962,7 +1045,6 @@ class OverlayService:
             await _safe_send(ws, {"type": "suggestion_end"})
 
             full_text = "".join(full_response)
-            mode = data.get("mode", "hints")
             if repo and full_text:
                 try:
                     await repo.append_interaction(
@@ -979,6 +1061,6 @@ class OverlayService:
             await _safe_send(ws, {"type": "error", "code": "LLM_RATE_LIMITED", "message": "Rate limited"})
             await _safe_send(ws, {"type": "status", "state": "listening", "latency_ms": 0})
         except Exception:
-            logger.exception("Manual ask error")
+            logger.exception("Manual ask (agent) error")
             await _safe_send(ws, {"type": "error", "code": "LLM_ERROR", "message": "Request failed"})
             await _safe_send(ws, {"type": "status", "state": "listening", "latency_ms": 0})
