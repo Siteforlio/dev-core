@@ -1,3 +1,7 @@
+# OPTIONAL: Docker Compose is for team development only.
+# The desktop app (Electron) runs everything locally without Docker.
+# For solo use, just run: npm run dev (Electron spawns the backend automatically)
+
 version: "3.9"
 services:
   postgres:
@@ -8,7 +12,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-devcore}
       POSTGRES_HOST_AUTH_METHOD: trust
     ports:
-      - "5433:5432"
+      - "5434:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
     healthcheck:
@@ -46,7 +50,7 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.backend
-    env_file: .env
+    env_file: backend/.env
     depends_on:
       postgres:
         condition: service_healthy
@@ -59,7 +63,7 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.backend
-    env_file: .env
+    env_file: backend/.env
     depends_on:
       postgres:
         condition: service_healthy
@@ -77,7 +81,7 @@ services:
       --loglevel=info
       --concurrency=2
       -Q tailor,celery
-    env_file: .env
+    env_file: backend/.env
     depends_on:
       postgres:
         condition: service_healthy
