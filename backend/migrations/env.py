@@ -56,7 +56,7 @@ def run_migrations_offline() -> None:
 
     """
     from app.core.config import settings
-    url = settings.database_url.replace("+asyncpg", "")  # alembic needs sync URL
+    url = settings.database_url.replace("+asyncpg", "").replace("+aiosqlite", "")  # alembic needs sync URL
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -77,7 +77,7 @@ def run_migrations_online() -> None:
     """
     from app.core.config import settings
     from sqlalchemy import create_engine
-    url = settings.database_url.replace("+asyncpg", "")
+    url = settings.database_url.replace("+asyncpg", "").replace("+aiosqlite", "")
     connectable = create_engine(url)
     with connectable.connect() as connection:
         context.configure(

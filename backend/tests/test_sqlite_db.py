@@ -7,13 +7,15 @@ from app.models.pg.user import User
 
 @pytest_asyncio.fixture
 async def db():
+    # Inline engine for test isolation — only the users table is created here
+    # because other models use JSONB (fixed in Task 2)
     engine = create_async_engine(
         "sqlite+aiosqlite:///:memory:",
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all, tables=[User.__table__])
+        await conn.run_sync(Base.metadata.create_all, tables=[User.__table__])  # only create the table under test
     session = async_sessionmaker(engine, expire_on_commit=False)
     async with session() as s:
         yield s

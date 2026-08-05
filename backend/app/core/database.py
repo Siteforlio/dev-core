@@ -3,10 +3,10 @@ from sqlalchemy.pool import StaticPool
 from app.core.config import settings
 
 def _make_engine():
-    if settings.database_url.startswith("sqlite"):
+    if settings.database_url.startswith("sqlite+aiosqlite"):
         return create_async_engine(
             settings.database_url,
-            connect_args={"check_same_thread": False},
+            connect_args={"check_same_thread": False},  # check_same_thread is a no-op for aiosqlite (it manages threading internally)
             poolclass=StaticPool,
         )
     # PostgreSQL fallback (team dev with Docker)

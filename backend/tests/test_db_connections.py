@@ -3,6 +3,11 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy import text
 from app.core.config import settings
 
+pytestmark = pytest.mark.skipif(
+    not settings.database_url.startswith("postgresql"),
+    reason="PostgreSQL-only integration tests"
+)
+
 @pytest.mark.asyncio
 async def test_postgres_connection():
     engine = create_async_engine(settings.database_url)
