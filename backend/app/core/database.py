@@ -1,20 +1,26 @@
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+from sqlalchemy.pool import StaticPool
 from app.core.config import settings
 
-engine = create_async_engine(
-    settings.database_url,
-    # Pool sizing — tuned for a single-node FastAPI server.
-    # asyncpg multiplexes async queries over fewer real connections,
-    # so pool_size=10 handles ~100 concurrent requests comfortably.
-    # Raise pool_size when running multiple uvicorn workers.
-    pool_size=10,
-    max_overflow=20,        # burst headroom: up to 30 total connections
-    pool_timeout=30,        # raise after 30s waiting for a connection
-    pool_recycle=1800,      # recycle connections every 30 min to avoid stale TCP
-    pool_pre_ping=True,     # health-check connection before checkout
-)
-AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
+def _make_engine():
+    if settings.database_url.startswith("sqlite"):
+        return create_async_engine(
+            settings.database_url,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+    # PostgreSQL fallback (team dev with Docker)
+    return create_async_engine(
+        settings.database_url,
+        pool_size=10,
+        max_overflow=20,
+        pool_timeout=30,
+        pool_recycle=1800,
+        pool_pre_ping=True,
+    )
 
+engine = _make_engine()
+AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 async def get_db() -> AsyncSession:
     async with AsyncSessionLocal() as session:

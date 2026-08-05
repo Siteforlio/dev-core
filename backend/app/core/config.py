@@ -1,9 +1,13 @@
+from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+# Resolve .env relative to backend/ (two levels up from this file: app/core/config.py → backend/app/core → backend/app → backend)
+_ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
-    database_url: str = "postgresql+asyncpg://devcore:devcore@localhost:5433/devcore"
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=str(_ENV_FILE), env_file_encoding="utf-8", extra="ignore")
+
+    database_url: str = "sqlite+aiosqlite:///./devcore.db"
     neo4j_uri: str = "bolt://localhost:7687"
     neo4j_user: str = "neo4j"
     neo4j_password: str = "devcore123"
