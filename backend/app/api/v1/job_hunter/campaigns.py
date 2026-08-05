@@ -332,14 +332,15 @@ async def trigger_scrape(
     }
 
     # ── Dispatch ──────────────────────────────────────────────────────────
+    from app.core.task_runner import get_runner
     from app.workers.board_scrape_worker import dispatch_scrape
-    dispatch_scrape.delay(
+    get_runner().submit(dispatch_scrape(
         campaign_id=campaign_id,
         user_id=user_id,
         preferences=preferences,
         dynamic_only=False,
         round_=1,
-    )
+    ))
 
     return {"data": {"started": True, "preferences": {k: v for k, v in preferences.items() if k != "linkedin_creds"}}, "error": None}
 

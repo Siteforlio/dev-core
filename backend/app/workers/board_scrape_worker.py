@@ -1,112 +1,102 @@
 # backend/app/workers/board_scrape_worker.py
 """
-Per-board Celery tasks + dispatcher.
+Per-board asyncio tasks + dispatcher.
 
 Architecture
 ────────────
   dispatch_scrape(campaign_id, user_id, preferences)
       │
       ├─ selects boards via board_registry.select_boards()
-      ├─ publishes "starting board X" status to Redis
-      └─ fires celery.group([scrape_board.s(board_id, ...) for board in selected])
+      ├─ marks board status in in-memory cache
+      └─ fires asyncio.gather([scrape_board(board_id, ...) for board in selected])
              │
-             └─ chord callback: aggregate_board_results(results, campaign_id, ...)
+             └─ aggregate_board_results(results, campaign_id, ...)
                     │
                     ├─ deduplicate across boards
                     ├─ score with BERT → Gemini gate
                     ├─ save listings to DB
                     └─ if matches_found < daily_target and dynamic boards remain:
-                           dispatch_scrape.delay(... dynamic_only=True, round=N+1)
+                           task_runner.submit(dispatch_scrape(... dynamic_only=True, round=N+1))
 
-Each scrape_board task:
+Each scrape_board coroutine:
   - runs the board-specific async scraper
-  - writes {status, count, error} to Redis key board_status:{campaign_id}:{board_id}
+  - writes {status, count, error} to in-memory cache key board_status:{campaign_id}:{board_id}
   - returns {"board_id": ..., "jobs": [...], "error": None}
 
-Redis keys
+Cache keys
 ──────────
-  board_status:{campaign_id}:{board_id}  →  JSON {status, count, error, updated_at}
-  scrape_run:{campaign_id}               →  JSON {status, matches, round, started_at}
+  board_status:{campaign_id}:{board_id}  →  dict {status, count, error, updated_at}
+  scrape_run:{campaign_id}               →  dict {status, matches, round, started_at}
 """
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from datetime import datetime, timezone
 
-from app.core.celery_app import celery_app
-
 logger = logging.getLogger(__name__)
 
-# ── Redis helpers ─────────────────────────────────────────────────────────────
+# ── Cache helpers ─────────────────────────────────────────────────────────────
 
-def _redis():
-    """Return a synchronous Redis client (re-uses celery broker connection pool)."""
-    import redis as _redis_lib
-    from app.core.config import settings
-    return _redis_lib.from_url(settings.celery_broker_url, decode_responses=True)
-
-
-def _set_board_status(campaign_id: str, board_id: str, status: str, count: int = 0, error: str | None = None):
+async def _set_board_status(campaign_id: str, board_id: str, status: str, count: int = 0, error: str | None = None):
     try:
-        r = _redis()
+        from app.core.cache import cache_set
         key = f"board_status:{campaign_id}:{board_id}"
-        r.set(key, json.dumps({
+        await cache_set(key, {
             "status": status,
             "count": count,
             "error": error,
             "updated_at": datetime.now(timezone.utc).isoformat(),
-        }), ex=86400)  # expire after 24h
+        }, ttl=86400)
     except Exception:
-        pass  # Redis status is best-effort — never block scraping
+        pass  # cache status is best-effort — never block scraping
 
 
-def _get_all_board_statuses(campaign_id: str) -> dict[str, dict]:
+async def _get_all_board_statuses(campaign_id: str) -> dict[str, dict]:
     """Return {board_id: {status, count, error}} for all boards in a campaign run."""
     try:
-        r = _redis()
+        from app.core.cache import cache_get
         from app.services.job_hunter.board_registry import all_boards
         result = {}
         for board in all_boards():
             key = f"board_status:{campaign_id}:{board.id}"
-            raw = r.get(key)
-            if raw:
-                result[board.id] = json.loads(raw)
+            data = await cache_get(key)
+            if data:
+                result[board.id] = data
         return result
     except Exception:
         return {}
 
 
-def _set_run_status(campaign_id: str, status: str, matches: int = 0, round_: int = 1):
+async def _set_run_status(campaign_id: str, status: str, matches: int = 0, round_: int = 1):
     try:
-        r = _redis()
+        from app.core.cache import cache_get, cache_set
         key = f"scrape_run:{campaign_id}"
-        existing_raw = r.get(key)
+        existing = await cache_get(key)
         started_at = datetime.now(timezone.utc).isoformat()
-        if existing_raw:
-            existing = json.loads(existing_raw)
+        if existing:
             started_at = existing.get("started_at", started_at)
-        r.set(key, json.dumps({
+        await cache_set(key, {
             "status": status,
             "matches": matches,
             "round": round_,
             "started_at": started_at,
             "updated_at": datetime.now(timezone.utc).isoformat(),
-        }), ex=86400)
+        }, ttl=86400)
     except Exception:
         pass
 
 
-def _publish_activity(campaign_id: str, message: str):
+async def _publish_activity(campaign_id: str, message: str):
     """Publish a message to the campaign activity feed (same channel as ScraperService)."""
     try:
-        r = _redis()
-        channel = f"campaign:{campaign_id}:activity"
-        r.publish(channel, json.dumps({
+        from app.core.cache import cache_get, list_append
+        # Use the in-memory list_append so ScraperService SSE polling can read it
+        key = f"campaign:{campaign_id}:activity"
+        await list_append(key, {
             "text": message,
             "timestamp": datetime.now(timezone.utc).isoformat(),
-        }))
+        })
     except Exception:
         pass
 
@@ -129,8 +119,6 @@ async def _run_board(board_id: str, search_term: str, linkedin_creds: dict | Non
                 return await ats_scrapers.scrape_all_ats(search_term, publish_fn=None)
 
             elif board_id == "lever":
-                # scrape_all_ats returns combined greenhouse+lever+ashby; for
-                # per-board isolation we call the Lever-specific function directly.
                 from app.services.job_hunter.ats_scrapers import LEVER_SLUGS, scrape_lever
                 results = await asyncio.gather(
                     *[scrape_lever(slug, client) for slug in LEVER_SLUGS],
@@ -220,7 +208,6 @@ async def _run_board(board_id: str, search_term: str, linkedin_creds: dict | Non
             elif board_id in ("indeed", "glassdoor", "zip_recruiter", "google"):
                 # JobSpy boards — each one is a site_name in jobspy
                 from jobspy import scrape_jobs
-                import pandas as pd
                 source_map = {
                     "zip_recruiter": "zip_recruiter",
                     "google": "google",
@@ -277,21 +264,12 @@ async def _run_board(board_id: str, search_term: str, linkedin_creds: dict | Non
 
     except Exception as exc:
         logger.exception("_run_board %s failed", board_id)
-        raise  # re-raise so scrape_board task can retry + record the error
+        raise  # re-raise so scrape_board can record the error
 
 
-# ── Celery tasks ──────────────────────────────────────────────────────────────
+# ── Async tasks ───────────────────────────────────────────────────────────────
 
-@celery_app.task(
-    name="app.workers.board_scrape_worker.scrape_board",
-    bind=True,
-    max_retries=2,
-    default_retry_delay=30,
-    soft_time_limit=300,   # 5 min per board
-    time_limit=360,
-)
-def scrape_board(
-    self,
+async def scrape_board(
     board_id: str,
     campaign_id: str,
     search_term: str,
@@ -302,31 +280,23 @@ def scrape_board(
 
     Return shape: {"board_id": str, "jobs": list[dict], "error": str | None}
     """
-    _set_board_status(campaign_id, board_id, "running")
-    _publish_activity(campaign_id, f"🔄 [{board_id}] starting...")
+    await _set_board_status(campaign_id, board_id, "running")
+    await _publish_activity(campaign_id, f"🔄 [{board_id}] starting...")
 
     try:
-        jobs = asyncio.run(_run_board(board_id, search_term, linkedin_creds))
-        _set_board_status(campaign_id, board_id, "done", count=len(jobs))
-        _publish_activity(campaign_id, f"✅ [{board_id}] {len(jobs)} listings fetched")
+        jobs = await _run_board(board_id, search_term, linkedin_creds)
+        await _set_board_status(campaign_id, board_id, "done", count=len(jobs))
+        await _publish_activity(campaign_id, f"✅ [{board_id}] {len(jobs)} listings fetched")
         return {"board_id": board_id, "jobs": jobs, "error": None}
 
     except Exception as exc:
         err_msg = f"{type(exc).__name__}: {exc}"
-        _set_board_status(campaign_id, board_id, "failed", error=err_msg)
-        _publish_activity(campaign_id, f"❌ [{board_id}] failed — {err_msg}")
-        try:
-            raise self.retry(exc=exc)
-        except self.MaxRetriesExceededError:
-            return {"board_id": board_id, "jobs": [], "error": err_msg}
+        await _set_board_status(campaign_id, board_id, "failed", error=err_msg)
+        await _publish_activity(campaign_id, f"❌ [{board_id}] failed — {err_msg}")
+        return {"board_id": board_id, "jobs": [], "error": err_msg}
 
 
-@celery_app.task(
-    name="app.workers.board_scrape_worker.aggregate_board_results",
-    bind=True,
-)
-def aggregate_board_results(
-    self,
+async def aggregate_board_results(
     board_results: list[dict],
     campaign_id: str,
     user_id: str,
@@ -334,7 +304,7 @@ def aggregate_board_results(
     round_: int = 1,
 ) -> dict:
     """
-    Chord callback — receives results from all scrape_board tasks.
+    Receives results from all scrape_board coroutines (via asyncio.gather).
 
     Steps:
       1. Flatten all jobs from all boards
@@ -344,142 +314,133 @@ def aggregate_board_results(
       5. Save to DB
       6. If matches < daily_target and dynamic boards remain → re-dispatch round N+1
     """
-    async def _aggregate():
-        from app.core.database import AsyncSessionLocal
-        from app.services.job_hunter.deduplicator import deduplicate
-        from app.services.job_hunter.board_registry import select_boards, get_board
-        from app.services.job_hunter.scraper_service import ScraperService
+    from app.core.database import AsyncSessionLocal
+    from app.services.job_hunter.deduplicator import deduplicate
+    from app.services.job_hunter.board_registry import select_boards, get_board
+    from app.services.job_hunter.scraper_service import ScraperService
 
-        async with AsyncSessionLocal() as db:
-            svc = ScraperService(db)
-            svc._campaign_id = campaign_id
+    async with AsyncSessionLocal() as db:
+        svc = ScraperService(db)
+        svc._campaign_id = campaign_id
 
-            daily_target  = preferences.get("daily_target", 100)
-            # work_types takes priority over work_type for multi-select support
-            work_type     = preferences.get("work_types") or preferences.get("work_type", "any")
-            user_country  = preferences.get("user_country", "")
-            anywhere      = preferences.get("anywhere", True)
-            sub_categories = preferences.get("sub_categories", [])
-            broad_category = preferences.get("search_term", "")
-            profile_skills = preferences.get("profile_skills", [])
-            search_term   = preferences.get("search_term", "")
+        daily_target   = preferences.get("daily_target", 100)
+        # work_types takes priority over work_type for multi-select support
+        work_type      = preferences.get("work_types") or preferences.get("work_type", "any")
+        user_country   = preferences.get("user_country", "")
+        anywhere       = preferences.get("anywhere", True)
+        sub_categories = preferences.get("sub_categories", [])
+        broad_category = preferences.get("search_term", "")
+        profile_skills = preferences.get("profile_skills", [])
+        search_term    = preferences.get("search_term", "")
 
-            # ── 1. Flatten ────────────────────────────────────────────────
-            total_raw = 0
-            # Sort board results by board priority so dedup keeps the best source
-            def _board_priority(r: dict) -> int:
-                try:
-                    return get_board(r["board_id"]).priority
-                except Exception:
-                    return 99
+        # ── 1. Flatten ────────────────────────────────────────────────
+        total_raw = 0
+        # Sort board results by board priority so dedup keeps the best source
+        def _board_priority(r: dict) -> int:
+            try:
+                return get_board(r["board_id"]).priority
+            except Exception:
+                return 99
 
-            sorted_results = sorted(board_results, key=_board_priority)
-            all_jobs: list[dict] = []
-            for result in sorted_results:
-                jobs = result.get("jobs") or []
-                total_raw += len(jobs)
-                all_jobs.extend(jobs)
+        sorted_results = sorted(board_results, key=_board_priority)
+        all_jobs: list[dict] = []
+        for result in sorted_results:
+            jobs = result.get("jobs") or []
+            total_raw += len(jobs)
+            all_jobs.extend(jobs)
 
-            _publish_activity(campaign_id, f"📦 Round {round_}: {total_raw} raw listings from {len(board_results)} boards")
+        await _publish_activity(campaign_id, f"📦 Round {round_}: {total_raw} raw listings from {len(board_results)} boards")
 
-            # ── 2. Deduplicate across boards ──────────────────────────────
-            deduped = deduplicate(all_jobs)
-            dropped = total_raw - len(deduped)
-            if dropped:
-                _publish_activity(campaign_id, f"🧹 Deduplicated: {dropped} duplicates removed → {len(deduped)} unique")
+        # ── 2. Deduplicate across boards ──────────────────────────────
+        deduped = deduplicate(all_jobs)
+        dropped = total_raw - len(deduped)
+        if dropped:
+            await _publish_activity(campaign_id, f"🧹 Deduplicated: {dropped} duplicates removed → {len(deduped)} unique")
 
-            # ── 3. Work-type + location filter ────────────────────────────
-            filtered = [
-                j for j in deduped
-                if svc.passes_work_type_filter(j, work_type, user_country, anywhere)
-            ]
-            _publish_activity(campaign_id, f"🗺️  Location filter: {len(filtered)}/{len(deduped)} passed")
+        # ── 3. Work-type + location filter ────────────────────────────
+        filtered = [
+            j for j in deduped
+            if svc.passes_work_type_filter(j, work_type, user_country, anywhere)
+        ]
+        await _publish_activity(campaign_id, f"🗺️  Location filter: {len(filtered)}/{len(deduped)} passed")
 
-            # ── 4. Category pre-filter ────────────────────────────────────
-            tech_filtered = [
-                j for j in filtered
-                if svc._category_prefilter(
-                    j.get("title", ""), j.get("description", ""),
-                    broad_category, sub_categories,
-                )
-            ]
-
-            # ── 5. Score (BERT gate → Gemini) and save ────────────────────
-            from app.services.job_hunter.matcher_service import matcher
-
-            matches_saved = 0
-            for job in tech_filtered:
-                # BERT pre-score — avoid Gemini on obvious mismatches
-                if profile_skills:
-                    profile_text = " | ".join(profile_skills[:30])
-                    jd_text = f"{job.get('title', '')} {job.get('description', '')[:800]}"
-                    bert_score = matcher.score_fit(jd_text, profile_text)
-                else:
-                    bert_score = 0.5  # no profile skills → let Gemini decide
-
-                if bert_score >= 0.75:
-                    score = "MATCH"
-                elif bert_score < 0.20:
-                    score = "SKIP"
-                else:
-                    # Grey zone — call Gemini (cheap Flash Lite)
-                    score = await svc.score_job_match(
-                        job.get("title", ""),
-                        job.get("description", ""),
-                        sub_categories,
-                        profile_skills,
-                    )
-
-                if score != "SKIP":
-                    _publish_activity(
-                        campaign_id,
-                        f"{'✅' if score == 'MATCH' else '🟡'} {score} — {job.get('title')} @ {job.get('company')}",
-                    )
-
-                listing = await svc.save_listing(campaign_id, user_id, job, score)
-                if listing and score == "MATCH":
-                    matches_saved += 1
-
-            _publish_activity(
-                campaign_id,
-                f"💾 Round {round_} saved: {matches_saved} MATCH listings (target: {daily_target})"
+        # ── 4. Category pre-filter ────────────────────────────────────
+        tech_filtered = [
+            j for j in filtered
+            if svc._category_prefilter(
+                j.get("title", ""), j.get("description", ""),
+                broad_category, sub_categories,
             )
-            _set_run_status(campaign_id, "running" if matches_saved < daily_target else "done",
-                            matches=matches_saved, round_=round_)
+        ]
 
-            return matches_saved
+        # ── 5. Score (BERT gate → Gemini) and save ────────────────────
+        from app.services.job_hunter.matcher_service import matcher
 
-    matches_saved = asyncio.run(_aggregate())
+        matches_saved = 0
+        for job in tech_filtered:
+            # BERT pre-score — avoid Gemini on obvious mismatches
+            if profile_skills:
+                profile_text = " | ".join(profile_skills[:30])
+                jd_text = f"{job.get('title', '')} {job.get('description', '')[:800]}"
+                bert_score = matcher.score_fit(jd_text, profile_text)
+            else:
+                bert_score = 0.5  # no profile skills → let Gemini decide
+
+            if bert_score >= 0.75:
+                score = "MATCH"
+            elif bert_score < 0.20:
+                score = "SKIP"
+            else:
+                # Grey zone — call Gemini (cheap Flash Lite)
+                score = await svc.score_job_match(
+                    job.get("title", ""),
+                    job.get("description", ""),
+                    sub_categories,
+                    profile_skills,
+                )
+
+            if score != "SKIP":
+                await _publish_activity(
+                    campaign_id,
+                    f"{'✅' if score == 'MATCH' else '🟡'} {score} — {job.get('title')} @ {job.get('company')}",
+                )
+
+            listing = await svc.save_listing(campaign_id, user_id, job, score)
+            if listing and score == "MATCH":
+                matches_saved += 1
+
+        await _publish_activity(
+            campaign_id,
+            f"💾 Round {round_} saved: {matches_saved} MATCH listings (target: {daily_target})"
+        )
+        await _set_run_status(campaign_id, "running" if matches_saved < daily_target else "done",
+                        matches=matches_saved, round_=round_)
 
     daily_target = preferences.get("daily_target", 100)
     max_rounds   = preferences.get("max_rounds", 5)
 
     # ── 6. Re-dispatch dynamic boards if target not met ───────────────────
     if matches_saved < daily_target and round_ < max_rounds:
-        _publish_activity(
+        await _publish_activity(
             campaign_id,
             f"🔁 Target {daily_target} not reached ({matches_saved} found) — launching round {round_ + 1}"
         )
-        dispatch_scrape.delay(
+        from app.core.task_runner import get_runner
+        get_runner().submit(dispatch_scrape(
             campaign_id=campaign_id,
             user_id=user_id,
             preferences=preferences,
             dynamic_only=True,
             round_=round_ + 1,
-        )
+        ))
     else:
-        _set_run_status(campaign_id, "done", matches=matches_saved, round_=round_)
-        _publish_activity(campaign_id, f"🏁 Scrape complete — {matches_saved} matches saved")
+        await _set_run_status(campaign_id, "done", matches=matches_saved, round_=round_)
+        await _publish_activity(campaign_id, f"🏁 Scrape complete — {matches_saved} matches saved")
 
     return {"matches_saved": matches_saved, "round": round_}
 
 
-@celery_app.task(
-    name="app.workers.board_scrape_worker.dispatch_scrape",
-    bind=True,
-)
-def dispatch_scrape(
-    self,
+async def dispatch_scrape(
     campaign_id: str,
     user_id: str,
     preferences: dict,
@@ -502,7 +463,6 @@ def dispatch_scrape(
       profile_skills: list[str]
       linkedin_creds: dict | None
     """
-    from celery import group, chord
     from app.services.job_hunter.board_registry import select_boards
 
     company_types  = preferences.get("company_types") or []
@@ -525,55 +485,34 @@ def dispatch_scrape(
         selected = [b for b in selected if not b.is_static]
 
     if not selected:
-        _publish_activity(campaign_id, "⚠️ No boards selected for this campaign configuration")
-        _set_run_status(campaign_id, "done", round_=round_)
+        await _publish_activity(campaign_id, "⚠️ No boards selected for this campaign configuration")
+        await _set_run_status(campaign_id, "done", round_=round_)
         return {"boards": 0}
 
     board_ids = [b.id for b in selected]
-    _publish_activity(
+    await _publish_activity(
         campaign_id,
         f"🚀 Round {round_}: dispatching {len(board_ids)} boards in parallel: {', '.join(board_ids)}"
     )
-    _set_run_status(campaign_id, "running", round_=round_)
+    await _set_run_status(campaign_id, "running", round_=round_)
 
     # Mark all selected boards as queued
     for b in selected:
-        _set_board_status(campaign_id, b.id, "queued")
+        await _set_board_status(campaign_id, b.id, "queued")
 
-    # Build the group of per-board tasks
-    tasks = [
-        scrape_board.s(b.id, campaign_id, search_term, linkedin_creds)
-        for b in selected
-    ]
-    board_tasks = group(tasks)
-
-    # Chord: run all boards in parallel, then aggregate
-    result = chord(board_tasks)(
-        aggregate_board_results.s(
-            campaign_id=campaign_id,
-            user_id=user_id,
-            preferences=preferences,
-            round_=round_,
-        )
+    # Run all boards concurrently, then aggregate
+    board_results = await asyncio.gather(
+        *[
+            scrape_board(b.id, campaign_id, search_term, linkedin_creds)
+            for b in selected
+        ],
+        return_exceptions=False,
     )
 
-    # Store task IDs in Redis so the stop endpoint can revoke them
-    try:
-        r = _redis()
-        # result.parent is the group; collect all child task IDs
-        parent = result.parent
-        task_ids = []
-        if parent and hasattr(parent, "results"):
-            task_ids = [t.id for t in parent.results]
-        if result.id:
-            task_ids.append(result.id)  # chord callback task
-        if task_ids:
-            r.set(
-                f"scrape_tasks:{campaign_id}",
-                json.dumps(task_ids),
-                ex=86400,
-            )
-    except Exception:
-        pass  # best-effort
-
-    return {"boards": len(board_ids), "board_ids": board_ids, "round": round_}
+    return await aggregate_board_results(
+        list(board_results),
+        campaign_id=campaign_id,
+        user_id=user_id,
+        preferences=preferences,
+        round_=round_,
+    )

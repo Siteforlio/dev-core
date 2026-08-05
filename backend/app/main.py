@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import subprocess
 import sys
 from pathlib import Path
 
@@ -69,76 +68,6 @@ from app.workers.community_flush import flush_loop
 
 limiter = Limiter(key_func=get_remote_address, default_limits=["100/minute"])
 
-_celery_proc: subprocess.Popen | None = None
-_BACKEND_DIR = Path(__file__).resolve().parent.parent  # backend/
-
-
-def _celery_worker_alive() -> bool:
-    """Return True if at least one Celery worker is reachable via Redis."""
-    try:
-        from app.core.celery_app import celery_app
-        reply = celery_app.control.ping(timeout=2)
-        return bool(reply)
-    except Exception:
-        return False
-
-
-def _purge_celery_queues() -> None:
-    """
-    Wipe both Celery-owned Redis databases on startup so stale tasks, chord
-    state, and result keys from a previous (possibly unclean) shutdown don't
-    replay.
-
-    Both databases are exclusively owned by Celery — nothing else writes to
-    them — so FLUSHDB is safe and complete regardless of which key patterns
-    Celery happens to use internally.
-
-      celery_broker_url   (db 1) — task queues
-      celery_result_backend (db 2) — task results, chord counters
-    """
-    _log = logging.getLogger("uvicorn.error")
-    try:
-        import redis as _redis_lib
-        from app.core.config import settings as _s
-        for _url, _label in (
-            (_s.celery_broker_url,      "broker"),
-            (_s.celery_result_backend,  "results"),
-        ):
-            _r = _redis_lib.from_url(_url, decode_responses=True)
-            _r.flushdb()
-            _r.close()
-            _log.info("celery: flushed %s db (%s)", _label, _url)
-    except Exception as _pe:
-        _log.warning("celery: startup queue purge failed — %s", _pe)
-
-
-async def _ensure_celery_worker() -> None:
-    """Start a Celery worker subprocess if none is currently running."""
-    global _celery_proc
-    alive = await asyncio.to_thread(_celery_worker_alive)
-    if alive:
-        logging.getLogger("uvicorn.error").info("celery: worker already running — skipping auto-start")
-        return
-
-    # Purge stale queues before starting a fresh worker so tasks from the
-    # previous session (which may have been killed mid-flight) don't replay.
-    await asyncio.to_thread(_purge_celery_queues)
-
-    logging.getLogger("uvicorn.error").info("celery: no worker detected — starting worker subprocess")
-    cmd = [
-        sys.executable, "-m", "celery",
-        "-A", "app.core.celery_app.celery_app",
-        "worker",
-        "--loglevel=info",
-        "--pool=solo",   # prefork uses billiard shared memory which fails on Windows
-        "-Q", "tailor,celery",  # tailor queue polled first — resume tasks jump the queue
-    ]
-    try:
-        _celery_proc = subprocess.Popen(cmd, cwd=str(_BACKEND_DIR))
-        logging.getLogger("uvicorn.error").info("celery: worker started (pid=%d)", _celery_proc.pid)
-    except Exception as exc:
-        logging.getLogger("uvicorn.error").error("celery: failed to start worker — %s", exc)
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -165,43 +94,23 @@ async def lifespan(app: FastAPI):
     async with AsyncSessionLocal() as db:
         await seed_knowledge_profiles(db)
     flush_task = asyncio.create_task(flush_loop())
-    await _ensure_celery_worker()
+    from app.core.task_runner import get_runner
+    from app.workers.scraper_worker import scrape_all_active_campaigns
+    from app.workers.email_worker import poll_all_campaigns
+    runner = get_runner()
+    runner.schedule_periodic(scrape_all_active_campaigns, interval_seconds=21600)  # 6h
+    runner.schedule_periodic(poll_all_campaigns, interval_seconds=60)               # 1min
     yield
     flush_task.cancel()
     try:
         await flush_task
     except asyncio.CancelledError:
         pass
-    # Shut down the worker we spawned (if any)
-    if _celery_proc is not None and _celery_proc.poll() is None:
-        _log = logging.getLogger("uvicorn.error")
-        _log.info("celery: shutting down worker (pid=%d)", _celery_proc.pid)
-        try:
-            from app.core.celery_app import celery_app
-            # 1. Purge all queued tasks from Redis so they don't replay on next start
-            await asyncio.to_thread(_purge_celery_queues)
-            # 2. Revoke active/reserved tasks then shut the worker down
-            insp = celery_app.control.inspect(timeout=2)
-            active   = insp.active()   or {}
-            reserved = insp.reserved() or {}
-            for tasks in list(active.values()) + list(reserved.values()):
-                for t in tasks:
-                    celery_app.control.revoke(t["id"], terminate=True, signal="SIGKILL")
-            celery_app.control.broadcast("shutdown", destination=None)
-        except Exception:
-            pass
-        # Give it 8s to exit gracefully, then hard-kill
-        try:
-            _celery_proc.wait(timeout=8)
-            _log.info("celery: worker exited cleanly")
-        except subprocess.TimeoutExpired:
-            _log.warning("celery: worker did not exit in time — force killing")
-            _celery_proc.kill()
-            _celery_proc.wait()
-    # Gracefully drain active WebSocket connections before Redis/process shutdown
+    await runner.shutdown()
+    # Gracefully drain active WebSocket connections before shutdown
     from app.core import ws_registry
     await ws_registry.close_all(timeout=10.0)
-    # Clean up Redis connection pool on shutdown
+    # Clean up cache on shutdown
     from app.core.cache import close_redis
     await close_redis()
 

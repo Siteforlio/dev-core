@@ -631,10 +631,11 @@ class ScraperService:
                     if score == "MATCH":
                         matches_found += 1
                         new_matches_this_pass += 1
-                        # Dispatch tailor → apply pipeline via Celery
+                        # Dispatch tailor → apply pipeline via asyncio task runner
                         try:
+                            from app.core.task_runner import get_runner
                             from app.workers.tailor_worker import tailor_listing
-                            tailor_listing.delay(listing.id, user_id)
+                            get_runner().submit(tailor_listing(listing.id, user_id))
                         except Exception as e:
                             await self._publish(f"⚠️ Failed to queue tailor task for {listing.id}: {e}")
                 elif score == "MATCH":

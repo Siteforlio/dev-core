@@ -1,35 +1,26 @@
-# backend/app/workers/scraper_worker.py
-import asyncio
-from app.core.celery_app import celery_app
+"""Scraper worker — plain asyncio, no Celery."""
+import logging
+from app.core.database import AsyncSessionLocal
 
-@celery_app.task(
-    name="app.workers.scraper_worker.scrape_campaign",
-    bind=True,
-    autoretry_for=(Exception,),
-    max_retries=3,
-    default_retry_delay=60,
-)
-def scrape_campaign(self, campaign_id: str, user_id: str) -> dict:
-    from app.core.database import AsyncSessionLocal
+logger = logging.getLogger(__name__)
+
+async def scrape_campaign(campaign_id: str, user_id: str) -> dict:
     from app.services.job_hunter.scraper_service import ScraperService
-    async def _run():
-        async with AsyncSessionLocal() as db:
-            service = ScraperService(db)
-            count = await service.scrape_campaign(campaign_id, user_id)
-            return {"scraped": count}
-    return asyncio.run(_run())
+    async with AsyncSessionLocal() as db:
+        service = ScraperService(db)
+        count = await service.scrape_campaign(campaign_id, user_id)
+        return {"scraped": count}
 
-@celery_app.task(name="app.workers.scraper_worker.scrape_all_active_campaigns")
-def scrape_all_active_campaigns() -> None:
+async def scrape_all_active_campaigns() -> None:
     from sqlalchemy import select
-    from app.core.database import AsyncSessionLocal
     from app.models.pg.job_hunter import JobHunterCampaign
-    async def _run():
-        async with AsyncSessionLocal() as db:
-            result = await db.execute(
-                select(JobHunterCampaign).where(JobHunterCampaign.status == "active")
-            )
-            campaigns = result.scalars().all()
-            for c in campaigns:
-                scrape_campaign.delay(c.id, c.user_id)
-    asyncio.run(_run())
+    from app.core.task_runner import get_runner
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(JobHunterCampaign).where(JobHunterCampaign.status == "active")
+        )
+        campaigns = result.scalars().all()
+    runner = get_runner()
+    for c in campaigns:
+        runner.submit(scrape_campaign(c.id, c.user_id))
+    logger.info("[scraper] queued %d campaigns", len(campaigns))
