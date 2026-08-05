@@ -36,52 +36,63 @@ async function startBackend(): Promise<void> {
 
     let stderrBuf = ''
     let startupDone = false
+    let settled = false
+    // Declare before event handlers to avoid TDZ — assigned after setInterval below
+    let poll: ReturnType<typeof setInterval> | undefined
+
+    // Single settle helpers — guard against error+exit double-fire
+    const safeReject = (err: Error) => {
+      if (settled) return
+      settled = true
+      if (poll !== undefined) clearInterval(poll)
+      reject(err)
+    }
+    const safeResolve = () => {
+      if (settled) return
+      settled = true
+      startupDone = true  // set before clearInterval so exit handler sees correct state
+      if (poll !== undefined) clearInterval(poll)
+      resolve()
+    }
 
     _backendProcess.stdout?.on('data', (d: Buffer) => process.stdout.write(`[backend] ${d}`))
     _backendProcess.stderr?.on('data', (d: Buffer) => {
       const text = d.toString()
-      stderrBuf += text
+      stderrBuf = (stderrBuf + text).slice(-2000)  // bounded rolling buffer
       process.stderr.write(`[backend] ${text}`)
     })
 
     _backendProcess.on('error', (err: Error) => {
-      if (!startupDone) {
-        clearInterval(poll)
-        reject(err)
-      }
+      if (!startupDone) safeReject(err)
     })
 
     _backendProcess.on('exit', (code: number | null) => {
       if (!startupDone) {
         // Process exited before health check passed — reject immediately with stderr context
-        clearInterval(poll)
-        reject(new Error(`Backend exited with code ${code}.\n${stderrBuf.slice(-500)}`))
+        safeReject(new Error(`Backend exited with code ${code}.\n${stderrBuf.slice(-500)}`))
       } else if (code !== 0 && code !== null) {
         // Mid-session crash — notify all renderer windows
         console.error(`[devcore] backend exited with code ${code}`)
         BrowserWindow.getAllWindows().forEach(w => {
           if (!w.isDestroyed()) w.webContents.send('devcore:backend:crashed', { code })
         })
+      } else if (code === null) {
+        console.warn('[devcore] backend process was terminated by signal')
       }
     })
 
     // Poll /health until backend is ready (max 30s)
     const start = Date.now()
-    const poll = setInterval(async () => {
+    poll = setInterval(async () => {
       if (Date.now() - start > 30_000) {
-        clearInterval(poll)
-        reject(new Error(`Backend did not start within 30s.\n${stderrBuf.slice(-500)}`))
+        safeReject(new Error(`Backend did not start within 30s.\n${stderrBuf.slice(-500)}`))
         return
       }
       try {
         const { net } = await import('electron')
         const req = net.request({ method: 'GET', url: 'http://127.0.0.1:8000/health' })
         req.on('response', (res) => {
-          if (res.statusCode === 200) {
-            clearInterval(poll)
-            startupDone = true
-            resolve()
-          }
+          if (res.statusCode === 200) safeResolve()
         })
         req.on('error', () => {}) // still starting — ignore
         req.end()
