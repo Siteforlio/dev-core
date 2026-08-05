@@ -3,7 +3,7 @@ import path from 'path'
 import fs from 'fs'
 import os from 'os'
 import crypto from 'crypto'
-import { execFile } from 'child_process'
+import { execFile, spawn, ChildProcess } from 'child_process'
 import * as naudiodon from 'naudiodon'
 import { createOverlayWindow, getOverlayWindow, setOverlayContentBounds } from './overlay'
 import { startAudioCapture, stopAudioCapture, getActiveWs } from './audio'
@@ -21,6 +21,57 @@ function listLoopbackDevices(): Promise<{ id: number; name: string; rate: number
       try { resolve(JSON.parse(stdout.trim())) } catch { resolve([]) }
     })
   })
+}
+
+let _backendProcess: ChildProcess | null = null
+
+async function startBackend(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const backendDir = path.join(PROJECT_ROOT, 'backend')
+    _backendProcess = spawn(
+      PYTHON_EXE,
+      ['-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', '8000', '--no-access-log'],
+      { cwd: backendDir, stdio: ['ignore', 'pipe', 'pipe'] }
+    )
+
+    _backendProcess.stdout?.on('data', (d: Buffer) => process.stdout.write(`[backend] ${d}`))
+    _backendProcess.stderr?.on('data', (d: Buffer) => process.stderr.write(`[backend] ${d}`))
+    _backendProcess.on('error', (err: Error) => reject(err))
+    _backendProcess.on('exit', (code: number | null) => {
+      if (code !== 0 && code !== null) {
+        console.error(`[devcore] backend exited with code ${code}`)
+      }
+    })
+
+    // Poll /health until backend is ready (max 30s)
+    const start = Date.now()
+    const poll = setInterval(async () => {
+      if (Date.now() - start > 30_000) {
+        clearInterval(poll)
+        reject(new Error('Backend did not start within 30s'))
+        return
+      }
+      try {
+        const { net } = await import('electron')
+        const req = net.request({ method: 'GET', url: 'http://127.0.0.1:8000/health' })
+        req.on('response', (res) => {
+          if (res.statusCode === 200) {
+            clearInterval(poll)
+            resolve()
+          }
+        })
+        req.on('error', () => {}) // still starting — ignore
+        req.end()
+      } catch {}
+    }, 500)
+  })
+}
+
+function stopBackend(): void {
+  if (_backendProcess && !_backendProcess.killed) {
+    _backendProcess.kill('SIGTERM')
+    _backendProcess = null
+  }
 }
 
 const BACKEND_WS = 'ws://localhost:8000/api/v1/cluely/ws'
@@ -296,6 +347,7 @@ ipcMain.handle('devcore:session:start', async (_e, payload) => {
   if (!payload || typeof payload !== 'object') throw new Error('Invalid payload')
   try {
     const token: string = _str(payload.token, 2048)
+    console.log(`[devcore] session:start received | token=${token ? token.slice(0,20)+'…' : 'EMPTY'} | audioSource=${payload.audioSource}`)
     if (token) _lastToken = token
 
     const audioSource = ['mic', 'system', 'both'].includes(payload.audioSource)
@@ -318,6 +370,14 @@ ipcMain.handle('devcore:session:start', async (_e, payload) => {
         : [],
     }
 
+    // Quick connectivity check before handing off to audio.ts
+    const { net } = await import('electron')
+    await new Promise<void>((resolve) => {
+      const req = net.request({ method: 'GET', url: `http://localhost:8000/api/v1/auth/me` })
+      req.on('response', (res) => { console.log(`[devcore] backend reachable — HTTP ${res.statusCode}`); resolve() })
+      req.on('error', (e) => { console.error('[devcore] backend NOT reachable:', e.message); resolve() })
+      req.end()
+    })
     startAudioCapture(BACKEND_WS, token, audioSource, sessionId, context, micDeviceId, sysDeviceId)
     // Forward assessment mode to the overlay window so its store stays in sync
     const overlayWin = getOverlayWindow()
@@ -333,7 +393,19 @@ ipcMain.handle('devcore:session:start', async (_e, payload) => {
 })
 
 ipcMain.handle('devcore:session:pause', async () => {
-  stopAudioCapture()
+  // Send pause signal to backend — keep WS + audio streams alive so resume works.
+  // The backend sets state to "paused" and stops processing new audio.
+  const ws = getActiveWs()
+  if (ws && ws.readyState === 1) {
+    try { ws.send(JSON.stringify({ type: 'session_pause' })) } catch {}
+  }
+})
+
+ipcMain.handle('devcore:session:resume', async () => {
+  const ws = getActiveWs()
+  if (ws && ws.readyState === 1) {
+    try { ws.send(JSON.stringify({ type: 'session_resume' })) } catch {}
+  }
 })
 
 ipcMain.handle('devcore:session:end', async () => {
@@ -606,14 +678,32 @@ ipcMain.handle('app:splash-done', () => {
   createOverlayWindow()
 })
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   _initCredPaths()
   // Restore persisted refresh token so startup status check is correct
   const stored = _loadStoredRefreshToken()
   if (stored) _lastRefreshToken = stored
 
   Menu.setApplicationMenu(null)
+
+  // Start backend before opening the window
+  try {
+    await startBackend()
+    console.log('[devcore] backend ready')
+  } catch (err) {
+    console.error('[devcore] backend failed to start:', err)
+    const { dialog } = await import('electron')
+    await dialog.showErrorBox(
+      'Startup Error',
+      `Developer Core backend failed to start.\n\n${err}\n\nPlease check your installation.`
+    )
+    app.quit()
+    return
+  }
+
   createWindow()          // main app window (overlay deferred until splash-done IPC)
   _startDeviceWatcher()   // hot-plug detection
 })
+app.on('before-quit', () => stopBackend())
+app.on('will-quit', () => stopBackend())
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
