@@ -212,7 +212,8 @@ async def retrigger_tailoring(
 
     try:
         from app.workers.tailor_worker import tailor_listing
-        tailor_listing.apply_async(args=[app.job_listing_id, user_id], queue="tailor", priority=9)
+        from app.core.task_runner import get_runner
+        get_runner().submit(tailor_listing(app.job_listing_id, user_id))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Could not queue tailoring: {e}")
 
@@ -224,6 +225,7 @@ async def retrigger_tailoring(
 class StatusPatch(BaseModel):
     status: str  # applied | failed | withdrawn
     notes: str | None = None
+    source: str | None = None  # "extension" when called from Chrome extension
 
 
 @router.patch("/{campaign_id}/applications/{application_id}/status", response_model=dict)
@@ -239,16 +241,20 @@ async def patch_application_status(
         raise HTTPException(status_code=422, detail=f"status must be one of {allowed}")
 
     result = await db.execute(
-        select(Application).where(
+        select(Application, JobListing)
+        .join(JobListing, Application.job_listing_id == JobListing.id)
+        .where(
             Application.id == application_id,
             Application.campaign_id == campaign_id,
             Application.user_id == user_id,
             Application.deleted_at.is_(None),
         )
     )
-    app = result.scalar_one_or_none()
-    if not app:
+    row = result.first()
+    if not row:
         raise HTTPException(status_code=404, detail="Application not found")
+
+    app, listing = row
 
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -262,6 +268,18 @@ async def patch_application_status(
         app.form_answers = existing
 
     await db.commit()
+
+    if body.source == "extension":
+        from app.models.pg.job_hunter import CampaignActivityLog
+        listing_title = listing.title or "Unknown Role"
+        listing_company = listing.company or "Unknown Company"
+        log_entry = CampaignActivityLog(
+            campaign_id=app.campaign_id,
+            message=f"✓ Applied via extension — {listing_title} at {listing_company}",
+        )
+        db.add(log_entry)
+        await db.commit()
+
     return {"data": {"status": app.status}, "error": None}
 
 
@@ -346,10 +364,15 @@ async def apply_chat(
 
 # ── Apply panel: open apply URL in Chrome ────────────────────────────────────
 
+class OpenInChromeBody(BaseModel):
+    url: str | None = None  # optional override (e.g. with ?jh_fill= token appended)
+
+
 @router.post("/{campaign_id}/applications/{application_id}/open-in-chrome", response_model=dict)
 async def open_in_chrome(
     campaign_id: str,
     application_id: str,
+    body: OpenInChromeBody = OpenInChromeBody(),
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(get_user_id),
 ):
@@ -369,7 +392,8 @@ async def open_in_chrome(
         raise HTTPException(status_code=404, detail="Application not found")
 
     app, listing = row
-    url = listing.apply_url or listing.url
+    # Caller may pass a URL override (e.g. with ?jh_fill= fill token appended)
+    url = body.url or listing.apply_url or listing.url
     if not url:
         raise HTTPException(status_code=422, detail="No apply URL for this listing")
 
