@@ -4,6 +4,7 @@ import fs from 'fs'
 import os from 'os'
 import crypto from 'crypto'
 import { execFile, spawn, ChildProcess } from 'child_process'
+import type { SpawnOptions } from 'child_process'
 import * as naudiodon from 'naudiodon'
 import { createOverlayWindow, getOverlayWindow, setOverlayContentBounds } from './overlay'
 import { startAudioCapture, stopAudioCapture, getActiveWs } from './audio'
@@ -12,9 +13,15 @@ import { startAudioCapture, stopAudioCapture, getActiveWs } from './audio'
 // In dev: __dirname = dist-electron/, project root is one level up.
 const PROJECT_ROOT  = path.join(__dirname, '..')
 const PYTHON_EXE    = path.join(PROJECT_ROOT, 'backend', 'venv', 'Scripts', 'python.exe')
+// In production, BACKEND_EXE is the PyInstaller-frozen executable inside resources/
+const BACKEND_EXE   = app.isPackaged
+  ? path.join(process.resourcesPath, 'backend', 'backend.exe')
+  : ''
 const LOOPBACK_SCRIPT = path.join(PROJECT_ROOT, 'scripts', 'loopback_capture.py')
 
 function listLoopbackDevices(): Promise<{ id: number; name: string; rate: number; channels: number }[]> {
+  // Loopback script requires the dev venv — skip gracefully in packaged app.
+  if (app.isPackaged) return Promise.resolve([])
   return new Promise((resolve) => {
     execFile(PYTHON_EXE, [LOOPBACK_SCRIPT, 'list'], { timeout: 5000 }, (err, stdout) => {
       if (err) { console.warn('[devcore] loopback list failed:', err.message); resolve([]); return }
@@ -27,12 +34,22 @@ let _backendProcess: ChildProcess | null = null
 
 async function startBackend(): Promise<void> {
   return new Promise((resolve, reject) => {
-    const backendDir = path.join(PROJECT_ROOT, 'backend')
-    _backendProcess = spawn(
-      PYTHON_EXE,
-      ['-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', '8000', '--no-access-log'],
-      { cwd: backendDir, stdio: ['ignore', 'pipe', 'pipe'] }
-    )
+    if (app.isPackaged) {
+      _backendProcess = spawn(BACKEND_EXE, [], {
+        cwd: path.dirname(BACKEND_EXE),
+        env: {
+          ...process.env,
+          DEVCORE_USER_DATA: app.getPath('userData'),
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      } as SpawnOptions)
+    } else {
+      _backendProcess = spawn(
+        PYTHON_EXE,
+        ['-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', '8000', '--no-access-log'],
+        { cwd: path.join(PROJECT_ROOT, 'backend'), stdio: ['ignore', 'pipe', 'pipe'] }
+      )
+    }
 
     let stderrBuf = ''
     let startupDone = false
@@ -714,6 +731,7 @@ ipcMain.handle('app:splash-done', () => {
 
 app.whenReady().then(async () => {
   _initCredPaths()
+  app.setAppUserModelId('com.siteforlio.devcore')   // Windows taskbar/notification identity
   // Restore persisted refresh token so startup status check is correct
   const stored = _loadStoredRefreshToken()
   if (stored) _lastRefreshToken = stored

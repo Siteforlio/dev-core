@@ -1,0 +1,49 @@
+appId: com.siteforlio.devcore
+productName: Developer Core
+copyright: Copyright © 2026 Siteforlio
+
+directories:
+  output: release/
+  buildResources: build/
+
+# Do NOT list node_modules here — electron-builder resolves production deps
+# automatically from package.json "dependencies". Listing it explicitly would
+# bundle all devDependencies too and bloat the installer.
+files:
+  - dist-electron/**/*
+  - frontend/dist/**/*
+  - package.json
+
+# Native .node files cannot be loaded from inside an asar archive.
+# naudiodon, ffi-napi, and koffi all ship native binaries — unpack them.
+asarUnpack:
+  - node_modules/naudiodon/**/*
+  - node_modules/ffi-napi/**/*
+  - node_modules/koffi/**/*
+
+# The PyInstaller-frozen backend — accessible at process.resourcesPath/backend/
+extraResources:
+  - from: backend/dist/backend/
+    to: backend/
+    filter:
+      - '**/*'
+
+win:
+  icon: build/icon.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Developer Core
+
+publish:
+  provider: github
+  owner: Siteforlio
+  repo: dev-core
+  releaseType: release
