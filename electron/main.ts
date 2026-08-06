@@ -8,6 +8,7 @@ import type { SpawnOptions } from 'child_process'
 import * as naudiodon from 'naudiodon'
 import { createOverlayWindow, getOverlayWindow, setOverlayContentBounds } from './overlay'
 import { startAudioCapture, stopAudioCapture, getActiveWs } from './audio'
+import { initUpdater } from './updater'
 
 // Resolve paths to the Python venv and loopback helper script.
 // In dev: __dirname = dist-electron/, project root is one level up.
@@ -762,6 +763,7 @@ app.whenReady().then(async () => {
 
   createWindow()          // main app window (overlay deferred until splash-done IPC)
   _startDeviceWatcher()   // hot-plug detection
+  initUpdater()
 })
 app.on('will-quit', () => stopBackend())
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })

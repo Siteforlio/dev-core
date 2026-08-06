@@ -1,0 +1,61 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'   # trigger on: git tag v1.0.1 && git push --tags
+
+permissions:
+  contents: write   # needed to create GitHub Releases and upload assets
+
+jobs:
+  release-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies + PyInstaller
+        run: |
+          cd backend
+          pip install -r requirements.txt pyinstaller==6.13.0
+
+      - name: Freeze backend with PyInstaller
+        run: |
+          cd backend
+          pyinstaller backend.spec --clean
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Node dependencies
+        run: npm install
+
+      - name: Build frontend
+        run: |
+          cd frontend
+          npm install
+          npm run build
+
+      - name: Build and publish Electron app
+        env:
+          # GITHUB_TOKEN is automatically provided by GitHub Actions.
+          # The permissions: contents: write above grants the needed access.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx tsc && npx electron-builder --publish always
+
+      - name: Upload installer as artifact (fallback)
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: release/*.exe
+          retention-days: 7

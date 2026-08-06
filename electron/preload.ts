@@ -35,6 +35,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('devcore:mic:test', payload),
     startSession:     (payload: unknown) => ipcRenderer.invoke('devcore:session:start', payload),
     pauseSession:     ()                 => ipcRenderer.invoke('devcore:session:pause'),
+    resumeSession:    ()                 => ipcRenderer.invoke('devcore:session:resume'),
     endSession:       ()                 => ipcRenderer.invoke('devcore:session:end'),
     enableInteract:   ()                 => ipcRenderer.invoke('devcore:interact:enable'),
     disableInteract:  ()                 => ipcRenderer.invoke('devcore:interact:disable'),
@@ -128,6 +129,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.on('devcore:screenshot:result', handler)
       return () => ipcRenderer.removeListener('devcore:screenshot:result', handler)
     },
+    onOverlayMove: (cb: (p: { x: number; y: number }) => void): (() => void) => {
+      const handler = (_e: unknown, p: { x: number; y: number }) => cb(p)
+      ipcRenderer.on('devcore:overlay:move', handler)
+      return () => ipcRenderer.removeListener('devcore:overlay:move', handler)
+    },
     // Trigger assessment agent from UI
     assessmentTrigger: (payload: { action: string; text?: string }) =>
       ipcRenderer.invoke('devcore:assessment:trigger', payload),
@@ -137,8 +143,31 @@ contextBridge.exposeInMainWorld('electronAPI', {
         'devcore:hotkey','devcore:outcome','devcore:devices:changed','devcore:session:title',
         'devcore:tool:event','devcore:agent:thinking','devcore:agent:guidance','devcore:agent:solution',
         'devcore:session:mode','devcore:screenshot:count','devcore:screenshot:result',
-        'devcore:audio:level',
+        'devcore:audio:level','devcore:overlay:move',
       ].forEach(ch => ipcRenderer.removeAllListeners(ch))
     },
+  },
+  updates: {
+    onAvailable: (cb: (info: { version: string; releaseNotes: unknown }) => void) => {
+      const handler = (_e: unknown, info: { version: string; releaseNotes: unknown }) => cb(info)
+      ipcRenderer.on('update:available', handler)
+      return () => ipcRenderer.removeListener('update:available', handler)
+    },
+    onProgress: (cb: (p: { percent: number; transferred: number; total: number; bytesPerSecond: number }) => void) => {
+      const handler = (_e: unknown, p: { percent: number; transferred: number; total: number; bytesPerSecond: number }) => cb(p)
+      ipcRenderer.on('update:progress', handler)
+      return () => ipcRenderer.removeListener('update:progress', handler)
+    },
+    onDownloaded: (cb: (info: { version: string }) => void) => {
+      const handler = (_e: unknown, info: { version: string }) => cb(info)
+      ipcRenderer.on('update:downloaded', handler)
+      return () => ipcRenderer.removeListener('update:downloaded', handler)
+    },
+    onError: (cb: (err: { message: string }) => void) => {
+      const handler = (_e: unknown, err: { message: string }) => cb(err)
+      ipcRenderer.on('update:error', handler)
+      return () => ipcRenderer.removeListener('update:error', handler)
+    },
+    install: () => ipcRenderer.invoke('update:install'),
   },
 })
