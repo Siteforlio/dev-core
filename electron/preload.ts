@@ -169,5 +169,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
       return () => ipcRenderer.removeListener('update:error', handler)
     },
     install: () => ipcRenderer.invoke('update:install'),
+    removeAllListeners: () => {
+      ;['update:available', 'update:progress', 'update:downloaded', 'update:error']
+        .forEach(ch => ipcRenderer.removeAllListeners(ch))
+    },
   },
 })

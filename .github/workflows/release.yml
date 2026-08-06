@@ -21,6 +21,14 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\pip\Cache
+          key: pip-${{ runner.os }}-${{ hashFiles('backend/requirements.txt') }}
+          restore-keys: |
+            pip-${{ runner.os }}-
+
       - name: Install Python dependencies + PyInstaller
         run: |
           cd backend
@@ -36,9 +44,15 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
 
       - name: Install Node dependencies
-        run: npm install
+        run: npm install --ignore-scripts
+
+      - name: Rebuild native modules for Electron
+        run: npx electron-rebuild -f -w naudiodon
 
       - name: Build frontend
         run: |
@@ -46,6 +60,8 @@ jobs:
           npm install
           npm run build
 
+      # NOTE: This build is unsigned. For production releases, add CSC_LINK and CSC_KEY_PASSWORD
+      # secrets and configure win.certificateFile in electron-builder.yml.
       - name: Build and publish Electron app
         env:
           # GITHUB_TOKEN is automatically provided by GitHub Actions.

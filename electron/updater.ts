@@ -11,14 +11,6 @@ import { app, BrowserWindow, ipcMain } from 'electron'
 import { autoUpdater, UpdateInfo } from 'electron-updater'
 import log from 'electron-log'
 
-// electron-updater uses electron-log for its own logging
-autoUpdater.logger = log
-;(autoUpdater.logger as any).transports.file.level = 'info'
-
-// Do not auto-install on quit — let the user choose when to restart
-autoUpdater.autoInstallOnAppQuit = false
-autoUpdater.autoDownload = true  // download automatically, but don't install
-
 function _sendToAll(channel: string, payload?: unknown) {
   BrowserWindow.getAllWindows().forEach(w => {
     if (!w.isDestroyed()) w.webContents.send(channel, payload)
@@ -27,6 +19,16 @@ function _sendToAll(channel: string, payload?: unknown) {
 
 export function initUpdater(): void {
   if (!app.isPackaged) return  // no-op in dev
+
+  // Configure log level before assigning to avoid `as any` cast
+  log.transports.file.level = 'info'
+  autoUpdater.logger = log
+  autoUpdater.autoInstallOnAppQuit = false
+  autoUpdater.autoDownload = true  // download automatically, but don't install
+
+  // Prevent duplicate listeners if somehow called more than once
+  autoUpdater.removeAllListeners()
+  ipcMain.removeHandler('update:install')
 
   autoUpdater.on('update-available', (info: UpdateInfo) => {
     log.info('[updater] update available:', info.version)
