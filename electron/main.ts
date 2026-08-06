@@ -3,7 +3,7 @@ import path from 'path'
 import fs from 'fs'
 import os from 'os'
 import crypto from 'crypto'
-import { execFile, spawn, ChildProcess } from 'child_process'
+import { execFile, spawn, spawnSync, ChildProcess } from 'child_process'
 import type { SpawnOptions } from 'child_process'
 import * as naudiodon from 'naudiodon'
 import { createOverlayWindow, getOverlayWindow, setOverlayContentBounds } from './overlay'
@@ -119,10 +119,17 @@ async function startBackend(): Promise<void> {
 }
 
 function stopBackend(): void {
-  if (_backendProcess && !_backendProcess.killed) {
+  if (!_backendProcess || _backendProcess.killed) return
+  if (app.isPackaged && process.platform === 'win32' && _backendProcess.pid) {
+    // PyInstaller frozen exe may spawn internal sub-processes. Use taskkill /T to
+    // kill the entire process tree and prevent orphaned port-8000 processes.
+    try {
+      spawnSync('taskkill', ['/PID', String(_backendProcess.pid), '/T', '/F'], { stdio: 'ignore' })
+    } catch {}
+  } else {
     _backendProcess.kill('SIGTERM')
-    _backendProcess = null
   }
+  _backendProcess = null
 }
 
 const BACKEND_WS = 'ws://localhost:8000/api/v1/cluely/ws'

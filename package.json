@@ -13,8 +13,8 @@
     "dev:ui": "cd frontend && npm run dev",
     "dev:all": "concurrently -n UI,Electron -c cyan,yellow \"cd frontend && npm run dev\" \"wait-on http://localhost:5173 && npm run dev\"",
     "build": "tsc && electron-builder",
-    "build:full": "cd frontend && npm run build && cd .. && tsc && electron-builder",
-    "build:full:publish": "cd frontend && npm run build && cd .. && tsc && electron-builder --publish always"
+    "build:full": "npm run build --prefix frontend && tsc && electron-builder",
+    "build:full:publish": "npm run build --prefix frontend && tsc && electron-builder --publish always"
   },
   "keywords": [],
   "author": "",
