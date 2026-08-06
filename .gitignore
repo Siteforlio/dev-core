@@ -19,6 +19,12 @@ dist/
 dist-electron/
 frontend/dist/
 
+# PyInstaller build output (backend/ subdirectories only)
+backend/dist/
+backend/build/
+# electron-builder installer output
+release/
+
 # Environment files
 .env
 backend/.env
