@@ -34,12 +34,19 @@ _mp_src = _pkg_dir('mediapipe')
 _mp_binaries = collect_dynamic_libs('mediapipe') if _mp_src else []
 _mp_datas = [(str(_mp_src), 'mediapipe')] if _mp_src else []
 
-_proto_src = _pkg_dir('google.protobuf')
-_google_src = _proto_src.parent if _proto_src else None  # google/ namespace dir
-_proto_datas = [(str(_google_src), 'google')] if _google_src and _google_src.exists() else []
+_proto_src = _pkg_dir('google.protobuf')  # site-packages/google/protobuf/
+_proto_datas = []
+if _proto_src and _proto_src.exists():
+    _proto_datas += [( str(_proto_src), 'google/protobuf' )]
+    _upb_candidate = _proto_src.parent / '_upb'
+    if _upb_candidate.exists():
+        _proto_datas += [(str(_upb_candidate), 'google/_upb')]
+    _upb_proto_candidate = _proto_src.parent / '_upb_proto'
+    if _upb_proto_candidate.exists():
+        _proto_datas += [(str(_upb_proto_candidate), 'google/_upb_proto')]
 
 print(f'[spec] mediapipe src: {_mp_src}')
-print(f'[spec] google src: {_google_src}')
+print(f'[spec] google/protobuf src: {_proto_src}')
 
 # Pre-collect submodules for packages that load submodules via strings at runtime.
 # collect_submodules() walks the installed package and returns all importable submodule names.
@@ -297,7 +304,9 @@ def _safe_collect(pkg):
         src = x[0]
         dest = x[1]
         # Move Python source files that ended up in binaries → datas
-        if src.endswith(('.py', '.pyi', '.pyx', '.txt', '.json', '.tflite', '.tfile')):
+        if src.endswith(('.py', '.pyi', '.pyx', '.txt', '.json',
+                         '.tflite', '.tfile', '.onnx', '.bin',
+                         '.pt', '.pth', '.pkl', '.npz')):
             extra_datas.append((src, dest, 'DATA'))
         else:
             good_bins.append((src, dest, 'BINARY') if len(x) == 2 else x)
