@@ -52,7 +52,7 @@ jobs:
         run: npm install --ignore-scripts
 
       - name: Rebuild native modules for Electron
-        run: npx electron-rebuild -f -w naudiodon
+        run: npx @electron/rebuild -f -w naudiodon
 
       - name: Build frontend
         run: |

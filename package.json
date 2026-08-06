@@ -7,7 +7,7 @@
     "doc": "docs"
   },
   "scripts": {
-    "postinstall": "electron-rebuild -f -w ffi-napi,naudiodon",
+    "postinstall": "npx @electron/rebuild -f -w ffi-napi,naudiodon",
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "tsc && cross-env NODE_ENV=development electron .",
     "dev:ui": "cd frontend && npm run dev",
@@ -28,7 +28,6 @@
     "cross-env": "^10.1.0",
     "electron": "^41.2.0",
     "electron-builder": "^26.8.1",
-    "electron-rebuild": "^3.2.9",
     "ts-node": "^10.9.2",
     "typescript": "^6.0.2",
     "wait-on": "^9.0.5"

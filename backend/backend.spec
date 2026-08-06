@@ -339,6 +339,7 @@ for pkg in [
     'caldav',
     'keybert',
     'sklearn',
+    'passlib',
     'PIL',
     'cv2',
     'mss',
