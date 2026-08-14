@@ -261,6 +261,21 @@ a = Analysis(
         # Run once after first install: `playwright install chromium`
         'playwright',
         'nodriver',
+        # CUDA/GPU modules — desktop app is CPU-only; these add 400-600 MB for nothing
+        'torch.cuda',
+        'torch.backends.cuda',
+        'torch.backends.cudnn',
+        'triton',
+        'nvidia',
+        'nvidia.cuda_runtime',
+        'nvidia.cublas',
+        'nvidia.cudnn',
+        'nvidia.cufft',
+        'nvidia.cusparse',
+        'nvidia.cusolver',
+        'nvidia.nccl',
+        'nvidia.nvjitlink',
+        'nvidia.nvtx',
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
@@ -347,6 +362,13 @@ for pkg in [
     a.binaries        += _bins
     a.datas           += _datas
     a.hiddenimports   += _hidden
+
+# Strip CUDA/GPU binaries — desktop app is CPU-only
+_cuda_patterns = ('cublas', 'cudnn', 'cufft', 'cusparse', 'cusolver',
+                  'nccl', 'nvrtc', 'nvjitlink', 'nvidia', 'cuda_runtime',
+                  'triton', 'cudart')
+a.binaries = [b for b in a.binaries
+              if not any(p in b[0].lower() for p in _cuda_patterns)]
 
 pyz = PYZ(a.pure, a.zipped_data)
 
