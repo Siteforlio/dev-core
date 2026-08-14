@@ -269,7 +269,6 @@ a = Analysis(
 
 # ── Collect data files for packages that use pkg_resources / importlib ────────
 # Each collect_all returns (binaries, datas, hiddenimports).
-# ctranslate2 is required by faster_whisper at runtime (DLLs must be present).
 def _to_3tuple(entry, default_typecode='DATA'):
     """Normalise a collect_all entry to a 3-tuple (src, dest, typecode)."""
     if len(entry) == 3:
@@ -323,8 +322,6 @@ def _safe_collect(pkg):
 for pkg in [
     # mediapipe handled separately above (non-standard layout)
     'sentence_transformers',
-    'faster_whisper',
-    'ctranslate2',       # required by faster_whisper — ships large ONNX/CUDA DLLs
     'spacy',
     'kokoro_onnx',
     'resemblyzer',
