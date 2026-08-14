@@ -1,10 +1,24 @@
 import base64
 import asyncio
-import numpy as np
-import mediapipe as mp
-import cv2
 
-mp_face_mesh = mp.solutions.face_mesh
+# Heavy imports deferred to _ensure_loaded() — called on first use
+_mp = None
+_cv2 = None
+_np = None
+_mp_face_mesh = None
+
+
+def _ensure_loaded():
+    global _mp, _cv2, _np, _mp_face_mesh
+    if _mp is not None:
+        return
+    import mediapipe as mp
+    import cv2
+    import numpy as np
+    _mp = mp
+    _cv2 = cv2
+    _np = np
+    _mp_face_mesh = mp.solutions.face_mesh
 
 # Landmark indices
 LEFT_EYE = [362, 382, 381, 380, 374, 373, 390, 249, 263, 466, 388, 387, 386, 385, 384, 398]
@@ -38,24 +52,26 @@ def _clamp(value: float, lo: float = 0.0, hi: float = 1.0) -> float:
 
 
 class EmotionService:
-    def _run_facemesh(self, image: np.ndarray):
-        with mp_face_mesh.FaceMesh(
+    def _run_facemesh(self, image):
+        _ensure_loaded()
+        with _mp_face_mesh.FaceMesh(
             static_image_mode=True,
             max_num_faces=1,
             refine_landmarks=True,
             min_detection_confidence=0.5,
         ) as fm:
-            return fm.process(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+            return fm.process(_cv2.cvtColor(image, _cv2.COLOR_BGR2RGB))
 
     def _landmarks_to_emotion(self, landmarks) -> str:
+        _ensure_loaded()
         left_ear = _eye_aspect_ratio(landmarks, LEFT_EYE)
         right_ear = _eye_aspect_ratio(landmarks, RIGHT_EYE)
         avg_ear = (left_ear + right_ear) / 2
 
         mouth_gap = abs(landmarks[MOUTH_TOP].y - landmarks[MOUTH_BOTTOM].y)
 
-        brow_y = np.mean([landmarks[i].y for i in LEFT_BROW + RIGHT_BROW])
-        eye_y = np.mean([landmarks[i].y for i in LEFT_EYE[:4] + RIGHT_EYE[:4]])
+        brow_y = _np.mean([landmarks[i].y for i in LEFT_BROW + RIGHT_BROW])
+        eye_y = _np.mean([landmarks[i].y for i in LEFT_EYE[:4] + RIGHT_EYE[:4]])
         brow_raise = eye_y - brow_y
 
         if avg_ear < 0.15:
@@ -70,14 +86,15 @@ class EmotionService:
 
     def _landmarks_to_scores(self, landmarks) -> tuple[float, float]:
         """Return (nervousness_score, confidence_score) both in [0, 1]."""
+        _ensure_loaded()
         left_ear = _eye_aspect_ratio(landmarks, LEFT_EYE)
         right_ear = _eye_aspect_ratio(landmarks, RIGHT_EYE)
         avg_ear = (left_ear + right_ear) / 2
 
         mouth_gap = abs(landmarks[MOUTH_TOP].y - landmarks[MOUTH_BOTTOM].y)
 
-        brow_y = np.mean([landmarks[i].y for i in LEFT_BROW + RIGHT_BROW])
-        eye_y = np.mean([landmarks[i].y for i in LEFT_EYE[:4] + RIGHT_EYE[:4]])
+        brow_y = _np.mean([landmarks[i].y for i in LEFT_BROW + RIGHT_BROW])
+        eye_y = _np.mean([landmarks[i].y for i in LEFT_EYE[:4] + RIGHT_EYE[:4]])
         brow_raise = eye_y - brow_y
 
         # Nervousness: high when EAR is low (squinting) + brows tense
@@ -94,6 +111,7 @@ class EmotionService:
 
     def _landmarks_to_gaze(self, landmarks) -> str:
         """Estimate gaze direction from iris position relative to eye corners."""
+        _ensure_loaded()
         try:
             # Left iris
             l_iris_x = landmarks[LEFT_IRIS_CENTER].x
@@ -116,7 +134,7 @@ class EmotionService:
 
             # Vertical: iris y vs eye centre y
             iris_y = (landmarks[LEFT_IRIS_CENTER].y + landmarks[RIGHT_IRIS_CENTER].y) / 2
-            eye_centre_y = np.mean([landmarks[i].y for i in LEFT_EYE[:4] + RIGHT_EYE[:4]])
+            eye_centre_y = _np.mean([landmarks[i].y for i in LEFT_EYE[:4] + RIGHT_EYE[:4]])
             if iris_y < eye_centre_y - 0.01:
                 return "up"
             if iris_y > eye_centre_y + 0.01:
@@ -127,10 +145,11 @@ class EmotionService:
 
     def _decode_frame(self, frame_b64: str):
         """Decode a base64 JPEG/PNG to a BGR numpy array. Returns None on failure."""
+        _ensure_loaded()
         try:
             img_bytes = base64.b64decode(frame_b64)
-            arr = np.frombuffer(img_bytes, dtype=np.uint8)
-            return cv2.imdecode(arr, cv2.IMREAD_COLOR)
+            arr = _np.frombuffer(img_bytes, dtype=_np.uint8)
+            return _cv2.imdecode(arr, _cv2.IMREAD_COLOR)
         except Exception:
             return None
 
