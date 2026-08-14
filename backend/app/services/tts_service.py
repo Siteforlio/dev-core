@@ -3,8 +3,6 @@ import logging
 from pathlib import Path
 from typing import AsyncGenerator
 
-import numpy as np
-
 from app.core.config import settings
 
 _log = logging.getLogger(__name__)
@@ -121,6 +119,7 @@ class TTSService:
 
         def _run_synthesis():
             try:
+                import numpy as np
                 for samples, _sr in kokoro.create_stream(
                     text, voice=voice, speed=1.0, lang="en-us"
                 ):

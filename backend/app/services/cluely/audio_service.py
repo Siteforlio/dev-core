@@ -6,12 +6,22 @@ import logging
 import asyncio
 from typing import Literal, Callable, Awaitable
 
-import numpy as np
 from deepgram import AsyncDeepgramClient
 
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+_np = None
+
+
+def _get_np():
+    global _np
+    if _np is None:
+        import numpy as np
+        _np = np
+    return _np
+
 
 MIN_SAMPLES = 1600    # 100 ms at 16 kHz — drop frames shorter than this
 MIC_GAIN    = 4.0     # software boost for quiet mic devices
@@ -60,11 +70,13 @@ def parse_audio_frame(data: bytes) -> tuple[Literal["mic", "system"], int, bytes
 def _rms(pcm: bytes) -> float:
     if len(pcm) < 2:
         return 0.0
+    np = _get_np()
     samples = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
     return float(np.sqrt(np.mean(samples ** 2))) / 32768.0
 
 
 def _boost(pcm: bytes, gain: float) -> bytes:
+    np = _get_np()
     arr = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
     arr = np.clip(arr * gain, -32768, 32767).astype(np.int16)
     return arr.tobytes()

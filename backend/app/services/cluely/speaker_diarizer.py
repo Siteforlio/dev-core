@@ -26,9 +26,17 @@ Dependencies
 import logging
 from typing import Literal
 
-import numpy as np
-
 logger = logging.getLogger(__name__)
+
+_np = None
+
+
+def _get_np():
+    global _np
+    if _np is None:
+        import numpy as np
+        _np = np
+    return _np
 
 # Number of mic frames required before we trust the enrolled embedding.
 _MIN_ENROLL_FRAMES = 5
@@ -36,7 +44,8 @@ _MIN_ENROLL_FRAMES = 5
 _SIMILARITY_THRESHOLD = 0.75
 
 
-def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
+def _cosine_similarity(a, b) -> float:
+    np = _get_np()
     denom = np.linalg.norm(a) * np.linalg.norm(b)
     return float(np.dot(a, b) / (denom + 1e-8))
 
@@ -53,8 +62,8 @@ class SpeakerDiarizer:
         self._encoder = None
         self._available = False
         self._enroll_count = 0
-        self._running_sum: np.ndarray | None = None
-        self._user_embedding: np.ndarray | None = None
+        self._running_sum = None
+        self._user_embedding = None
 
         try:
             from resemblyzer import VoiceEncoder  # type: ignore
@@ -135,11 +144,12 @@ class SpeakerDiarizer:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _embed(self, pcm: bytes) -> np.ndarray | None:
+    def _embed(self, pcm: bytes):
         """Convert raw 16-bit mono 16 kHz PCM to a d-vector embedding."""
         if self._encoder is None:
             return None
         try:
+            np = _get_np()
             # resemblyzer expects float32 waveform normalised to [-1, 1]
             samples = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
             if samples.size < 1600:  # < 100 ms at 16 kHz — too short

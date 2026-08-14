@@ -39,3 +39,15 @@ def test_emotion_service_does_not_import_mediapipe():
 
 def test_emotion_router_does_not_import_mediapipe():
     _assert_no_eager("app.api.v1.emotion", ["mediapipe", "cv2"])
+
+
+def test_cluely_ws_router_does_not_import_numpy():
+    _assert_no_eager("app.api.v1.cluely.ws", ["numpy", "mediapipe", "cv2", "resemblyzer"])
+
+
+def test_tts_service_does_not_import_numpy():
+    _assert_no_eager("app.services.tts_service", ["numpy"])
+
+
+def test_overlay_service_does_not_import_numpy():
+    _assert_no_eager("app.services.cluely.overlay_service", ["numpy", "resemblyzer"])
