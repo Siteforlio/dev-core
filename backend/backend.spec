@@ -276,6 +276,15 @@ a = Analysis(
         'nvidia.nccl',
         'nvidia.nvjitlink',
         'nvidia.nvtx',
+        # JAX — pulled in as optional mediapipe dep; never used at runtime
+        'jax',
+        'jaxlib',
+        # numba / llvmlite — transitive dep, never imported by app code
+        'numba',
+        'llvmlite',
+        # faiss — not used by any app service
+        'faiss',
+        'faiss_cpu',
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
@@ -366,7 +375,8 @@ for pkg in [
 # Strip CUDA/GPU binaries — desktop app is CPU-only
 _cuda_patterns = ('cublas', 'cudnn', 'cufft', 'cusparse', 'cusolver',
                   'nccl', 'nvrtc', 'nvjitlink', 'nvidia', 'cuda_runtime',
-                  'triton', 'cudart')
+                  'triton', 'cudart',
+                  'jaxlib', 'llvmlite', 'faiss')
 a.binaries = [b for b in a.binaries
               if not any(p in b[0].lower() for p in _cuda_patterns)]
 
