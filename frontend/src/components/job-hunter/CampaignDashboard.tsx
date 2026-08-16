@@ -10,6 +10,7 @@ import ApplyPanel from './ApplyPanel'
 import DidYouApplyPopup from './DidYouApplyPopup'
 import TrackingPanel from './TrackingPanel'
 import ManualJobModal from './ManualJobModal'
+import { ExtensionBanner } from './ExtensionBanner'
 import type {
   CampaignSummary, Application, ScheduledInterview,
   ScrapePreferences, BoardStatus, ScrapeRunStatus,
@@ -321,6 +322,7 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
 
   return (
     <div className="flex flex-col gap-4 h-full">
+      <ExtensionBanner />
       <button
         onClick={onBack}
         className="self-start flex items-center gap-1.5 text-sm text-gray-400 hover:text-white transition-colors"

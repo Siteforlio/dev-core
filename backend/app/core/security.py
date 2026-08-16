@@ -29,6 +29,16 @@ def create_access_token(user_id: str) -> str:
     )
 
 
+def create_extension_token(user_id: str) -> str:
+    """Long-lived token for the Chrome extension (1 year). Stored in chrome.storage.local."""
+    expire = _utcnow() + timedelta(days=365)
+    return jwt.encode(
+        {"sub": user_id, "exp": expire, "type": "ext"},
+        settings.jwt_secret,
+        algorithm=settings.jwt_algorithm,
+    )
+
+
 def create_refresh_token(user_id: str) -> str:
     return jwt.encode(
         {"sub": user_id, "type": "refresh", "jti": str(uuid.uuid4())},

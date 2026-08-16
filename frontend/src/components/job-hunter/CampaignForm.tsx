@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useJobHunter } from '../../hooks/useJobHunter'
 import type { Campaign } from '../../types/jobHunter'
 
@@ -51,12 +51,11 @@ interface Props {
 }
 
 export default function CampaignForm({ onCreated }: Props) {
-  const { getCampaignMeta, createCampaign } = useJobHunter()
+  const { createCampaign } = useJobHunter()
 
-  const [allCategories, setAllCategories] = useState<string[]>([])
   const [name, setName] = useState('')
   const [categories, setCategories] = useState<string[]>([])
-  const [categorySearch, setCategorySearch] = useState('')
+  const [categoryInput, setCategoryInput] = useState('')
   const [workTypes, setWorkTypes] = useState<string[]>(['remote'])
   const [anywhere, setAnywhere] = useState(false)
   const [country, setCountry] = useState('')
@@ -64,17 +63,17 @@ export default function CampaignForm({ onCreated }: Props) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
-  useEffect(() => {
-    let cancelled = false
-    getCampaignMeta()
-      .then(({ categories }) => { if (!cancelled) setAllCategories(categories) })
-      .catch(() => {})
-    return () => { cancelled = true }
-  }, [])
+  const addCategory = () => {
+    const val = categoryInput.trim()
+    if (val && !categories.some(c => c.toLowerCase() === val.toLowerCase())) {
+      setCategories(prev => [...prev, val])
+    }
+    setCategoryInput('')
+  }
 
-  const filteredCategories = allCategories.filter(c =>
-    c.toLowerCase().includes(categorySearch.toLowerCase())
-  )
+  const removeCategory = (cat: string) => {
+    setCategories(prev => prev.filter(c => c !== cat))
+  }
 
   const filteredCountries = COUNTRIES.filter(c =>
     c.name.toLowerCase().includes(countrySearch.toLowerCase()) ||
@@ -124,52 +123,56 @@ export default function CampaignForm({ onCreated }: Props) {
           />
         </div>
 
-        {/* Job Categories — multi-select */}
+        {/* Job Categories — free-form tag input */}
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center justify-between">
             <label className="text-xs text-gray-400 uppercase tracking-wide font-medium">Job Categories</label>
             {categories.length > 0 && (
-              <span className="text-xs text-blue-400 font-mono">{categories.length} selected</span>
+              <span className="text-xs text-blue-400 font-mono">{categories.length} added</span>
             )}
           </div>
-          <input
-            type="text"
-            value={categorySearch}
-            onChange={e => setCategorySearch(e.target.value)}
-            placeholder="Search categories…"
-            className="bg-gray-900 border border-gray-800 text-gray-200 text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-blue-600"
-          />
-          <div className="grid grid-cols-2 gap-1.5 max-h-52 overflow-y-auto pr-1 [&::-webkit-scrollbar]:hidden">
-            {filteredCategories.map(cat => {
-              const selected = categories.includes(cat)
-              return (
-                <button
-                  key={cat}
-                  onClick={() => setCategories(prev => toggle(prev, cat))}
-                  className={`text-left px-3 py-2 rounded-lg text-xs border transition-colors ${
-                    selected
-                      ? 'border-blue-500 bg-blue-500/10 text-blue-300'
-                      : 'border-gray-800 bg-gray-900 text-gray-400 hover:border-gray-600'
-                  }`}
-                >
-                  <span className="flex items-center gap-1.5">
-                    {selected && (
-                      <svg width="10" height="10" viewBox="0 0 12 12" fill="none" className="flex-shrink-0">
-                        <path d="M2 6l3 3 5-5" stroke="#60a5fa" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                      </svg>
-                    )}
-                    {cat}
-                  </span>
-                </button>
-              )
-            })}
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={categoryInput}
+              onChange={e => setCategoryInput(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addCategory() } }}
+              placeholder="e.g. Software Engineer"
+              className="flex-1 bg-gray-900 border border-gray-800 text-gray-200 text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-blue-600"
+            />
+            <button
+              type="button"
+              onClick={addCategory}
+              disabled={!categoryInput.trim()}
+              className="px-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-30 text-white text-xs rounded-lg font-medium transition-colors"
+            >
+              Add
+            </button>
           </div>
-          {filteredCategories.length === 0 && categorySearch && (
-            <p className="text-xs text-gray-600">No categories match "{categorySearch}"</p>
+          {categories.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mt-1">
+              {categories.map(cat => (
+                <span
+                  key={cat}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs border border-blue-500/30 bg-blue-500/10 text-blue-300"
+                >
+                  {cat}
+                  <button
+                    type="button"
+                    onClick={() => removeCategory(cat)}
+                    className="text-blue-400/60 hover:text-blue-300 transition-colors"
+                  >
+                    <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
+                      <path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                    </svg>
+                  </button>
+                </span>
+              ))}
+            </div>
           )}
-          {categories.length === 0 && !categorySearch && (
-            <p className="text-xs text-gray-600">Select one or more categories — the scraper searches all of them.</p>
-          )}
+          <p className="text-xs text-gray-600">
+            Type a role or keyword and press Enter to add it. Add as many as you like — the scraper searches all of them.
+          </p>
         </div>
 
         {/* Work Arrangements — multi-select */}

@@ -437,10 +437,14 @@ export function useJobHunter() {
     return data.reply as string
   }
 
-  async function openInChrome(campaignId: string, applicationId: string): Promise<void> {
+  async function openInChrome(campaignId: string, applicationId: string, url?: string): Promise<void> {
     const res = await apiFetch(
       `${BASE}/job-hunter/campaigns/${campaignId}/applications/${applicationId}/open-in-chrome`,
-      { method: 'POST', headers }
+      {
+        method: 'POST',
+        headers: { ...headers, 'Content-Type': 'application/json' },
+        body: url ? JSON.stringify({ url }) : undefined,
+      }
     )
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
   }

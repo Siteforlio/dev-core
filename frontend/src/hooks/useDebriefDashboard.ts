@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useAuthStore } from '../store/authStore'
+import { useOverlayStore } from '../store/overlayStore'
 import { apiFetch } from '../lib/apiFetch'
 import type {
   DebriefTab, ActionItem, AgendaItem, Attendee, Decision,
@@ -142,6 +143,33 @@ export function useDebriefDashboard(pendingSessionId: string | null = null) {
   const [meetingStarted, setMeetingStarted] = useState(false)
   const [startedAt,      setStartedAt]      = useState<number | null>(null)
 
+  // Drive timer from actual WS state — only mark started when backend confirms session
+  const wsState = useOverlayStore((s) => s.state)
+  const prevWsState = useRef<string>('idle')
+  useEffect(() => {
+    const prev = prevWsState.current
+    prevWsState.current = wsState
+
+    const wasActive = prev !== 'idle' && prev !== 'paused'
+    const isActive  = wsState !== 'idle' && wsState !== 'paused'
+
+    if (!wasActive && isActive) {
+      // Session just went active (listening/thinking) — start timer
+      setMeetingStarted(true)
+      setStartedAt(Date.now())
+    } else if (wsState === 'paused' && !meetingStarted) {
+      // Session paused before timer was ever set — mark started so timer is visible
+      setMeetingStarted(true)
+      if (!startedAt) setStartedAt(Date.now())
+    } else if (wsState === 'idle' && prev !== 'idle') {
+      // Session fully ended — clear timer and refresh debriefs
+      setMeetingStarted(false)
+      setStartedAt(null)
+      // Small delay so backend has time to write the session summary
+      setTimeout(() => fetchRecentDebriefs(), 3000)
+    }
+  }, [wsState, meetingStarted, startedAt])
+
   // Refs so callbacks always see latest state without stale closures
   const debriefRef     = useRef<MeetingDebrief | null>(null)
   const actionItemsRef = useRef<ActionItem[]>([])
@@ -257,13 +285,7 @@ export function useDebriefDashboard(pendingSessionId: string | null = null) {
     })
   }, [])
 
-  // ── Meeting start ─────────────────────────────────────────────────────────
-  const startMeeting = useCallback(() => {
-    if (meetingStarted) return
-    setMeetingStarted(true)
-    setStartedAt(Date.now())
-    showToast('Meeting started · recording debrief')
-  }, [meetingStarted, showToast])
+  // startMeeting is now driven by WS state (see wsState effect above)
 
   // ── Month navigation ──────────────────────────────────────────────────────
   const changeMonth = useCallback((delta: number) => {
@@ -475,7 +497,7 @@ export function useDebriefDashboard(pendingSessionId: string | null = null) {
     debrief, debriefLoading,
     recentDebriefs, recentLoading, selectDebriefDirect, selectedDateDebriefs,
     selectedEvent, selectEvent,
-    changeMonth, startMeeting, openEmail, closeEmail, sendEmail, generateSummary,
+    changeMonth, openEmail, closeEmail, sendEmail, generateSummary,
     monthLabel, calendarDays, selectedLabel, agenda,
     countdownText, countdownLabel, heroKicker,
     doneCount, totalCount, completionPct, statusLabel,

@@ -304,6 +304,7 @@ function _openWebSocket(
   localWs.on('open', () => {
     if (!localWs || localWs.readyState !== 1) return
     _reconnectAttempts = 0  // reset on successful connect
+    console.log(`[devcore-audio] WS open — sending auth, token=${token ? token.slice(0,20)+'…' : 'EMPTY'}`)
     try {
       localWs.send(JSON.stringify({ type: 'auth', token }))
       localWs.send(JSON.stringify({
@@ -335,10 +336,15 @@ function _openWebSocket(
 
   localWs.on('error', (err: Error) => {
     console.error('[devcore-audio] WS error:', err.message)
+    const win = getOverlayWindow()
+    win?.webContents.send('devcore:error', { code: 'WS_ERROR', message: err.message })
     // Don't call stopAudioCapture() here — let 'close' fire and handle reconnect
   })
 
   localWs.on('close', (code: number) => {
+    console.log(`[devcore-audio] WS closed code=${code}`)
+    const win = getOverlayWindow()
+    win?.webContents.send('devcore:error', { code: `WS_CLOSED_${code}`, message: `WebSocket closed with code ${code}` })
     // Only act if this is still the active socket (guard against stale close events)
     if (ws === localWs) ws = null
     // 1000 = normal closure (user called endSession/pause), 4001 = auth failure — don't reconnect
@@ -408,11 +414,15 @@ function _openWebSocket(
 
     function sendChunk(pcm: Buffer, streamId: 0x01 | 0x02) {
       const sock = ws
-      if (!sock || sock.readyState !== 1) return
+      if (!sock || sock.readyState !== 1) {
+        console.log(`[devcore-audio] sendChunk: WS not ready (state=${sock?.readyState ?? 'null'}) — dropping ${pcm.length}B`)
+        return
+      }
       const seq = chunkSeq++ % 65536
       const header = Buffer.alloc(3)
       header.writeUInt8(streamId, 0)
       header.writeUInt16BE(seq, 1)
+      console.log(`[devcore-audio] sendChunk: stream=0x${streamId.toString(16)} seq=${seq} bytes=${pcm.length}`)
       try { sock.send(Buffer.concat([header, pcm])) } catch { /* socket closed mid-send */ }
     }
 
@@ -452,6 +462,7 @@ function _openWebSocket(
                 win.webContents.send('devcore:audio:level', { rms: msg.rms })
               }
             } else if (msg.type === 'speech_chunk' && msg.buf) {
+              console.log(`[devcore-audio] worker speech_chunk: ${msg.buf.byteLength}B stream=0x${streamId.toString(16)}`)
               sendChunk(Buffer.from(msg.buf), streamId)
             }
           })
@@ -489,13 +500,16 @@ function _openWebSocket(
     if ((audioSource === 'system' || audioSource === 'both')) {
       const sysId = sysDeviceId ?? loopback?.id
       if (sysId != null) {
-        sysInput = startStream(sysId, 0x02)
-        if (!sysInput) {
-          // naudiodon couldn't open it — try pyaudiowpatch subprocess
+        if (process.platform === 'win32') {
+          // On Windows, always use pyaudiowpatch for loopback capture.
+          // naudiodon opens WASAPI loopback devices but captures silence —
+          // pyaudiowpatch is specifically designed for WASAPI loopback.
           const devInfo = devices.find((d: any) => d.id === sysId) as any
           const rate    = devInfo?.defaultSampleRate ?? 48000
           const ch      = Math.min(devInfo?.maxInputChannels ?? 2, 2) || 2
           sysProc = _startPythonLoopback(sysId, Math.round(rate), ch)
+        } else {
+          sysInput = startStream(sysId, 0x02)
         }
       }
     }

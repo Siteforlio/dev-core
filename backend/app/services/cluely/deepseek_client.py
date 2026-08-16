@@ -15,7 +15,7 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 _BASE = "https://api.deepseek.com"
-_MODEL = "deepseek-chat"
+_MODEL = "deepseek-v4-pro"
 _TIMEOUT = 60.0
 
 
@@ -110,7 +110,7 @@ async def deepseek_with_tools(
     url = f"{_BASE}/chat/completions"
     body = {
         "model": _MODEL,
-        "messages": messages,
+        "messages": _sanitize_messages(messages),
         "tools": tools,
         "tool_choice": "auto",
         "temperature": temperature,
@@ -119,7 +119,9 @@ async def deepseek_with_tools(
     }
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
         resp = await client.post(url, json=body, headers=_headers())
-        resp.raise_for_status()
+        if not resp.is_success:
+            logger.error("[deepseek] 400 body: %s", resp.text[:1000])
+            resp.raise_for_status()
         data = resp.json()
     return data["choices"][0]
 
@@ -131,6 +133,42 @@ def _strip_dsml(text: str) -> str:
     return re.sub(r'<｜｜DSML｜｜.*?(?:>|$)', '', text, flags=re.DOTALL)
 
 
+def _sanitize_messages(messages: list[dict]) -> list[dict]:
+    """
+    Remove or fix messages that would cause DeepSeek to return 400:
+    - assistant messages with tool_calls must have content=null (not "")
+    - every tool_call_id in an assistant message must have a matching tool response
+    - drop orphaned tool messages (no preceding assistant tool_calls)
+    """
+    out = []
+    in_tool_response = False  # True while we still expect tool messages for current assistant
+
+    for msg in messages:
+        role = msg.get("role")
+        if role == "assistant":
+            if msg.get("tool_calls"):
+                out.append({**msg, "content": msg.get("content") or None})
+                in_tool_response = True
+            else:
+                in_tool_response = False
+                out.append(msg)
+        elif role == "tool":
+            if in_tool_response:
+                out.append(msg)
+                # Check if all tool_calls are now satisfied
+                last_assistant = next((m for m in reversed(out) if m.get("role") == "assistant" and m.get("tool_calls")), None)
+                if last_assistant:
+                    expected_ids = {tc["id"] for tc in last_assistant["tool_calls"]}
+                    provided_ids = {m["tool_call_id"] for m in out if m.get("role") == "tool"}
+                    if expected_ids.issubset(provided_ids):
+                        in_tool_response = False
+            # else: orphaned tool message — drop it
+        else:
+            in_tool_response = False
+            out.append(msg)
+    return out
+
+
 async def deepseek_stream_messages(
     messages: list[dict],
     temperature: float = 0.7,
@@ -140,7 +178,7 @@ async def deepseek_stream_messages(
     url = f"{_BASE}/chat/completions"
     body = {
         "model": _MODEL,
-        "messages": messages,
+        "messages": _sanitize_messages(messages),
         "temperature": temperature,
         "max_tokens": max_tokens,
         "stream": True,

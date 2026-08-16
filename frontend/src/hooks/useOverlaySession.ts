@@ -35,6 +35,7 @@ export function useOverlaySession() {
       console.log(`[word] [${p.speaker}] ${p.text}`)
     })
     const removeError = api.onError?.((p: { code: string; message: string }) => {
+      console.error('[devcore] WS error from main:', p.code, p.message)
       store.setError(p)
     })
     const removeToolEvent = api.onToolEvent?.((p: { tool: string; status: string; data: Record<string, unknown> }) => {

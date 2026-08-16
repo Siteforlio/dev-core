@@ -24,7 +24,7 @@ export default function DebriefDashboard({ onStartSession, pendingSessionId }: P
     modalOpen, emailSubject, setEmailSubject, emailBody, setEmailBody,
     emailTo, setEmailTo, sendingEmail, composingEmail,
     toastVisible, toastMsg,
-    changeMonth, startMeeting, openEmail, closeEmail, sendEmail, generateSummary,
+    changeMonth, openEmail, closeEmail, sendEmail, generateSummary,
     monthLabel, calendarDays, selectedLabel, agenda,
     countdownText, countdownLabel, heroKicker,
     doneCount, totalCount, completionPct, statusLabel,
@@ -153,7 +153,6 @@ export default function DebriefDashboard({ onStartSession, pendingSessionId }: P
             countdownLabel={countdownLabel}
             countdownText={countdownText}
             meetingStarted={meetingStarted}
-            onStartMeeting={startMeeting}
             onStartSession={onStartSession}
             isLive={isLive}
           />

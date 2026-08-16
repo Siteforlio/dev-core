@@ -61,7 +61,7 @@ _TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "web_search",
-            "description": "Search the web and return top result snippets. Use for looking up docs, errors, or current information.",
+            "description": "Search the web for genuinely external information ONLY — public docs, error messages, open-source libraries, news. NEVER use for questions about the user's own experience, resume, projects, or background — that information is already in your context. NEVER use for questions like 'what do you see in my CV', 'do you know about my work at X', or anything the user already told you.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -134,16 +134,17 @@ _TOOL_SCHEMAS = [
         "function": {
             "name": "capture_screen",
             "description": (
-                "Take a screenshot of the user's screen and understand it with AI vision. "
-                "Can answer specific questions about what's visible — tabs, windows, UI elements, text, counts, etc. "
-                "Pass the user's exact question as the 'question' parameter for best results."
+                "Capture and read what is currently on the user's screen. "
+                "ONLY call this when the user explicitly says 'look at my screen', 'read my screen', "
+                "'what do you see', 'can you see my screen', or similar direct requests to view the screen. "
+                "Do NOT call this proactively or to answer questions the user already described in text."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "question": {
                         "type": "string",
-                        "description": "Specific question to ask about the screen, e.g. 'How many browser tabs are open?' or 'What application is in focus?'",
+                        "description": "Optional: specific question about what to look for on screen",
                     },
                 },
             },
@@ -153,11 +154,19 @@ _TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "browse_url",
-            "description": "Open a URL in a headless browser and extract its readable text content.",
+            "description": (
+                "Fetch and read the content of a specific URL. "
+                "ONLY call this when the user explicitly provides a URL and asks you to read it, "
+                "or says 'go to', 'open', 'fetch', 'check' followed by a URL. "
+                "Do NOT call this to search the web — use web_search for that."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "url": {"type": "string", "description": "The full URL to open (must start with http/https)"},
+                    "url": {
+                        "type": "string",
+                        "description": "The full URL to fetch (must start with http:// or https://)",
+                    },
                 },
                 "required": ["url"],
             },
@@ -205,8 +214,8 @@ class ChatAgent:
         company = self._ctx.get("company", "")
         role = self._ctx.get("job_title", "")
         mode = self._ctx.get("assessmentMode") or self._ctx.get("assessment_mode", "")
-        resume_text   = self._ctx.get("resume_text", "")[:600]
-        jd_text       = self._ctx.get("jd_text", "")[:400]
+        resume_text   = self._ctx.get("resume_text", "")
+        jd_text       = self._ctx.get("jd_text", "")
         extra_context = self._ctx.get("extra_context", "")
 
         # Always speak AS the user — first person, in their voice.
@@ -224,12 +233,20 @@ class ChatAgent:
 
         parts = [
             f"{situation} "
-            "Speak entirely in the first person as the person being asked — "
-            "naturally, confidently, as if saying this aloud. "
-            "Never identify as an AI. Never say 'as an AI' or 'I can help with that'. "
-            "No bullet points, no preamble, no meta-commentary unless explicitly asked. "
-            "You also have tools (terminal, web search, file read/write, screen capture, browser) — "
-            "use them silently when the request needs real information or action, then speak the answer as yourself.",
+            "You ARE this person. Speak in first person, naturally, as if saying this out loud right now. "
+            "If the user asks 'how do I answer X' or 'what should I say about Y' — just say the answer, "
+            "word for word, as them. No intro. No 'here's what you should say'. No bullet points. "
+            "No coaching. No meta-commentary. Never identify as an AI. "
+            "Start with the actual words. Keep it tight — 3-5 sentences unless more is clearly needed. "
+            "TOOL USE RULES — read carefully and follow exactly. "
+            "Default behaviour: answer from context. Only call a tool when the trigger condition below is met. "
+            "run_terminal: user says 'run', 'execute', 'test', or pastes a command. "
+            "web_search: user asks about something genuinely external (public docs, library API, news) that is NOT already in context. NEVER for personal/CV questions. "
+            "read_file / list_files / write_file: user explicitly mentions a file path or says 'read', 'open', 'write', 'create' a file. "
+            "capture_screen: user explicitly says 'look at my screen', 'read my screen', 'what do you see', or similar. "
+            "browse_url: user provides a URL and asks you to read it. "
+            "If none of those trigger conditions are met → answer directly without calling any tool. "
+            "Calling a tool when not triggered is wrong. When in doubt, do not call a tool.",
         ]
         if resume_text:
             parts.append(f"Resume: {resume_text}.")

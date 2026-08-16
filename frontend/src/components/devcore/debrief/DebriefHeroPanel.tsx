@@ -7,7 +7,6 @@ interface Props {
   countdownLabel: string
   countdownText: string
   meetingStarted: boolean
-  onStartMeeting: () => void
   onStartSession: () => void
   isLive?: boolean  // realtime live badge from now tick
 }
@@ -21,7 +20,6 @@ export default function DebriefHeroPanel({
   countdownLabel,
   countdownText,
   meetingStarted,
-  onStartMeeting,
   onStartSession,
   isLive,
 }: Props) {
@@ -114,36 +112,38 @@ export default function DebriefHeroPanel({
           </div>
         </div>
 
-        {/* Right: countdown + action */}
+        {/* Right: timer (only when session is live) + action */}
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '14px' }}>
-          <div style={{ textAlign: 'center' }}>
-            <div style={{
-              fontSize: '10px',
-              fontWeight: 700,
-              letterSpacing: '0.12em',
-              textTransform: 'uppercase',
-              color: 'rgba(148,163,184,0.45)',
-              marginBottom: '4px',
-              fontFamily: 'monospace',
-            }}>
-              {countdownLabel}
+          {meetingStarted && (
+            <div style={{ textAlign: 'center' }}>
+              <div style={{
+                fontSize: '10px',
+                fontWeight: 700,
+                letterSpacing: '0.12em',
+                textTransform: 'uppercase',
+                color: 'rgba(148,163,184,0.45)',
+                marginBottom: '4px',
+                fontFamily: 'monospace',
+              }}>
+                {countdownLabel}
+              </div>
+              <div style={{
+                fontFamily: "'Space Grotesk', sans-serif",
+                fontWeight: 700,
+                fontSize: 'clamp(34px,5vw,56px)',
+                lineHeight: 1,
+                letterSpacing: '-0.02em',
+                fontVariantNumeric: 'tabular-nums',
+                color: '#22d3ee',
+                textShadow: '0 0 30px rgba(34,211,238,0.3)',
+              }}>
+                {countdownText}
+              </div>
             </div>
-            <div style={{
-              fontFamily: "'Space Grotesk', sans-serif",
-              fontWeight: 700,
-              fontSize: 'clamp(34px,5vw,56px)',
-              lineHeight: 1,
-              letterSpacing: '-0.02em',
-              fontVariantNumeric: 'tabular-nums',
-              color: '#22d3ee',
-              textShadow: '0 0 30px rgba(34,211,238,0.3)',
-            }}>
-              {countdownText}
-            </div>
-          </div>
+          )}
 
           <button
-            onClick={() => { onStartSession(); onStartMeeting() }}
+            onClick={onStartSession}
             disabled={meetingStarted}
             style={{
               display: 'inline-flex',
@@ -155,7 +155,9 @@ export default function DebriefHeroPanel({
               background: meetingStarted
                 ? 'rgba(34,211,238,0.08)'
                 : 'linear-gradient(180deg, rgba(34,211,238,0.18), rgba(34,211,238,0.1))',
-              border: `1px solid ${meetingStarted ? 'rgba(34,211,238,0.1)' : 'rgba(34,211,238,0.35)'}`,
+              borderColor: meetingStarted ? 'rgba(34,211,238,0.1)' : 'rgba(34,211,238,0.35)',
+              borderStyle: 'solid',
+              borderWidth: '1px',
               color: meetingStarted ? 'rgba(34,211,238,0.45)' : '#22d3ee',
               fontFamily: "'Space Grotesk', sans-serif",
               fontWeight: 700,

@@ -1,77 +1,128 @@
 """
-vision_service.py — Screenshot analysis using Groq vision (llama-4-scout, free tier).
+vision_service.py — Screenshot analysis using Claude Sonnet 3.5 (Anthropic).
 
 Design:
 - Caller maintains a buffer of up to MAX_BUFFER screenshots per session.
-- All buffered images are sent together so Groq sees the full scrolled context.
+- All buffered images are sent together so the model sees the full scrolled context.
 - System prompt adapts to assessment mode (coding/leetcode vs general).
+- Session context (role, resume, JD, transcript) is injected so the AI can
+  give personalised, situation-aware responses.
 - Returns a structured result: { text, needs_more, cleared_buffer }
+- Only the screenshot/vision path uses Anthropic — all other LLM calls use DeepSeek.
 """
 from __future__ import annotations
 
-import base64
 import logging
 import time
-from typing import Literal
 
-from groq import AsyncGroq
+import anthropic
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 MAX_BUFFER     = 5          # max screenshots kept per session
 BUFFER_TTL_S   = 180        # clear buffer if no screenshot for 3 min
-VISION_MODEL   = "meta-llama/llama-4-scout-17b-16e-instruct"
+VISION_MODEL   = "claude-haiku-4-5-20251001"
 
 # Minimum base64 length to be a real image (~1 KB encoded)
 MIN_B64_LEN = 1000
 
 
 def _system_prompt(mode: str | None) -> str:
+    base = (
+        "You are the user. Not a coach. Not an assistant. You ARE them.\n\n"
+        "When you see an interview question on screen: write the answer they should say out loud, "
+        "word for word, in first person, using their actual background from the context provided. "
+        "Start immediately with the answer — no intro, no 'here's what to say', no bullet points, "
+        "no coaching tips, no descriptions of what's on screen. "
+        "Just the words they speak into the mic.\n\n"
+        "Example of WRONG output: 'You're on question 2. The question asks about the hardest problem. "
+        "You should talk about DigiLaw and hit Start Recording.'\n\n"
+        "Example of RIGHT output: 'The hardest problem I've solved recently was building the real-time "
+        "consultation system at DigiLaw. We needed court-defensible audit logs for legal proceedings — "
+        "every message timestamped, immutable, tied to a verified session. I built it on ActionCable "
+        "WebSockets with timestamped message persistence, and it now handles concurrent consultations "
+        "across thousands of users with zero disputes. The constraint made it harder but also made me "
+        "think like an engineer who ships for real consequences, not just demos.'\n\n"
+        "If the screen shows code: review it directly, in first person if relevant. "
+        "If the screen is genuinely blank or unreadable: say so in one sentence, nothing more. "
+        "No lists. No headers. No meta-commentary. Ever.\n\n"
+    )
     if mode == "coding":
-        return (
-            "You are an expert coding assistant helping a developer during a technical interview. "
-            "The user will send one or more screenshots of their screen — these may be consecutive scrolls "
-            "of the same LeetCode/coding problem. Analyze ALL screenshots together as one context.\n\n"
-            "Your job:\n"
-            "1. If you can see a complete problem statement: provide a clear solution approach, "
-            "time/space complexity, and working code in the most appropriate language.\n"
-            "2. If the screenshots are partial (cut off): say exactly what you can see and ask for more screenshots.\n"
-            "3. If you see code the user has already written: review it, identify bugs, suggest improvements.\n"
-            "4. If you see test cases or expected outputs: incorporate them into your analysis.\n\n"
-            "Be concise. Lead with the approach, then the code. Skip pleasantries."
+        return base + (
+            "For coding problems: give the approach and the code. Lead with the solution, not the explanation."
         )
     elif mode in ("present", "live"):
-        return (
-            "You are a professional assistant helping during a live presentation or meeting. "
-            "The user will send screenshots of their screen. Analyze them and:\n"
-            "1. If you see a question or prompt from another person: draft a clear, professional response.\n"
-            "2. If you see presentation slides: summarize key points or suggest talking points.\n"
-            "3. If you see a form, document, or email: extract what action is needed.\n"
-            "4. If the content is unclear or partial: say what you can see and ask for another screenshot.\n\n"
-            "Be concise and professional."
+        return base + (
+            "For presentations or meetings: give the words to say, confident and natural."
         )
     else:
-        return (
-            "You are an intelligent assistant analyzing screenshots the user has taken of their screen. "
-            "These screenshots may be consecutive scrolls of the same content.\n\n"
-            "Your job:\n"
-            "1. If you see a question, problem, or task: answer it directly and completely.\n"
-            "2. If you see partial content (cut off): say what you can read and indicate you need more.\n"
-            "3. If you see code: analyze it, find bugs, explain what it does.\n"
-            "4. If the screen contains nothing actionable: say so briefly — do not hallucinate tasks.\n\n"
-            "Be direct and concise."
+        return base
+
+
+def _build_context_note(session_ctx: dict | None) -> str:
+    """
+    Build a context block from session data so the AI understands who the user
+    is and what they're doing before it reads the screen. No size limits —
+    pass everything so the AI has full context.
+    """
+    if not session_ctx:
+        return ""
+
+    parts: list[str] = []
+
+    role    = session_ctx.get("job_title") or session_ctx.get("role", "")
+    company = session_ctx.get("company", "")
+    if role and company:
+        parts.append(f"User's role/context: {role} at {company}")
+    elif role:
+        parts.append(f"User's role: {role}")
+    elif company:
+        parts.append(f"Company: {company}")
+
+    resume = session_ctx.get("resume_text", "")
+    if resume:
+        parts.append(f"Resume:\n{resume}")
+
+    jd = session_ctx.get("jd_text", "")
+    if jd:
+        parts.append(f"Job description:\n{jd}")
+
+    extra = session_ctx.get("extra_context", "")
+    if extra:
+        parts.append(f"Loaded context files (CV, notes, etc.):\n{extra}")
+
+    # Recent transcript — last 8 utterances
+    transcript_buf = session_ctx.get("_transcript_buf", [])
+    if transcript_buf:
+        recent = transcript_buf[-8:]
+        lines = [f"{e.speaker.upper()}: {e.text}" for e in recent if hasattr(e, "speaker")]
+        if lines:
+            parts.append("Recent conversation:\n" + "\n".join(lines))
+
+    # Previous screenshot responses — so the AI doesn't repeat the same answer
+    prev_responses = session_ctx.get("_vision_responses", [])
+    if prev_responses:
+        parts.append(
+            "IMPORTANT — You already gave these answers earlier in this session. "
+            "Do NOT repeat the same story or advice. Give a fresh, different response:\n"
+            + "\n---\n".join(prev_responses)
         )
+
+    if not parts:
+        return ""
+
+    return "\n\n---\nSession context:\n" + "\n\n".join(parts)
 
 
 class VisionService:
     def __init__(self):
-        api_key = settings.groq_api_key
+        api_key = settings.anthropic_api_key
         if not api_key:
-            logger.warning("[vision] GROQ_API_KEY not set — vision disabled")
+            logger.warning("[vision] ANTHROPIC_API_KEY not set — vision disabled")
             self._client = None
         else:
-            self._client = AsyncGroq(api_key=api_key)
+            self._client = anthropic.AsyncAnthropic(api_key=api_key)
 
         # Per-session buffers: { session_id: {"images": [...], "last_ts": float} }
         self._buffers: dict[str, dict] = {}
@@ -116,6 +167,7 @@ class VisionService:
         session_id: str,
         mode: str | None = None,
         extra_context: str | None = None,
+        session_ctx: dict | None = None,
     ) -> dict:
         """
         Analyze all buffered screenshots for this session.
@@ -139,42 +191,44 @@ class VisionService:
         n = len(images)
         logger.info("[vision] Analyzing %d screenshot(s) | session=%s | mode=%s", n, session_id, mode)
 
-        # Build content blocks — all images + instruction text
+        # Build content blocks — Anthropic format: images first, then the text prompt
         content: list[dict] = []
 
-        for i, img_b64 in enumerate(images):
+        for img_b64 in images:
             content.append({
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:image/png;base64,{img_b64}",
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/png",
+                    "data": img_b64,
                 },
             })
 
-        # Text instruction after images
-        context_note = f"\n\nAdditional context: {extra_context}" if extra_context else ""
+        # Build user message: basic instruction + all available context
+        context_note = _build_context_note(session_ctx)
+        if not context_note and extra_context:
+            context_note = f"\n\nAdditional context: {extra_context}"
+
         if n == 1:
-            user_text = f"I've sent 1 screenshot.{context_note} Please analyze it and help me."
+            user_text = f"I've shared 1 screenshot of my screen.{context_note}\n\nPlease read it and help me."
         else:
             user_text = (
-                f"I've sent {n} screenshots taken consecutively — they may show different parts "
-                f"of the same content (e.g. a scrolled problem, multiple tabs).{context_note} "
+                f"I've shared {n} screenshots taken consecutively — they may show different parts "
+                f"of the same content (e.g. a scrolled page, multiple tabs).{context_note}\n\n"
                 f"Analyze them together as one context and help me."
             )
         content.append({"type": "text", "text": user_text})
 
         try:
-            response = await self._client.chat.completions.create(
+            response = await self._client.messages.create(
                 model=VISION_MODEL,
-                messages=[
-                    {"role": "system", "content": _system_prompt(mode)},
-                    {"role": "user", "content": content},
-                ],
+                system=_system_prompt(mode),
+                messages=[{"role": "user", "content": content}],
                 max_tokens=1024,
-                temperature=0.3,
             )
-            text = response.choices[0].message.content or ""
+            text = response.content[0].text if response.content else ""
         except Exception as e:
-            logger.error("[vision] Groq vision error: %s", e)
+            logger.error("[vision] Anthropic vision error: %s", e)
             return {"text": "", "needs_more": False, "buffer_size": n, "cleared": False}
 
         # Detect if model is asking for more screenshots

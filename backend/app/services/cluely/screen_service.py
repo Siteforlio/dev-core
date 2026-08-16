@@ -104,7 +104,7 @@ class ScreenService:
 
     async def understand(self, base64_png: str, question: str = "") -> str:
         """
-        Send a screenshot to Groq Llama Vision and return its description.
+        Send a screenshot to Claude Haiku vision and return its description.
 
         question — optional specific question to ask about the screen.
         If empty, the model gives a general description of what's visible.
@@ -112,8 +112,8 @@ class ScreenService:
         if not base64_png:
             return ""
 
-        if not settings.groq_api_key:
-            logger.warning("[screen] No Groq API key — vision disabled")
+        if not settings.anthropic_api_key:
+            logger.warning("[screen] No Anthropic API key — vision disabled")
             return ""
 
         prompt = question.strip() if question.strip() else (
@@ -123,28 +123,32 @@ class ScreenService:
         )
 
         try:
-            from groq import AsyncGroq
-            client = AsyncGroq(api_key=settings.groq_api_key)
-            response = await client.chat.completions.create(
-                model=_VISION_MODEL,
+            import anthropic
+            client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+            response = await client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                system="You are a screen analysis assistant. Describe what you see accurately and concisely.",
                 messages=[
                     {
                         "role": "user",
                         "content": [
                             {
-                                "type": "image_url",
-                                "image_url": {"url": f"data:image/png;base64,{base64_png}"},
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": "image/png",
+                                    "data": base64_png,
+                                },
                             },
                             {"type": "text", "text": prompt},
                         ],
                     }
                 ],
                 max_tokens=1024,
-                temperature=0.2,
             )
-            return response.choices[0].message.content or ""
+            return response.content[0].text if response.content else ""
         except Exception as exc:
-            logger.warning("[screen] Groq vision call failed: %s", exc)
+            logger.warning("[screen] Anthropic vision call failed: %s", exc)
             return ""
 
     async def capture_and_extract(self, monitor: int = 1, question: str = "") -> str:

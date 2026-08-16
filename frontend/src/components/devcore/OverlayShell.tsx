@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useOverlayStore } from '../../store/overlayStore'
 import { useOverlaySession } from '../../hooks/useOverlaySession'
 import { ListeningPill } from './ListeningPill'
@@ -10,6 +10,9 @@ export function OverlayShell() {
   const { transcriptOpen } = useOverlayStore()
   const [screenshotCount, setScreenshotCount] = useState(0)
   const [needsMore, setNeedsMore] = useState(false)
+  // Content position driven by main process via IPC (arrow key nudges)
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
+  const posRef = useRef<{ x: number; y: number } | null>(null)
 
   useEffect(() => {
     const api = (window as any).electronAPI?.devcore
@@ -21,7 +24,17 @@ export function OverlayShell() {
     const offResult = api.onScreenshotResult?.((p: { needsMore: boolean }) => {
       setNeedsMore(p.needsMore)
     })
-    return () => { offCount?.(); offResult?.() }
+    const offMove = api.onOverlayMove?.((p: { x: number; y: number }) => {
+      setPos(p)
+      posRef.current = p
+      // Update content bounds immediately so cursor hit-test stays accurate
+      const el = document.getElementById('overlay-root')
+      if (el) {
+        const r = el.getBoundingClientRect()
+        api.updateContentBounds?.({ x: p.x, y: p.y, width: r.width, height: r.height })
+      }
+    })
+    return () => { offCount?.(); offResult?.(); offMove?.() }
   }, [])
 
   // Send content bounds to the main process so the cursor-polling loop
@@ -33,7 +46,13 @@ export function OverlayShell() {
     const api = (window as any).electronAPI?.devcore
     const sendBounds = () => {
       const r = el.getBoundingClientRect()
-      api?.updateContentBounds?.({ x: r.left, y: r.top, width: r.width, height: r.height })
+      const p = posRef.current
+      api?.updateContentBounds?.({
+        x: p ? p.x : r.left,
+        y: p ? p.y : r.top,
+        width: r.width,
+        height: r.height,
+      })
     }
     sendBounds()  // initial send
     const ro = new ResizeObserver(sendBounds)
@@ -51,8 +70,14 @@ export function OverlayShell() {
     setNeedsMore(false)
   }
 
+  // While waiting for main to send the initial position, render off-screen so
+  // there's no flash of incorrectly-positioned content.
+  const style: React.CSSProperties = pos
+    ? { position: 'fixed', left: pos.x, top: pos.y }
+    : { position: 'fixed', left: '50%', top: 8, transform: 'translateX(-50%)' }
+
   return (
-    <div id="overlay-root" className="fixed top-2 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 z-50">
+    <div id="overlay-root" style={style} className="flex flex-col items-center gap-2 z-50">
       {/* Top pill — always visible */}
       <ListeningPill />
 

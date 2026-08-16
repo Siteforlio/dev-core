@@ -23,6 +23,8 @@ interface OverlayStore {
   agentGuidance: string
   agentSolution: { code: string; language: string; explanation: string } | null
   activeTool: string | null
+  // Reading mode — controls how AI responses are displayed in overlay
+  readingMode: 'normal' | 'narrow' | 'large' | 'teleprompter'
 
   setSessionId:      (id: string | null) => void
   setSessionTitle:   (title: string) => void
@@ -45,6 +47,7 @@ interface OverlayStore {
   setAgentGuidance:  (text: string) => void
   setAgentSolution:  (s: { code: string; language: string; explanation: string } | null) => void
   setActiveTool:     (tool: string | null) => void
+  setReadingMode:    (mode: 'normal' | 'narrow' | 'large' | 'teleprompter') => void
 }
 
 export const useOverlayStore = create<OverlayStore>((set) => ({
@@ -66,6 +69,7 @@ export const useOverlayStore = create<OverlayStore>((set) => ({
   agentGuidance: '',
   agentSolution: null,
   activeTool: null,
+  readingMode: 'normal',
 
   setSessionId:      (id)   => set({ sessionId: id }),
   setSessionTitle:   (title)=> set({ sessionTitle: title }),
@@ -88,4 +92,5 @@ export const useOverlayStore = create<OverlayStore>((set) => ({
   setAgentGuidance:  (t)    => set({ agentGuidance: t }),
   setAgentSolution:  (s)    => set({ agentSolution: s }),
   setActiveTool:     (t)    => set({ activeTool: t }),
+  setReadingMode:    (m)    => set({ readingMode: m }),
 }))

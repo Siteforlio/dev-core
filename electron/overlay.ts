@@ -2,7 +2,7 @@ import { BrowserWindow, globalShortcut, app, screen, ipcMain } from 'electron'
 import path from 'path'
 import Store = require('electron-store')
 
-const store = new Store<{ overlayPosition: string }>()
+const store = new Store<{ overlayX: number; overlayY: number }>()
 
 // Win32 screen-capture exclusion — loaded lazily so non-Windows platforms don't crash.
 type SetWindowDisplayAffinityFn = (hwnd: number, affinity: number) => boolean
@@ -22,14 +22,22 @@ if (process.platform === 'win32') {
   }
 }
 
-const POSITIONS: Record<string, { x: () => number; y: () => number }> = {
-  'top-center':    { x: () => Math.round(screen.getPrimaryDisplay().workAreaSize.width * 0.075), y: () => 0 },
-  'top-left':      { x: () => 0, y: () => 0 },
-  'top-right':     { x: () => Math.round(screen.getPrimaryDisplay().workAreaSize.width * 0.15), y: () => 0 },
-  'bottom-center': { x: () => Math.round(screen.getPrimaryDisplay().workAreaSize.width * 0.075), y: () => Math.round(screen.getPrimaryDisplay().workAreaSize.height * 0.15) },
-  'bottom-right':  { x: () => Math.round(screen.getPrimaryDisplay().workAreaSize.width * 0.15), y: () => Math.round(screen.getPrimaryDisplay().workAreaSize.height * 0.15) },
+const MOVE_STEP = 20  // px per arrow key press
+const CONTENT_MARGIN = 50  // min px from screen edge
+
+// Content position within the full-screen transparent window.
+// Stored as the CSS left/top of the content box (top-left corner).
+let _contentX = 0
+let _contentY = 0
+
+function _moveContent(win: BrowserWindow, x: number, y: number) {
+  const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize
+  _contentX = Math.max(0, Math.min(Math.round(x), sw - CONTENT_MARGIN))
+  _contentY = Math.max(0, Math.min(Math.round(y), sh - CONTENT_MARGIN))
+  win.webContents.send('devcore:overlay:move', { x: _contentX, y: _contentY })
+  store.set('overlayX', _contentX)
+  store.set('overlayY', _contentY)
 }
-const POSITION_ORDER = ['top-center', 'top-left', 'top-right', 'bottom-center', 'bottom-right']
 
 let overlayWin: BrowserWindow | null = null
 
@@ -78,8 +86,6 @@ function _applyStealthMode(win: BrowserWindow): void {
     )
   }
 }
-let currentPositionIndex = 0
-
 // Content bounds sent from the renderer — used by the polling loop
 // to decide whether the cursor is over the actual UI (not just the transparent window).
 let _contentBounds = { x: 0, y: 0, width: 0, height: 0 }
@@ -90,16 +96,18 @@ let _isInteractMode = false
 export function createOverlayWindow(): BrowserWindow {
   if (overlayWin && !overlayWin.isDestroyed()) return overlayWin
 
-  const savedPos = store.get('overlayPosition', 'top-center') as string
-  currentPositionIndex = POSITION_ORDER.indexOf(savedPos) !== -1 ? POSITION_ORDER.indexOf(savedPos) : 0
-  const pos = POSITIONS[POSITION_ORDER[currentPositionIndex]]
-
   const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize
+  // Default: top-center — pill is ~350 px wide, so x = (sw - 350) / 2
+  const defaultX = Math.max(0, Math.round((sw - 350) / 2))
+  const defaultY = 8
+  _contentX = store.get('overlayX', defaultX)
+  _contentY = store.get('overlayY', defaultY)
+
   overlayWin = new BrowserWindow({
-    width: Math.round(sw * 0.85),
-    height: Math.round(sh * 0.85),
-    x: pos.x(),
-    y: pos.y(),
+    width: sw,
+    height: sh,
+    x: 0,
+    y: 0,
     transparent: true,
     frame: false,
     skipTaskbar: true,
@@ -125,7 +133,11 @@ export function createOverlayWindow(): BrowserWindow {
   // is fully painted.
   _applyStealthMode(overlayWin)
   overlayWin.webContents.once('did-finish-load', () => {
-    if (overlayWin && !overlayWin.isDestroyed()) _applyStealthMode(overlayWin)
+    if (overlayWin && !overlayWin.isDestroyed()) {
+      _applyStealthMode(overlayWin)
+      // Send saved content position so renderer can position itself immediately
+      overlayWin.webContents.send('devcore:overlay:move', { x: _contentX, y: _contentY })
+    }
   })
 
   // Windows resets WDA_EXCLUDEFROMCAPTURE whenever the window transitions from
@@ -180,7 +192,7 @@ export function setOverlayContentBounds(bounds: { x: number; y: number; width: n
 function registerHotkeys(win: BrowserWindow) {
   // Show/hide — re-apply stealth on every show because Windows resets
   // SetWindowDisplayAffinity when a window is hidden and re-shown.
-  const registeredSpace = globalShortcut.register('CommandOrControl+Shift+Space', () => {
+  const registeredSpace = globalShortcut.register('CommandOrControl+Space', () => {
     if (win.isVisible()) {
       win.hide()
     } else {
@@ -188,11 +200,11 @@ function registerHotkeys(win: BrowserWindow) {
       _applyStealthMode(win)
     }
   })
-  if (!registeredSpace) console.warn('[devcore-overlay] Failed to register hotkey: CommandOrControl+Shift+Space')
+  if (!registeredSpace) console.warn('[devcore-overlay] Failed to register hotkey: CommandOrControl+Space')
 
   // Interact mode toggle
   let interactMode = false
-  const registeredI = globalShortcut.register('CommandOrControl+Shift+I', () => {
+  const registeredI = globalShortcut.register('CommandOrControl+I', () => {
     interactMode = !interactMode
     if (interactMode) {
       win.setIgnoreMouseEvents(false)
@@ -203,70 +215,79 @@ function registerHotkeys(win: BrowserWindow) {
       win.setFocusable(false)
     }
   })
-  if (!registeredI) console.warn('[devcore-overlay] Failed to register hotkey: CommandOrControl+Shift+I')
+  if (!registeredI) console.warn('[devcore-overlay] Failed to register hotkey: CommandOrControl+I')
 
-  // Move overlay
-  const registeredRight = globalShortcut.register('CommandOrControl+Shift+Right', () => cyclePosition(win, 1))
-  if (!registeredRight) console.warn('[devcore-overlay] Failed to register hotkey: CommandOrControl+Shift+Right')
+  // Move overlay content — each press nudges by MOVE_STEP px, clamped to screen bounds
+  const registeredRight = globalShortcut.register('CommandOrControl+Right', () => _moveContent(win, _contentX + MOVE_STEP, _contentY))
+  if (!registeredRight) console.warn('[devcore-overlay] Failed to register hotkey: CommandOrControl+Right')
 
-  const registeredLeft = globalShortcut.register('CommandOrControl+Shift+Left', () => cyclePosition(win, -1))
-  if (!registeredLeft) console.warn('[devcore-overlay] Failed to register hotkey: CommandOrControl+Shift+Left')
+  const registeredLeft = globalShortcut.register('CommandOrControl+Left', () => _moveContent(win, _contentX - MOVE_STEP, _contentY))
+  if (!registeredLeft) console.warn('[devcore-overlay] Failed to register hotkey: CommandOrControl+Left')
+
+  const registeredDown = globalShortcut.register('CommandOrControl+Down', () => _moveContent(win, _contentX, _contentY + MOVE_STEP))
+  if (!registeredDown) console.warn('[devcore-overlay] Failed to register hotkey: CommandOrControl+Down')
+
+  const registeredUp = globalShortcut.register('CommandOrControl+Up', () => _moveContent(win, _contentX, _contentY - MOVE_STEP))
+  if (!registeredUp) console.warn('[devcore-overlay] Failed to register hotkey: CommandOrControl+Up')
 
   // Force re-trigger
-  const registeredR = globalShortcut.register('CommandOrControl+Shift+R', () => {
+  const registeredR = globalShortcut.register('CommandOrControl+R', () => {
     win.webContents.send('devcore:status', { state: 'thinking', latencyMs: 0 })
   })
-  if (!registeredR) console.warn('[devcore-overlay] Failed to register hotkey: CommandOrControl+Shift+R')
+  if (!registeredR) console.warn('[devcore-overlay] Failed to register hotkey: CommandOrControl+R')
 
   // Screenshot capture (Ctrl+Shift+S)
-  const registeredSnap = globalShortcut.register('CommandOrControl+Shift+S', async () => {
+  const registeredSnap = globalShortcut.register('CommandOrControl+S', async () => {
     const { captureAndSendScreenshot } = await import('./audio')
     await captureAndSendScreenshot()
     // Visual flash on the pill — send hotkey event so renderer can animate
     win.webContents.send('devcore:hotkey', { action: 'screenshot' })
   })
-  if (!registeredSnap) console.warn('[devcore-overlay] Failed to register hotkey: CommandOrControl+Shift+S')
+  if (!registeredSnap) console.warn('[devcore-overlay] Failed to register hotkey: CommandOrControl+S')
 
   // Clear screenshot buffer (Ctrl+Shift+X)
-  const registeredClear = globalShortcut.register('CommandOrControl+Shift+X', () => {
+  const registeredClear = globalShortcut.register('CommandOrControl+X', () => {
     const sock = require('./audio').getActiveWs?.()
     if (sock && sock.readyState === 1) {
       sock.send(JSON.stringify({ type: 'screenshot_clear' }))
     }
     win.webContents.send('devcore:screenshot:count', { count: 0 })
   })
-  if (!registeredClear) console.warn('[devcore-overlay] Failed to register hotkey: CommandOrControl+Shift+X')
+  if (!registeredClear) console.warn('[devcore-overlay] Failed to register hotkey: CommandOrControl+X')
 
   // Start session (Ctrl+Shift+Enter)
-  const registeredStart = globalShortcut.register('CommandOrControl+Shift+Return', () => {
+  const registeredStart = globalShortcut.register('CommandOrControl+Return', () => {
     win.webContents.send('devcore:hotkey', { action: 'start' })
   })
-  if (!registeredStart) console.warn('[devcore-overlay] Failed to register hotkey: CommandOrControl+Shift+Return')
+  if (!registeredStart) console.warn('[devcore-overlay] Failed to register hotkey: CommandOrControl+Return')
 
   // Focus ask input (Ctrl+Shift+/)
-  const registeredAsk = globalShortcut.register('CommandOrControl+Shift+/', () => {
+  const registeredAsk = globalShortcut.register('CommandOrControl+/', () => {
     win.setIgnoreMouseEvents(false)
     win.setFocusable(true)
     win.focus()
     win.webContents.send('devcore:hotkey', { action: 'ask' })
   })
-  if (!registeredAsk) console.warn('[devcore-overlay] Failed to register hotkey: CommandOrControl+Shift+/')
+  if (!registeredAsk) console.warn('[devcore-overlay] Failed to register hotkey: CommandOrControl+/')
 
   // Trigger AI suggestion from recent transcript (Ctrl+Shift+G)
-  const registeredSuggest = globalShortcut.register('CommandOrControl+Shift+G', () => {
+  const registeredSuggest = globalShortcut.register('CommandOrControl+G', () => {
     win.webContents.send('devcore:hotkey', { action: 'suggest' })
   })
-  if (!registeredSuggest) console.warn('[devcore-overlay] Failed to register hotkey: CommandOrControl+Shift+G')
+  if (!registeredSuggest) console.warn('[devcore-overlay] Failed to register hotkey: CommandOrControl+G')
+
+  const registeredScrollDown = globalShortcut.register('CommandOrControl+Shift+Down', () => {
+    win.webContents.send('devcore:hotkey', { action: 'scroll-down' })
+  })
+  if (!registeredScrollDown) console.warn('[devcore-overlay] Failed to register hotkey: CommandOrControl+Shift+Down')
+
+  const registeredScrollUp = globalShortcut.register('CommandOrControl+Shift+Up', () => {
+    win.webContents.send('devcore:hotkey', { action: 'scroll-up' })
+  })
+  if (!registeredScrollUp) console.warn('[devcore-overlay] Failed to register hotkey: CommandOrControl+Shift+Up')
 
   app.on('will-quit', () => globalShortcut.unregisterAll())
 }
 
-function cyclePosition(win: BrowserWindow, dir: 1 | -1) {
-  currentPositionIndex = (currentPositionIndex + dir + POSITION_ORDER.length) % POSITION_ORDER.length
-  const posKey = POSITION_ORDER[currentPositionIndex]
-  const pos = POSITIONS[posKey]
-  win.setPosition(pos.x(), pos.y())
-  store.set('overlayPosition', posKey)
-}
 
 export function getOverlayWindow() { return overlayWin }

@@ -10,11 +10,22 @@ logger = structlog.get_logger()
 def setup_middleware(app: FastAPI):
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["app://.", "http://localhost:5173"],
-        allow_credentials=True,
+        allow_origins=["*"],
+        allow_credentials=False,  # must be False when allow_origins="*"
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.middleware("http")
+    async def private_network_access_middleware(request: Request, call_next):
+        """
+        Chrome Private Network Access (PNA) blocks https pages → http://localhost
+        unless the server explicitly allows it in the preflight response.
+        """
+        response = await call_next(request)
+        if request.headers.get("access-control-request-private-network") == "true":
+            response.headers["access-control-allow-private-network"] = "true"
+        return response
 
     @app.middleware("http")
     async def correlation_id_middleware(request: Request, call_next):

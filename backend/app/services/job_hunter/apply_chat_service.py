@@ -81,7 +81,7 @@ Skills: {_fmt_skills(profile.skills or [])}
     else:
         profile_block = "CANDIDATE PROFILE: Not available."
 
-    job_description = listing.description or listing.raw_description or "Job description not available."
+    job_description = listing.description or "Job description not available."
 
     tailored_text = ""
     if app.form_answers:
@@ -149,6 +149,83 @@ Write only the cover letter body. No commentary."""
 
         result = await call_llm(prompt, max_tokens=600)
         return result.strip()
+
+    async def generate_form_answers(
+        self,
+        application: Application,
+        listing: JobListing,
+        fields: list[dict],
+    ) -> dict[str, str]:
+        """
+        Given a list of form fields scraped from a live ATS page, generate answers
+        for each field using the candidate's profile and job context.
+
+        fields: [{"label": str, "type": str, "options": list[str] | None}]
+        Returns: {"field_label": "answer", ...}
+        """
+        import uuid
+        from datetime import datetime, timezone
+        from sqlalchemy.orm import flag_modified
+
+        profile = await self._get_profile(application.user_id)
+        system_ctx = _build_system_context(profile, listing, application)
+
+        fields_json = json.dumps(fields, ensure_ascii=False, indent=2)
+
+        prompt = f"""{system_ctx}
+
+---
+
+You are filling a job application form. Below are the exact fields on this form.
+For each field, provide the best answer based on the candidate profile above.
+Return a valid JSON object where keys are the exact field labels and values are the answers.
+
+FORM FIELDS:
+{fields_json}
+
+Rules:
+- For select/radio: return exactly one of the option strings listed
+- For checkbox: return "true" or "false"
+- For file inputs: return "__RESUME__" (handled separately)
+- Be truthful — only use information from the candidate profile above
+- Be concise for text/select fields, thorough for textarea fields
+- If you genuinely cannot answer a field from the profile, return ""
+
+Return only the JSON object, no commentary."""
+
+        result = await call_llm(prompt, max_tokens=1000, json_mode=True)
+
+        try:
+            answers = json.loads(result) if result else {}
+        except (json.JSONDecodeError, Exception):
+            answers = {}
+
+        # Build chat_log entries
+        now = datetime.now(timezone.utc).isoformat()
+        user_entry = {
+            "id": str(uuid.uuid4()),
+            "source": "extension",
+            "role": "user",
+            "content": f"Filling form — {len(fields)} fields: [{', '.join(f['label'] for f in fields)}]",
+            "timestamp": now,
+        }
+        assistant_entry = {
+            "id": str(uuid.uuid4()),
+            "source": "extension",
+            "role": "assistant",
+            "content": json.dumps(answers, ensure_ascii=False),
+            "timestamp": now,
+        }
+
+        # Append to chat_log safely (flag_modified required for JSONB mutation detection)
+        current_log = list(application.chat_log or [])
+        current_log.append(user_entry)
+        current_log.append(assistant_entry)
+        application.chat_log = current_log
+        flag_modified(application, "chat_log")
+        await self.db.commit()
+
+        return answers
 
     async def chat(
         self,

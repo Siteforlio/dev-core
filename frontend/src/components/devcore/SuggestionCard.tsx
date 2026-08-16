@@ -2,7 +2,26 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useOverlayStore } from '../../store/overlayStore'
 import { AudioSourcePicker } from './AudioSourcePicker'
 import { MarkdownMessage } from './MarkdownMessage'
+import { TeleprompterMessage } from './TeleprompterMessage'
 import type { AssessmentMode, SessionContext } from '../../types/devcore'
+import { API_BASE } from '../../lib/apiBase'
+
+type ReadingMode = 'normal' | 'narrow' | 'large' | 'teleprompter'
+
+const READING_MODES: { key: ReadingMode; label: string; title: string }[] = [
+  { key: 'normal',       label: 'STD',  title: 'Standard — default width'          },
+  { key: 'narrow',       label: 'NAR',  title: 'Narrow — shorter lines, less scanning' },
+  { key: 'large',        label: 'BIG',  title: 'Large text — easier to read fast'  },
+  { key: 'teleprompter', label: 'TELE', title: 'Teleprompter — sentence by sentence' },
+]
+
+// Width of the inner text column only — card header/input always stay full width
+const CONTENT_WIDTH: Record<ReadingMode, string> = {
+  normal:       '100%',
+  narrow:       '360px',
+  large:        '320px',
+  teleprompter: '400px',
+}
 
 const MODE_HEADER: Record<AssessmentMode | 'standard', string> = {
   standard: 'bg-white/[0.015] border-white/[0.07]',
@@ -290,6 +309,7 @@ export function SuggestionCard() {
     latencyMs, transcriptOpen, setTranscriptOpen,
     state, setSessionId, sessionTitle, setSessionTitle,
     audioSource, micDeviceId, sysDeviceId, assessmentMode,
+    readingMode, setReadingMode,
   } = useOverlayStore()
 
   const modeKey     = assessmentMode ?? 'standard'
@@ -310,6 +330,7 @@ export function SuggestionCard() {
   const askRef = useRef<HTMLInputElement>(null)
   const titleRef = useRef<HTMLInputElement>(null)
   const chatBottomRef = useRef<HTMLDivElement>(null)
+  const chatScrollRef = useRef<HTMLDivElement>(null)
   const pickerRef = useRef<HTMLDivElement>(null)
   const lastSessionRef = useRef<{ id: string; title: string; role: string; company: string } | null>(null)
 
@@ -409,7 +430,7 @@ export function SuggestionCard() {
     const t = await getOverlayToken()
     if (!t) return
     try {
-      const r = await fetch('http://localhost:8000/api/v1/cluely/sessions?limit=10', {
+      const r = await fetch(`${API_BASE()}/cluely/sessions?limit=10`, {
         headers: { Authorization: `Bearer ${t}` },
       })
       const data = r.ok ? await r.json() : null
@@ -428,28 +449,40 @@ export function SuggestionCard() {
   }, [sessionPickerOpen])
 
   const handleStart = async () => {
+    console.log('[devcore] handleStart called')
     const t = await getOverlayToken()
-    if (!t) return
+    console.log('[devcore] token:', t ? `${t.slice(0, 20)}…` : 'NULL')
+    if (!t) {
+      console.error('[devcore] No token — cannot start session. Check localStorage auth key.')
+      return
+    }
 
-    if (lastSessionRef.current) {
-      // Reconnect to the same session — messages + transcript already in state, don't clear them
-      const prev = lastSessionRef.current
-      setSessionId(prev.id)
-      setSessionTitle(prev.title)
-      api()?.startSession({
-        sessionId: prev.id,
-        context: { jobTitle: prev.role, company: prev.company, resumeText: '', jdText: '', files: [] },
-        audioSource, micDeviceId, sysDeviceId, token: t,
-      })
-    } else {
-      // Brand new session — default to present mode
-      const id = crypto.randomUUID()
-      setSessionId(id)
-      setSessionTitle('Starting…')
-      setMessages([])
-      useOverlayStore.getState().setTranscript([])
-      useOverlayStore.getState().setAssessmentMode('present')
-      api()?.startSession({ sessionId: id, context: { ...EMPTY_CONTEXT, assessmentMode: 'present' }, audioSource, micDeviceId, sysDeviceId, token: t })
+    const devcore = api()
+    console.log('[devcore] electronAPI.devcore:', devcore ? 'OK' : 'MISSING')
+    if (!devcore) return
+
+    try {
+      if (lastSessionRef.current) {
+        const prev = lastSessionRef.current
+        setSessionId(prev.id)
+        setSessionTitle(prev.title)
+        await devcore.startSession({
+          sessionId: prev.id,
+          context: { jobTitle: prev.role, company: prev.company, resumeText: '', jdText: '', files: [] },
+          audioSource, micDeviceId, sysDeviceId, token: t,
+        })
+      } else {
+        const id = crypto.randomUUID()
+        setSessionId(id)
+        setSessionTitle('Starting…')
+        setMessages([])
+        useOverlayStore.getState().setTranscript([])
+        useOverlayStore.getState().setAssessmentMode('present')
+        await devcore.startSession({ sessionId: id, context: { ...EMPTY_CONTEXT, assessmentMode: 'present' }, audioSource, micDeviceId, sysDeviceId, token: t })
+      }
+      console.log('[devcore] startSession IPC call completed')
+    } catch (err) {
+      console.error('[devcore] startSession failed:', err)
     }
   }
 
@@ -463,7 +496,7 @@ export function SuggestionCard() {
 
     // Load history from backend
     try {
-      const r = await fetch(`http://localhost:8000/api/v1/cluely/sessions/${session.id}`, {
+      const r = await fetch(`${API_BASE()}/cluely/sessions/${session.id}`, {
         headers: { Authorization: `Bearer ${t}` },
       })
       const data = r.ok ? await r.json() : null
@@ -494,7 +527,8 @@ export function SuggestionCard() {
     })
   }
 
-  const handlePause = () => api()?.pauseSession?.()
+  const handlePause  = () => api()?.pauseSession?.()
+  const handleResume = () => api()?.resumeSession?.()
   const handleEnd = () => {
     const { sessionId: sid, sessionTitle: title } = useOverlayStore.getState()
     // Save session ref so Start can reconnect — do NOT clear messages or transcript
@@ -557,12 +591,17 @@ export function SuggestionCard() {
         const text = lastInterviewer?.text || 'Please provide interview assistance based on the current context.'
         setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'auto', text: `↩ Auto: "${text.slice(0, 60)}${text.length > 60 ? '…' : ''}"` }])
         api()?.manualAsk?.({ text, mode: 'hints' })
+      } else if (p.action === 'scroll-down') {
+        chatScrollRef.current?.scrollBy({ top: 160, behavior: 'smooth' })
+      } else if (p.action === 'scroll-up') {
+        chatScrollRef.current?.scrollBy({ top: -160, behavior: 'smooth' })
       }
     })
     return () => remove?.()
   }, [])
 
   const isActive = state !== 'idle'
+  const isPaused = state === 'paused'
 
   if (authed === false) {
     return (
@@ -667,6 +706,7 @@ export function SuggestionCard() {
         </div>
         {isActive && latencyMs > 0 && <span className="font-mono text-[10px] text-emerald-400 ml-1">{latencyMs}ms</span>}
         <div className="flex-1" />
+
         <AudioSourcePicker />
         {isActive && (
           <button
@@ -678,10 +718,17 @@ export function SuggestionCard() {
         )}
         {isActive ? (
           <>
-            <button onClick={handlePause} className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-yellow-300/20 bg-yellow-300/5 text-yellow-300 font-mono text-[11px] hover:bg-yellow-300/10 transition-all">
-              <svg width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
-              Pause
-            </button>
+            {isPaused ? (
+              <button onClick={handleResume} className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-emerald-400/30 bg-emerald-400/10 text-emerald-400 font-mono text-[11px] hover:bg-emerald-400/20 transition-all">
+                <svg width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                Resume
+              </button>
+            ) : (
+              <button onClick={handlePause} className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-yellow-300/20 bg-yellow-300/5 text-yellow-300 font-mono text-[11px] hover:bg-yellow-300/10 transition-all">
+                <svg width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+                Pause
+              </button>
+            )}
             <button onClick={handleEnd} className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-red-400/20 bg-red-400/5 text-red-400 font-mono text-[11px] hover:bg-red-400/10 transition-all">
               <svg width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
               End
@@ -695,6 +742,28 @@ export function SuggestionCard() {
             </button>
           </>
         )}
+      </div>
+
+      {/* Reading mode strip */}
+      <div className="flex items-center justify-between px-4 py-1.5 border-b border-white/[0.04] bg-white/[0.01]">
+        <span className="font-mono text-[8px] tracking-widest text-white/20 uppercase">View</span>
+        <div className="flex items-center gap-0.5">
+          {READING_MODES.map(m => (
+            <button
+              key={m.key}
+              onClick={() => setReadingMode(m.key)}
+              title={m.title}
+              className={[
+                'px-2 py-0.5 rounded-[4px] font-mono text-[8px] tracking-wider transition-all',
+                readingMode === m.key
+                  ? 'bg-violet-500/30 text-violet-300 border border-violet-400/30'
+                  : 'text-white/25 hover:text-white/55 hover:bg-white/[0.05] border border-transparent',
+              ].join(' ')}
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Outcome pill — shows inferred interview goal, tap for full answer */}
@@ -729,7 +798,11 @@ export function SuggestionCard() {
       )}
 
       {/* Chat messages */}
-      <div className="flex flex-col gap-2 px-4 py-3 max-h-[55vh] overflow-y-auto scrollbar-none [&::-webkit-scrollbar]:hidden">
+      <div ref={chatScrollRef} className="px-4 py-3 max-h-[70vh] overflow-y-auto scrollbar-none [&::-webkit-scrollbar]:hidden">
+        <div
+          className="flex flex-col gap-2 mx-auto"
+          style={{ maxWidth: CONTENT_WIDTH[readingMode], transition: 'max-width 0.25s ease' }}
+        >
         {messages.length === 0 && (
           <p className="text-[12px] text-white/20 text-center py-4">
             {isActive ? 'Listening… press Ctrl+Shift+G or type a question below' : 'Start a session to begin'}
@@ -743,16 +816,20 @@ export function SuggestionCard() {
               </div>
             )}
             {(msg.role === 'ai' || msg.role === 'auto') && (
-              <div className="max-w-[90%] flex gap-2 items-start">
+              <div className={`flex gap-2 items-start ${readingMode === 'teleprompter' ? 'w-full' : 'max-w-[90%]'}`}>
                 <span className="text-violet-400 font-mono text-[12px] flex-shrink-0 mt-1">▸</span>
                 <div className="flex-1 min-w-0">
                   {msg.text
-                    ? <>
-                        <MarkdownMessage content={msg.text} />
-                        {msg.pending && (
-                          <span className="inline-block w-0.5 h-3.5 bg-violet-400 ml-0.5 animate-pulse align-middle" />
-                        )}
-                      </>
+                    ? (
+                        readingMode === 'teleprompter'
+                          ? <TeleprompterMessage content={msg.text} pending={msg.pending} />
+                          : <>
+                              <MarkdownMessage content={msg.text} readingMode={readingMode} />
+                              {msg.pending && (
+                                <span className="inline-block w-0.5 h-3.5 bg-violet-400 ml-0.5 animate-pulse align-middle" />
+                              )}
+                            </>
+                      )
                     : <span className="flex gap-1 items-center text-white/30">
                         <span className="w-1 h-1 rounded-full bg-violet-400 animate-bounce" style={{ animationDelay: '0ms' }} />
                         <span className="w-1 h-1 rounded-full bg-violet-400 animate-bounce" style={{ animationDelay: '150ms' }} />
@@ -765,6 +842,7 @@ export function SuggestionCard() {
           </div>
         ))}
         <div ref={chatBottomRef} />
+        </div>
       </div>
 
       {/* Input */}

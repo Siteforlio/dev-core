@@ -22,8 +22,8 @@ class LLMService:
         """
         job_title     = context.get("job_title", "")
         company       = context.get("company", "")
-        resume_text   = context.get("resume_text", "")[:600]
-        jd_text       = context.get("jd_text", "")[:400]
+        resume_text   = context.get("resume_text", "")
+        jd_text       = context.get("jd_text", "")
         extra_context = context.get("extra_context", "")
 
         # Determine situation from available context
