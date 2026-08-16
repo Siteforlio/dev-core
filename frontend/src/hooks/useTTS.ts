@@ -1,6 +1,5 @@
 import { useRef, useState, useCallback, useEffect } from 'react'
-
-const WS_BASE = 'ws://localhost:8000/api/v1/ws/tts'
+import { WS_BASE } from '../lib/apiBase'
 
 interface TTSMeta {
   sampleRate: number
@@ -67,7 +66,7 @@ export function useTTS(sessionId: string | null, token: string) {
   useEffect(() => {
     if (!sessionId) return
 
-    const ws = new WebSocket(`${WS_BASE}/${sessionId}?token=${encodeURIComponent(token)}`)
+    const ws = new WebSocket(`${WS_BASE()}/ws/tts/${sessionId}?token=${encodeURIComponent(token)}`)
     ws.binaryType = 'arraybuffer'
 
     ws.onmessage = (event) => {

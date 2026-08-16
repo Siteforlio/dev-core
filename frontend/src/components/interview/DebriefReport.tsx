@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { API_ROOT } from '../../lib/apiBase'
 import { useInterviewStore } from '../../store/interviewStore'
 
 interface DebriefData {
@@ -24,7 +25,7 @@ export default function DebriefReport({ token, onRestart }: Props) {
 
   useEffect(() => {
     if (!sessionId) return
-    fetch(`/api/v1/interview-sessions/${sessionId}/debrief`, {
+    fetch(`${API_ROOT()}/api/v1/interview-sessions/${sessionId}/debrief`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then((r) => r.json())

@@ -1,7 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react'
 import { apiFetch } from '../lib/apiFetch'
-
-const API = 'http://localhost:8000/api/v1'
+import { API_BASE } from '../lib/apiBase'
 
 // VAD outputs Float32 audio at 16 kHz mono
 const VAD_SAMPLE_RATE = 16_000
@@ -75,7 +74,7 @@ export function useVAD(micStream: MediaStream | null, opts: VADOptions) {
       const form = new FormData()
       form.append('audio', wav, 'speech.wav')
       form.append('language', optsRef.current.languagePref ?? 'en')
-      const res = await apiFetch(`${API}/speech/transcribe`, { method: 'POST', body: form })
+      const res = await apiFetch(`${API_BASE()}/speech/transcribe`, { method: 'POST', body: form })
       const body = await res.json()
       const transcript: string = body.data?.transcript ?? ''
       if (transcript.trim()) {

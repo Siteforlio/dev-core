@@ -1,8 +1,7 @@
 import { useInterviewStore } from '../store/interviewStore'
 import { apiFetch } from '../lib/apiFetch'
+import { API_BASE } from '../lib/apiBase'
 import type { SubmitAnswerResponse } from '../types'
-
-const API = 'http://localhost:8000/api/v1'
 
 export function useInterviewSession() {
   const setSession = useInterviewStore((s) => s.setSession)
@@ -17,7 +16,7 @@ export function useInterviewSession() {
     jdText?: string,
     managerName?: string,
   ) => {
-    const res = await apiFetch(`${API}/interview-sessions`, {
+    const res = await apiFetch(`${API_BASE()}/interview-sessions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -68,7 +67,7 @@ export function useInterviewSession() {
       isFollowup?: boolean
     },
   ) => {
-    const res = await apiFetch(`${API}/interview-sessions/${sessionId}/answer`, {
+    const res = await apiFetch(`${API_BASE()}/interview-sessions/${sessionId}/answer`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -92,7 +91,7 @@ export function useInterviewSession() {
     extra?: { pasteChars?: number; durationSeconds?: number; charsPerSecond?: number },
   ) => {
     try {
-      await apiFetch(`${API}/interview-sessions/${sessionId}/cheat-signal`, {
+      await apiFetch(`${API_BASE()}/interview-sessions/${sessionId}/cheat-signal`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

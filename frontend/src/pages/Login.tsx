@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useAuthStore } from '../store/authStore'
 import { SaveCredsModal } from '../components/SaveCredsModal'
+import { API_BASE } from '../lib/apiBase'
 
 const eAPI = () => (window as any).electronAPI
 
@@ -50,7 +51,7 @@ export default function Login({ onGoToRegister, onLoggedIn }: { onGoToRegister: 
   }, [])
 
   const _doAuth = async (emailVal: string, passwordVal: string): Promise<boolean> => {
-    const res = await fetch('http://localhost:8000/api/v1/auth/login', {
+    const res = await fetch(`${API_BASE()}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: emailVal, password: passwordVal }),
@@ -191,7 +192,7 @@ export default function Login({ onGoToRegister, onLoggedIn }: { onGoToRegister: 
                 background: 'radial-gradient(circle, rgba(34,211,238,0.12) 0%, transparent 70%)',
                 animation: 'pulse-dot 3s ease-in-out infinite',
               }} />
-              <img src="/devcore.png" width="88" height="88" alt="DevCore" style={{ objectFit: 'contain', display: 'block', filter: 'drop-shadow(0 0 20px rgba(34,211,238,0.5))' }} />
+              <img src="./devcore.png" width="88" height="88" alt="DevCore" style={{ objectFit: 'contain', display: 'block', filter: 'drop-shadow(0 0 20px rgba(34,211,238,0.5))' }} />
             </div>
 
             {/* Name */}

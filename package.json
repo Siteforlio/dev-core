@@ -1,11 +1,8 @@
 {
   "name": "developer-core",
   "version": "1.0.0",
-  "description": "",
+  "description": "Developer Core desktop application",
   "main": "dist-electron/main.js",
-  "directories": {
-    "doc": "docs"
-  },
   "scripts": {
     "postinstall": "npx @electron/rebuild -f -w ffi-napi,naudiodon",
     "test": "echo \"Error: no test specified\" && exit 1",

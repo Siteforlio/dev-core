@@ -31,6 +31,8 @@ extraResources:
 
 win:
   icon: build/icon.ico
+  signAndEditExecutable: false
+  forceCodeSigning: false
   target:
     - target: nsis
       arch:

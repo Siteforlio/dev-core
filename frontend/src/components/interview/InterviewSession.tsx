@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { API_ROOT } from '../../lib/apiBase'
 import { useInterviewStore } from '../../store/interviewStore'
 import { useInterviewSession } from '../../hooks/useInterviewSession'
 import { useVoice } from '../../hooks/useVoice'
@@ -386,7 +387,7 @@ export default function InterviewSession({ token }: Props) {
     const dropped = prevAnswerLengthRef.current - newValue.length
     if (dropped >= 40) {
       rewriteCountRef.current += 1
-      fetch(`/api/v1/interview-sessions/${sessionId}/behavioral-signal`, {
+      fetch(`${API_ROOT()}/api/v1/interview-sessions/${sessionId}/behavioral-signal`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ rewrite_count: rewriteCountRef.current }),
@@ -536,7 +537,7 @@ export default function InterviewSession({ token }: Props) {
 
     setAdvancing(true)
     try {
-      const res = await fetch(`/api/v1/interview-sessions/${sessionId}/advance`, {
+      const res = await fetch(`${API_ROOT()}/api/v1/interview-sessions/${sessionId}/advance`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ next_round_type: remainingRounds[0] }),

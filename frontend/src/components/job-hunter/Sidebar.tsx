@@ -55,7 +55,7 @@ const IconLogout = () => (
 )
 
 const DevCoreLogo = () => (
-  <img src="/devcore.png" width="34" height="34" alt="DevCore" style={{ objectFit: 'contain' }} />
+  <img src="./devcore.png" width="34" height="34" alt="DevCore" style={{ objectFit: 'contain' }} />
 )
 
 const NAV_ITEMS: NavItem[] = [

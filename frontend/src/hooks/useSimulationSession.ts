@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { useSimulationStore } from '../store/simulationStore'
 import { useAuthStore } from '../store/authStore'
 import { apiFetch } from '../lib/apiFetch'
+import { WS_BASE } from '../lib/apiBase'
 
 export interface SimTurn {
   id: string
@@ -120,7 +121,7 @@ export function useSimulationSession(
   useEffect(() => {
     if (!activeSimSessionId || !token) return
 
-    const wsUrl = `ws://localhost:8000/api/v1/sim-sessions/${activeSimSessionId}/ws?token=${encodeURIComponent(token)}`
+    const wsUrl = `${WS_BASE()}/sim-sessions/${activeSimSessionId}/ws?token=${encodeURIComponent(token)}`
     const ws = new WebSocket(wsUrl)
     wsRef.current = ws
 

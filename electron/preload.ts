@@ -4,6 +4,7 @@ import { interviewIPC } from './ipc/interview'
 
 contextBridge.exposeInMainWorld('electronAPI', {
   platform: process.platform,
+  backendPort: ipcRenderer.sendSync('app:backend-port'),
   auth: authIPC,
   interview: interviewIPC,
   getAccessToken:   () => ipcRenderer.invoke('auth:get:token'),

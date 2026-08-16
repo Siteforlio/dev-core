@@ -110,7 +110,7 @@ export default function Dashboard() {
           className="flex items-center justify-center flex-shrink-0"
           style={{ width: '64px', WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         >
-          <img src="/devcore.png" width="42" height="42" alt="DevCore" style={{ objectFit: 'contain' }} />
+          <img src="./devcore.png" width="42" height="42" alt="DevCore" style={{ objectFit: 'contain' }} />
         </div>
         <span
           className="flex-1 text-sm font-semibold tracking-[0.15em] uppercase"

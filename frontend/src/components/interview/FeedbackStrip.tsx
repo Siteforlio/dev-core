@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { API_ROOT } from '../../lib/apiBase'
 
 export interface EmotionState {
   emotion: string
@@ -78,7 +79,7 @@ export default function FeedbackStrip({ active, enabled, sharedStream, onEmotion
         ctx.drawImage(videoRef.current, 0, 0, 320, 240)
         const frame_b64 = canvas.toDataURL('image/jpeg', 0.6).split(',')[1]
         try {
-          const res = await fetch('/api/v1/emotion/analyze-frame', {
+          const res = await fetch(`${API_ROOT()}/api/v1/emotion/analyze-frame`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ frame_b64 }),

@@ -1,5 +1,6 @@
 import Editor from '@monaco-editor/react'
 import { useState } from 'react'
+import { API_ROOT } from '../../lib/apiBase'
 
 const STARTER: Record<string, string> = {
   python: '# Write your solution here\ndef solution():\n    pass\n',
@@ -29,7 +30,7 @@ export default function CodeEditor({ question, company, sessionId, onReaction }:
     if (!code.trim() || loading) return
     setLoading(true)
     try {
-      const res = await fetch(`/api/v1/ws/code-react`, {
+      const res = await fetch(`${API_ROOT()}/api/v1/ws/code-react`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ code_snapshot: code, question, company, session_id: sessionId }),

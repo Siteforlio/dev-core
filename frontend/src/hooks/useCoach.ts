@@ -1,6 +1,5 @@
 import { useState, useCallback, useRef } from 'react'
-
-const API = 'http://localhost:8000/api/v1'
+import { API_BASE } from '../lib/apiBase'
 
 export interface CoachMessage {
   role: 'user' | 'assistant'
@@ -60,7 +59,7 @@ export function useCoach({
       setMessages((prev) => [...prev, { role: 'assistant', content: '' }])
 
       try {
-        const res = await fetch(`${API}/interview-sessions/${sessionId}/coach`, {
+        const res = await fetch(`${API_BASE()}/interview-sessions/${sessionId}/coach`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

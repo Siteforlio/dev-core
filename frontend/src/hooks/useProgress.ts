@@ -1,8 +1,7 @@
 // frontend/src/hooks/useProgress.ts
 import { useState, useEffect } from 'react'
 import { apiFetch } from '../lib/apiFetch'
-
-const API = 'http://localhost:8000/api/v1'
+import { API_BASE } from '../lib/apiBase'
 
 export interface ProgressSummary {
   dimensions: Record<string, number>
@@ -15,7 +14,7 @@ export function useProgress() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    apiFetch(`${API}/progress/me`)
+    apiFetch(`${API_BASE()}/progress/me`)
       .then(r => r.json())
       .then(j => setData(j.data))
       .catch(() => {})

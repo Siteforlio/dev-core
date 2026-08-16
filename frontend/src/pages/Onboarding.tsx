@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useAuthStore } from '../store/authStore'
 import { SaveCredsModal } from '../components/SaveCredsModal'
+import { API_BASE } from '../lib/apiBase'
 
 const eAPI = () => (window as any).electronAPI
 const SAVE_CREDS_SETTING = 'devcore_save_creds_enabled'
@@ -63,7 +64,7 @@ export default function Onboarding({ onGoToLogin, onRegistered }: { onGoToLogin:
     setError('')
     setLoading(true)
     try {
-      const res = await fetch('http://localhost:8000/api/v1/auth/register', {
+      const res = await fetch(`${API_BASE()}/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, email, password, language_pref: lang, consent_given: consent }),
@@ -132,7 +133,7 @@ export default function Onboarding({ onGoToLogin, onRegistered }: { onGoToLogin:
           {/* Logo */}
           <div style={{ position: 'relative' }}>
             <div style={{ position: 'absolute', inset: '-20px', borderRadius: '50%', background: 'radial-gradient(circle, rgba(34,211,238,0.12) 0%, transparent 70%)', animation: 'pulse-dot 3s ease-in-out infinite' }} />
-            <img src="/devcore.png" width="80" height="80" alt="DevCore" style={{ objectFit: 'contain', display: 'block', filter: 'drop-shadow(0 0 20px rgba(34,211,238,0.5))' }} />
+            <img src="./devcore.png" width="80" height="80" alt="DevCore" style={{ objectFit: 'contain', display: 'block', filter: 'drop-shadow(0 0 20px rgba(34,211,238,0.5))' }} />
           </div>
 
           <div>

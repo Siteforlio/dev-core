@@ -967,7 +967,7 @@ export default function SimulationBuilder({ onLaunch }: Props) {
       {/* top bar */}
       <div className="sim-topbar">
         <div className="brandmark">
-          <img src="/icon-mark.svg" width={20} height={20} alt="" style={{ display: "block", flexShrink: 0 }} />
+          <img src="./icon-mark.svg" width={20} height={20} alt="" style={{ display: "block", flexShrink: 0 }} />
           Simulator
         </div>
         <div className="statusline">

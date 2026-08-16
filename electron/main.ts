@@ -2,6 +2,7 @@ import { app, BrowserWindow, Menu, ipcMain, shell, safeStorage } from 'electron'
 import path from 'path'
 import fs from 'fs'
 import os from 'os'
+import net from 'net'
 import crypto from 'crypto'
 import { execFile, spawn, spawnSync, ChildProcess } from 'child_process'
 import type { SpawnOptions } from 'child_process'
@@ -32,8 +33,38 @@ function listLoopbackDevices(): Promise<{ id: number; name: string; rate: number
 }
 
 let _backendProcess: ChildProcess | null = null
+let _backendPort = 8000  // dynamically assigned before backend starts
+
+function _findFreePort(preferred: number): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer()
+    srv.listen(preferred, '127.0.0.1', () => {
+      srv.close(() => resolve(preferred))
+    })
+    srv.on('error', () => {
+      // preferred port taken — let OS pick one
+      const srv2 = net.createServer()
+      srv2.listen(0, '127.0.0.1', () => {
+        const addr = srv2.address()
+        const port = typeof addr === 'object' && addr ? addr.port : 0
+        srv2.close(() => port ? resolve(port) : reject(new Error('No free port found')))
+      })
+      srv2.on('error', reject)
+    })
+  })
+}
 
 async function startBackend(): Promise<void> {
+  // Kill any orphaned backend from a previous session (e.g. if app crashed without cleanup)
+  if (app.isPackaged && process.platform === 'win32') {
+    try {
+      spawnSync('taskkill', ['/IM', 'backend.exe', '/F'], { stdio: 'ignore' })
+    } catch {}
+  }
+
+  _backendPort = await _findFreePort(8000)
+  console.log(`[devcore] starting backend on port ${_backendPort}`)
+
   return new Promise((resolve, reject) => {
     if (app.isPackaged) {
       _backendProcess = spawn(BACKEND_EXE, [], {
@@ -41,13 +72,14 @@ async function startBackend(): Promise<void> {
         env: {
           ...process.env,
           DEVCORE_USER_DATA: app.getPath('userData'),
+          DEVCORE_PORT: String(_backendPort),
         },
         stdio: ['ignore', 'pipe', 'pipe'],
       } as SpawnOptions)
     } else {
       _backendProcess = spawn(
         PYTHON_EXE,
-        ['-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', '8000', '--no-access-log'],
+        ['-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', String(_backendPort), '--no-access-log'],
         { cwd: path.join(PROJECT_ROOT, 'backend'), stdio: ['ignore', 'pipe', 'pipe'] }
       )
     }
@@ -99,16 +131,13 @@ async function startBackend(): Promise<void> {
       }
     })
 
-    // Poll /health until backend is ready (max 30s)
-    const start = Date.now()
+    // Poll /health until backend is ready.
+    // No fixed timeout — we keep polling as long as the process is alive.
+    // If the process crashes, the 'exit' handler above calls safeReject immediately.
     poll = setInterval(async () => {
-      if (Date.now() - start > 30_000) {
-        safeReject(new Error(`Backend did not start within 30s.\n${stderrBuf.slice(-500)}`))
-        return
-      }
       try {
-        const { net } = await import('electron')
-        const req = net.request({ method: 'GET', url: 'http://127.0.0.1:8000/health' })
+        const { net: electronNet } = await import('electron')
+        const req = electronNet.request({ method: 'GET', url: `http://127.0.0.1:${_backendPort}/health` })
         req.on('response', (res) => {
           if (res.statusCode === 200) safeResolve()
         })
@@ -133,7 +162,7 @@ function stopBackend(): void {
   _backendProcess = null
 }
 
-const BACKEND_WS = 'ws://localhost:8000/api/v1/cluely/ws'
+function BACKEND_WS() { return `ws://localhost:${_backendPort}/api/v1/cluely/ws` }
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -142,7 +171,7 @@ function createWindow() {
     frame: false,
     backgroundColor: '#020810',   // prevents white flash before React mounts
     show: false,                   // revealed via ready-to-show below
-    icon: path.join(PROJECT_ROOT, 'frontend', 'public', 'app-icon.png'),
+    ...(app.isPackaged ? {} : { icon: path.join(PROJECT_ROOT, 'frontend', 'public', 'app-icon.png') }),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -151,7 +180,10 @@ function createWindow() {
     },
   })
 
-  win.once('ready-to-show', () => win.show())
+  win.once('ready-to-show', () => {
+    win.show()
+    win.webContents.openDevTools()  // TODO: remove after debugging
+  })
 
   if (process.env.NODE_ENV === 'development') {
     win.loadURL('http://localhost:5173')
@@ -252,7 +284,7 @@ function _clearCreds(): void {
   try { if (_credsFilePath) fs.unlinkSync(_credsFilePath) } catch {}
 }
 
-const BACKEND_HTTP = 'http://localhost:8000'
+function BACKEND_HTTP() { return `http://localhost:${_backendPort}` }
 
 /** Decode JWT exp claim without a library. Returns expiry ms or 0 on error. */
 function _jwtExpiry(token: string): number {
@@ -269,7 +301,7 @@ async function _doRefresh(): Promise<{ accessToken: string; refreshToken: string
     const { net } = await import('electron')
     const req = net.request({
       method: 'POST',
-      url: `${BACKEND_HTTP}/api/v1/auth/refresh`,
+      url: `${BACKEND_HTTP()}/api/v1/auth/refresh`,
     })
     return await new Promise<{ accessToken: string; refreshToken: string } | null>((resolve) => {
       req.setHeader('Authorization', `Bearer ${_lastRefreshToken}`)
@@ -432,12 +464,12 @@ ipcMain.handle('devcore:session:start', async (_e, payload) => {
     // Quick connectivity check before handing off to audio.ts
     const { net } = await import('electron')
     await new Promise<void>((resolve) => {
-      const req = net.request({ method: 'GET', url: `http://localhost:8000/api/v1/auth/me` })
+      const req = net.request({ method: 'GET', url: `${BACKEND_HTTP()}/api/v1/auth/me` })
       req.on('response', (res) => { console.log(`[devcore] backend reachable — HTTP ${res.statusCode}`); resolve() })
       req.on('error', (e) => { console.error('[devcore] backend NOT reachable:', e.message); resolve() })
       req.end()
     })
-    startAudioCapture(BACKEND_WS, token, audioSource, sessionId, context, micDeviceId, sysDeviceId)
+    startAudioCapture(BACKEND_WS(), token, audioSource, sessionId, context, micDeviceId, sysDeviceId)
     // Forward assessment mode to the overlay window so its store stays in sync
     const overlayWin = getOverlayWindow()
     if (overlayWin && !overlayWin.isDestroyed()) {
@@ -475,6 +507,9 @@ ipcMain.handle('devcore:session:end', async () => {
     overlayWin.webContents.send('devcore:session:mode', { assessmentMode: null })
   }
 })
+
+// Expose backend port to renderer (preload uses sendSync)
+ipcMain.on('app:backend-port', (e) => { e.returnValue = _backendPort })
 
 // Content bounds from renderer — polling loop uses this to decide when cursor is over the UI
 ipcMain.on('devcore:content:bounds', (_e, bounds: { x: number; y: number; width: number; height: number }) => {
@@ -737,6 +772,22 @@ ipcMain.handle('app:splash-done', () => {
   createOverlayWindow()
 })
 
+// Prevent multiple instances — if another instance is already running, focus it and quit
+const gotTheLock = app.requestSingleInstanceLock()
+if (!gotTheLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    // Focus the existing window when user tries to open another instance
+    const wins = BrowserWindow.getAllWindows()
+    const main = wins.find(w => !w.isDestroyed())
+    if (main) {
+      if (main.isMinimized()) main.restore()
+      main.focus()
+    }
+  })
+}
+
 app.whenReady().then(async () => {
   _initCredPaths()
   app.setAppUserModelId('com.siteforlio.devcore')   // Windows taskbar/notification identity
@@ -746,12 +797,31 @@ app.whenReady().then(async () => {
 
   Menu.setApplicationMenu(null)
 
-  // Start backend before opening the window
+  // Show a splash window while the backend starts
+  const splash = new BrowserWindow({
+    width: 360, height: 200, frame: false, transparent: true,
+    resizable: false, alwaysOnTop: true, skipTaskbar: true,
+    webPreferences: { contextIsolation: true },
+  })
+  splash.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`
+    <body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;
+      background:rgba(2,8,16,0.95);border-radius:12px;font-family:system-ui;color:#e2e8f0;flex-direction:column;gap:16px;
+      border:1px solid rgba(59,130,246,0.2);">
+      <div style="width:32px;height:32px;border:3px solid rgba(59,130,246,0.3);border-top-color:#3b82f6;
+        border-radius:50%;animation:spin 1s linear infinite;"></div>
+      <p style="font-size:14px;font-weight:500;">Starting Developer Core...</p>
+      <p id="status" style="font-size:11px;color:#64748b;">Loading backend services</p>
+      <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
+    </body>
+  `)}`)
+
+  // Start backend — splash stays visible while it loads
   try {
     await startBackend()
     console.log('[devcore] backend ready')
   } catch (err) {
     console.error('[devcore] backend failed to start:', err)
+    if (!splash.isDestroyed()) splash.close()
     const { dialog } = await import('electron')
     await dialog.showErrorBox(
       'Startup Error',
@@ -761,6 +831,7 @@ app.whenReady().then(async () => {
     return
   }
 
+  if (!splash.isDestroyed()) splash.close()
   createWindow()          // main app window (overlay deferred until splash-done IPC)
   _startDeviceWatcher()   // hot-plug detection
   initUpdater()

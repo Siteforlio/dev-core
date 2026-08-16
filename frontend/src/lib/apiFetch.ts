@@ -3,6 +3,7 @@
  * If refresh also fails, clears auth and forces re-login.
  */
 import { useAuthStore } from '../store/authStore'
+import { API_BASE, API_ROOT } from './apiBase'
 
 let refreshing: Promise<string | null> | null = null
 
@@ -24,7 +25,7 @@ export async function attemptRefresh(): Promise<string | null> {
 
     // Non-Electron fallback (plain browser dev mode)
     if (!refreshToken) { clearAuth(); return null }
-    const res = await fetch('http://localhost:8000/api/v1/auth/refresh', {
+    const res = await fetch(`${API_BASE()}/auth/refresh`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${refreshToken}` },
     })
@@ -59,6 +60,9 @@ export async function getFreshToken(): Promise<string | null> {
 }
 
 export async function apiFetch(input: string, init: RequestInit = {}): Promise<Response> {
+  // Resolve relative URLs (e.g. "/api/v1/...") to the backend origin.
+  // In dev, Vite proxy handles this; in production (file://), we need the full URL.
+  const url = input.startsWith('/') ? `${API_ROOT()}${input}` : input
   const { accessToken } = useAuthStore.getState()
 
   const makeHeaders = (token: string | null) => ({
@@ -68,14 +72,14 @@ export async function apiFetch(input: string, init: RequestInit = {}): Promise<R
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
   })
 
-  let res = await fetch(input, { ...init, headers: makeHeaders(accessToken) })
+  let res = await fetch(url, { ...init, headers: makeHeaders(accessToken) })
 
   if (res.status === 401) {
     // Deduplicate concurrent refresh calls
     if (!refreshing) refreshing = attemptRefresh().finally(() => { refreshing = null })
     const newToken = await refreshing
     if (!newToken) return res  // clearAuth already called — App will redirect to login
-    res = await fetch(input, { ...init, headers: makeHeaders(newToken) })
+    res = await fetch(url, { ...init, headers: makeHeaders(newToken) })
   }
 
   return res
