@@ -28,7 +28,7 @@ export default function DebriefDashboard({ onStartSession, pendingSessionId }: P
     monthLabel, calendarDays, selectedLabel, agenda,
     countdownText, countdownLabel, heroKicker,
     doneCount, totalCount, completionPct, statusLabel,
-    attendees, caldavConfigured, caldavLoading,
+    attendees, calendarConfigured, caldavLoading,
     selectedEvent, selectEvent,
     debrief, debriefLoading,
     recentDebriefs, recentLoading, selectDebriefDirect, selectedDateDebriefs,
@@ -115,7 +115,7 @@ export default function DebriefDashboard({ onStartSession, pendingSessionId }: P
           {(debriefLoading || caldavLoading) && (
             <div style={{ width: '14px', height: '14px', border: '2px solid rgba(34,211,238,0.3)', borderTopColor: '#22d3ee', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
           )}
-          {!caldavConfigured && !caldavLoading && (
+          {!calendarConfigured && !caldavLoading && (
             <span style={{ fontSize: '11px', fontWeight: 600, color: 'rgba(251,146,60,0.8)', fontFamily: 'monospace' }}>
               Calendar not connected — go to Settings
             </span>

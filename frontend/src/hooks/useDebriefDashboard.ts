@@ -62,7 +62,7 @@ export function useDebriefDashboard(pendingSessionId: string | null = null) {
   const [selected,  setSelected]  = useState<SelectedDate>(todaySelected)
 
   // ── Calendar data from API ────────────────────────────────────────────────
-  const [caldavConfigured, setCaldavConfigured] = useState(false)
+  const [calendarConfigured, setCalendarConfigured] = useState(false)
   const [caldavLoading,    setCaldavLoading]    = useState(false)
   const [eventsByDay,      setEventsByDay]      = useState<Record<number, AgendaItem[]>>({})
   const [eventDaySet,      setEventDaySet]      = useState<Set<number>>(new Set())
@@ -82,7 +82,7 @@ export function useDebriefDashboard(pendingSessionId: string | null = null) {
       const { data } = await res.json()
       if (!data.configured) return
 
-      setCaldavConfigured(true)
+      setCalendarConfigured(data.google_configured || data.microsoft_configured)
       const byDay: Record<number, AgendaItem[]> = {}
       const days = new Set<number>()
       for (const ev of data.events as AgendaItem[]) {
@@ -493,7 +493,7 @@ export function useDebriefDashboard(pendingSessionId: string | null = null) {
     modalOpen, emailSubject, setEmailSubject, emailBody, setEmailBody,
     emailTo, setEmailTo, sendingEmail, composingEmail,
     toastVisible, toastMsg,
-    caldavConfigured, caldavLoading,
+    calendarConfigured, caldavLoading,
     debrief, debriefLoading,
     recentDebriefs, recentLoading, selectDebriefDirect, selectedDateDebriefs,
     selectedEvent, selectEvent,

@@ -17,7 +17,11 @@ export default function CampaignSettings({ campaignId, onGoToGlobalSettings }: P
   const [saved, setSaved] = useState(false)
 
   useEffect(() => {
-    getStatus().then(setGlobalStatus).catch(() => {})
+    getStatus().then((s) => setGlobalStatus({
+      emailConfigured: s.googleConfigured || s.microsoftConfigured,
+      caldavConfigured: s.googleConfigured || s.microsoftConfigured,
+      linkedinConfigured: s.linkedinConfigured,
+    })).catch(() => {})
     getCredentialsStatus(campaignId).then((s) => {
       // credential status doubles as configured status — not toggle state
       // we just need the global status for display

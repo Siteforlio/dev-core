@@ -267,13 +267,15 @@ export function useJobHunter() {
     }
   }
 
-  async function getCredentialsStatus(campaignId: string): Promise<{ emailConfigured: boolean; caldavConfigured: boolean; linkedinConfigured: boolean }> {
-    const res = await apiFetch(`${BASE}/job-hunter/campaigns/${campaignId}/credentials/status`, { headers })
-    const { data } = await res.json()
+  async function getCredentialsStatus(_campaignId: string): Promise<{ emailConfigured: boolean; caldavConfigured: boolean; linkedinConfigured: boolean }> {
+    const res = await apiFetch('/api/v1/integrations/status')
+    const json = await res.json()
+    const data = json.data ?? {}
+    const calendarOrEmail = data.google_configured || data.microsoft_configured
     return {
-      emailConfigured: data.email_configured,
-      caldavConfigured: data.caldav_configured,
-      linkedinConfigured: data.linkedin_configured ?? false,
+      emailConfigured: calendarOrEmail,
+      caldavConfigured: calendarOrEmail,
+      linkedinConfigured: data.linkedin_configured,
     }
   }
 
