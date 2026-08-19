@@ -43,6 +43,8 @@ class UserIntegration(Base):
     email_account_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     caldav_account_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     linkedin_account_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    google_oauth_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    microsoft_oauth_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     email_monitor_since: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
