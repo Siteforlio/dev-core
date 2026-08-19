@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useIntegrations } from '../../hooks/useIntegrations'
 
 /* ── Underline input ── */
@@ -169,46 +169,55 @@ function IntegrationCard({ icon, title, subtitle, tag, configured, open, onToggl
 }
 
 export default function GlobalIntegrationsPanel() {
-  const { getStatus, testEmail, setEmail, testCalDAV, setCalDAV, testLinkedIn, setLinkedIn } = useIntegrations()
+  const {
+    status, setup, loading, error: hookError,
+    getStatus, getSetup,
+    connectGoogle, connectMicrosoft,
+    disconnectGoogle, disconnectMicrosoft,
+    setLinkedIn, testLinkedIn,
+  } = useIntegrations()
 
-  const [status, setStatus] = useState({ emailConfigured: false, caldavConfigured: false, linkedinConfigured: false })
-  const [emailOpen, setEmailOpen] = useState(false)
-  const [caldavOpen, setCalDAVOpen] = useState(false)
+  const [googleOpen, setGoogleOpen] = useState(false)
+  const [microsoftOpen, setMicrosoftOpen] = useState(false)
   const [linkedinOpen, setLinkedInOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [savingLabel, setSavingLabel] = useState('')
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
-  const [emailForm, setEmailForm] = useState({ host: '', port: 993, username: '', password: '', smtp_host: '', smtp_port: 465 })
-  const [caldavForm, setCalDAVForm] = useState({ url: '', username: '', password: '' })
   const [linkedinMode, setLinkedInMode] = useState<'cookie' | 'password'>('cookie')
   const [linkedinForm, setLinkedInForm] = useState({ email: '', password: '', session_cookie: '' })
 
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const pollAttemptsRef = useRef(0)
+
   useEffect(() => {
-    getStatus().then(setStatus).catch(() => {})
+    getStatus().catch(() => {})
+    getSetup().catch(() => {})
+    return () => {
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current)
+    }
   }, [])
 
-  const saveEmail = async () => {
-    setSaving(true); setError(''); setSuccess('')
-    try {
-      setSavingLabel('Testing…'); await testEmail(emailForm)
-      setSavingLabel('Saving…'); await setEmail(emailForm)
-      setStatus(s => ({ ...s, emailConfigured: true }))
-      setSuccess('Email monitoring connected.'); setEmailOpen(false)
-    } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Failed') }
-    finally { setSaving(false); setSavingLabel('') }
-  }
-
-  const saveCalDAV = async () => {
-    setSaving(true); setError(''); setSuccess('')
-    try {
-      setSavingLabel('Testing…'); const msg = await testCalDAV(caldavForm)
-      setSavingLabel('Saving…'); await setCalDAV(caldavForm)
-      setStatus(s => ({ ...s, caldavConfigured: true }))
-      setSuccess(`Calendar sync connected. ${msg}`); setCalDAVOpen(false)
-    } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Failed') }
-    finally { setSaving(false); setSavingLabel('') }
+  const startPolling = () => {
+    if (pollIntervalRef.current) clearInterval(pollIntervalRef.current)
+    pollAttemptsRef.current = 0
+    pollIntervalRef.current = setInterval(async () => {
+      pollAttemptsRef.current += 1
+      try {
+        const s = await getStatus()
+        if (s.googleConfigured || s.microsoftConfigured) {
+          clearInterval(pollIntervalRef.current!)
+          pollIntervalRef.current = null
+        }
+      } catch {
+        // ignore poll errors
+      }
+      if (pollAttemptsRef.current >= 40) {
+        clearInterval(pollIntervalRef.current!)
+        pollIntervalRef.current = null
+      }
+    }, 3000)
   }
 
   const saveLinkedIn = async () => {
@@ -219,7 +228,6 @@ export default function GlobalIntegrationsPanel() {
     try {
       setSavingLabel('Authenticating…'); await testLinkedIn(creds)
       setSavingLabel('Saving…'); await setLinkedIn(creds)
-      setStatus(s => ({ ...s, linkedinConfigured: true }))
       setSuccess('LinkedIn connected.'); setLinkedInOpen(false)
     } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Failed') }
     finally { setSaving(false); setSavingLabel('') }
@@ -252,7 +260,7 @@ export default function GlobalIntegrationsPanel() {
     </div>
   )
 
-  const connectedCount = [status.emailConfigured, status.caldavConfigured, status.linkedinConfigured].filter(Boolean).length
+  const connectedCount = [status?.googleConfigured, status?.microsoftConfigured, status?.linkedinConfigured].filter(Boolean).length
 
   return (
     <div style={{ position: 'relative', minHeight: '100%', padding: '40px 48px', overflow: 'hidden' }}>
@@ -355,10 +363,10 @@ export default function GlobalIntegrationsPanel() {
         </div>
 
         {/* Notifications */}
-        {error && (
+        {(error || hookError) && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', background: 'rgba(248,113,113,0.06)', border: '1px solid rgba(248,113,113,0.15)', borderRadius: '10px', padding: '12px 16px', marginBottom: '20px' }}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f87171" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-            <p style={{ fontSize: '11px', fontFamily: 'monospace', color: '#f87171' }}>{error}</p>
+            <p style={{ fontSize: '11px', fontFamily: 'monospace', color: '#f87171' }}>{error || hookError}</p>
           </div>
         )}
         {success && (
@@ -371,63 +379,167 @@ export default function GlobalIntegrationsPanel() {
         {/* Cards */}
         <div className="flex flex-col" style={{ gap: '12px' }}>
 
-          {/* Email */}
+          {/* Google */}
           <IntegrationCard
-            icon={<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#22d3ee" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>}
-            title="Email Monitoring"
-            subtitle="IMAP/SMTP — Gmail, Outlook, Apple Mail"
-            tag="IMAP"
-            configured={status.emailConfigured}
-            open={emailOpen}
-            onToggle={() => setEmailOpen(o => !o)}
-            accentColor="#22d3ee"
+            icon={
+              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+                <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+                <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/>
+                <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+              </svg>
+            }
+            title="Google Calendar & Gmail"
+            subtitle="OAuth 2.0 — sign in with your Google account"
+            tag="OAuth"
+            configured={status?.googleConfigured ?? false}
+            open={googleOpen}
+            onToggle={() => setGoogleOpen(o => !o)}
+            accentColor="#4285F4"
           >
-            <div className="flex flex-col" style={{ gap: '20px' }}>
-              <div className="grid grid-cols-2" style={{ gap: '24px' }}>
-                <Field label="IMAP Host" value={emailForm.host} onChange={v => setEmailForm(f => ({ ...f, host: v }))} placeholder="imap.gmail.com" />
-                <Field label="Email Address" value={emailForm.username} onChange={v => setEmailForm(f => ({ ...f, username: v }))} placeholder="you@gmail.com" />
-              </div>
-              <div className="grid grid-cols-2" style={{ gap: '24px' }}>
-                <Field label="App Password" value={emailForm.password} onChange={v => setEmailForm(f => ({ ...f, password: v }))} placeholder="••••••••" type="password" />
-                <Field label="SMTP Host (optional)" value={emailForm.smtp_host} onChange={v => setEmailForm(f => ({ ...f, smtp_host: v }))} placeholder="smtp.gmail.com" />
-              </div>
-              <p style={{ fontSize: '10px', fontFamily: 'monospace', color: 'rgba(100,116,139,0.4)', lineHeight: 1.7 }}>
-                Gmail: generate an App Password at myaccount.google.com/apppasswords — do not use your account password.
-              </p>
-              <SaveBtn onClick={saveEmail} disabled={saving || !emailForm.host || !emailForm.username || !emailForm.password} />
+            <div className="flex flex-col" style={{ gap: '16px' }}>
+              {setup && !setup.google_ready && (
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', background: 'rgba(251,191,36,0.06)', border: '1px solid rgba(251,191,36,0.2)', borderRadius: '10px', padding: '12px 16px' }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" strokeWidth="2" strokeLinecap="round" style={{ marginTop: '1px', flexShrink: 0 }}><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                  <p style={{ fontSize: '11px', fontFamily: 'monospace', color: '#fbbf24', lineHeight: 1.6 }}>
+                    Add <strong>GOOGLE_CLIENT_ID</strong> and <strong>GOOGLE_CLIENT_SECRET</strong> to your .env file to enable Google sign-in.
+                  </p>
+                </div>
+              )}
+
+              {status?.googleConfigured ? (
+                <div className="flex items-center justify-between" style={{ marginTop: '4px' }}>
+                  <span style={{ fontSize: '12px', fontFamily: 'monospace', color: 'rgba(100,116,139,0.7)' }}>Your Google account is linked.</span>
+                  <button
+                    onClick={disconnectGoogle}
+                    style={{
+                      background: 'transparent',
+                      border: '1px solid rgba(248,113,113,0.25)',
+                      color: '#f87171',
+                      fontFamily: 'monospace',
+                      fontSize: '10px',
+                      fontWeight: 700,
+                      letterSpacing: '0.12em',
+                      textTransform: 'uppercase',
+                      padding: '6px 14px',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      transition: 'all 0.15s',
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.background = 'rgba(248,113,113,0.08)'; e.currentTarget.style.color = '#fca5a5' }}
+                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#f87171' }}
+                  >
+                    Disconnect
+                  </button>
+                </div>
+              ) : (
+                <div className="flex justify-end" style={{ marginTop: '4px' }}>
+                  <button
+                    onClick={() => { connectGoogle(); startPolling() }}
+                    disabled={loading || !setup?.google_ready}
+                    style={{
+                      background: loading || !setup?.google_ready ? 'transparent' : 'rgba(66,133,244,0.1)',
+                      border: `1px solid ${loading || !setup?.google_ready ? 'rgba(255,255,255,0.06)' : 'rgba(66,133,244,0.35)'}`,
+                      color: loading || !setup?.google_ready ? 'rgba(255,255,255,0.15)' : '#4285F4',
+                      fontFamily: 'monospace',
+                      fontSize: '10px',
+                      fontWeight: 700,
+                      letterSpacing: '0.15em',
+                      textTransform: 'uppercase',
+                      padding: '9px 22px',
+                      borderRadius: '8px',
+                      cursor: loading || !setup?.google_ready ? 'not-allowed' : 'pointer',
+                      transition: 'all 0.15s',
+                    }}
+                    onMouseEnter={e => { if (!loading && setup?.google_ready) { e.currentTarget.style.background = 'rgba(66,133,244,0.18)'; e.currentTarget.style.boxShadow = '0 0 16px rgba(66,133,244,0.15)' } }}
+                    onMouseLeave={e => { e.currentTarget.style.background = loading || !setup?.google_ready ? 'transparent' : 'rgba(66,133,244,0.1)'; e.currentTarget.style.boxShadow = 'none' }}
+                  >
+                    {loading ? 'Opening browser…' : 'Connect Google'}
+                  </button>
+                </div>
+              )}
             </div>
           </IntegrationCard>
 
-          {/* CalDAV */}
+          {/* Microsoft */}
           <IntegrationCard
-            icon={<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>}
-            title="Calendar Sync"
-            subtitle="CalDAV — Google, Apple, Outlook"
-            tag="CalDAV"
-            configured={status.caldavConfigured}
-            open={caldavOpen}
-            onToggle={() => setCalDAVOpen(o => !o)}
-            accentColor="#a78bfa"
+            icon={
+              <svg width="19" height="19" viewBox="0 0 24 24" fill="none">
+                <rect x="1" y="1" width="10" height="10" fill="#F25022"/>
+                <rect x="13" y="1" width="10" height="10" fill="#7FBA00"/>
+                <rect x="1" y="13" width="10" height="10" fill="#00A4EF"/>
+                <rect x="13" y="13" width="10" height="10" fill="#FFB900"/>
+              </svg>
+            }
+            title="Microsoft Calendar & Outlook"
+            subtitle="OAuth 2.0 — sign in with your Microsoft account"
+            tag="OAuth"
+            configured={status?.microsoftConfigured ?? false}
+            open={microsoftOpen}
+            onToggle={() => setMicrosoftOpen(o => !o)}
+            accentColor="#00A4EF"
           >
-            <div className="flex flex-col" style={{ gap: '20px' }}>
-              <Field label="CalDAV URL" value={caldavForm.url} onChange={v => setCalDAVForm(f => ({ ...f, url: v }))} placeholder="https://caldav.icloud.com/" />
-              <div className="grid grid-cols-2" style={{ gap: '24px' }}>
-                <Field label="Username" value={caldavForm.username} onChange={v => setCalDAVForm(f => ({ ...f, username: v }))} placeholder="you@icloud.com" />
-                <Field label="Password / App Password" value={caldavForm.password} onChange={v => setCalDAVForm(f => ({ ...f, password: v }))} placeholder="••••••••" type="password" />
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}>
-                {[
-                  ['Google', 'calendar/dav/[email]/events/'],
-                  ['Apple', 'caldav.icloud.com/'],
-                  ['Outlook', 'office365.com/caldav/v1/[email]/'],
-                ].map(([name, url]) => (
-                  <div key={name} style={{ background: 'rgba(167,139,250,0.05)', border: '1px solid rgba(167,139,250,0.1)', borderRadius: '8px', padding: '10px 12px' }}>
-                    <p style={{ fontSize: '9px', fontFamily: 'monospace', fontWeight: 700, color: 'rgba(167,139,250,0.7)', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: '4px' }}>{name}</p>
-                    <p style={{ fontSize: '9px', fontFamily: 'monospace', color: 'rgba(100,116,139,0.5)', wordBreak: 'break-all', lineHeight: 1.5 }}>{url}</p>
-                  </div>
-                ))}
-              </div>
-              <SaveBtn onClick={saveCalDAV} disabled={saving || !caldavForm.url || !caldavForm.username || !caldavForm.password} />
+            <div className="flex flex-col" style={{ gap: '16px' }}>
+              {setup && !setup.microsoft_ready && (
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', background: 'rgba(251,191,36,0.06)', border: '1px solid rgba(251,191,36,0.2)', borderRadius: '10px', padding: '12px 16px' }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" strokeWidth="2" strokeLinecap="round" style={{ marginTop: '1px', flexShrink: 0 }}><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                  <p style={{ fontSize: '11px', fontFamily: 'monospace', color: '#fbbf24', lineHeight: 1.6 }}>
+                    Add <strong>MICROSOFT_CLIENT_ID</strong> and <strong>MICROSOFT_CLIENT_SECRET</strong> to your .env file to enable Microsoft sign-in.
+                  </p>
+                </div>
+              )}
+
+              {status?.microsoftConfigured ? (
+                <div className="flex items-center justify-between" style={{ marginTop: '4px' }}>
+                  <span style={{ fontSize: '12px', fontFamily: 'monospace', color: 'rgba(100,116,139,0.7)' }}>Your Microsoft account is linked.</span>
+                  <button
+                    onClick={disconnectMicrosoft}
+                    style={{
+                      background: 'transparent',
+                      border: '1px solid rgba(248,113,113,0.25)',
+                      color: '#f87171',
+                      fontFamily: 'monospace',
+                      fontSize: '10px',
+                      fontWeight: 700,
+                      letterSpacing: '0.12em',
+                      textTransform: 'uppercase',
+                      padding: '6px 14px',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      transition: 'all 0.15s',
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.background = 'rgba(248,113,113,0.08)'; e.currentTarget.style.color = '#fca5a5' }}
+                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#f87171' }}
+                  >
+                    Disconnect
+                  </button>
+                </div>
+              ) : (
+                <div className="flex justify-end" style={{ marginTop: '4px' }}>
+                  <button
+                    onClick={() => { connectMicrosoft(); startPolling() }}
+                    disabled={loading || !setup?.microsoft_ready}
+                    style={{
+                      background: loading || !setup?.microsoft_ready ? 'transparent' : 'rgba(0,164,239,0.1)',
+                      border: `1px solid ${loading || !setup?.microsoft_ready ? 'rgba(255,255,255,0.06)' : 'rgba(0,164,239,0.35)'}`,
+                      color: loading || !setup?.microsoft_ready ? 'rgba(255,255,255,0.15)' : '#00A4EF',
+                      fontFamily: 'monospace',
+                      fontSize: '10px',
+                      fontWeight: 700,
+                      letterSpacing: '0.15em',
+                      textTransform: 'uppercase',
+                      padding: '9px 22px',
+                      borderRadius: '8px',
+                      cursor: loading || !setup?.microsoft_ready ? 'not-allowed' : 'pointer',
+                      transition: 'all 0.15s',
+                    }}
+                    onMouseEnter={e => { if (!loading && setup?.microsoft_ready) { e.currentTarget.style.background = 'rgba(0,164,239,0.18)'; e.currentTarget.style.boxShadow = '0 0 16px rgba(0,164,239,0.15)' } }}
+                    onMouseLeave={e => { e.currentTarget.style.background = loading || !setup?.microsoft_ready ? 'transparent' : 'rgba(0,164,239,0.1)'; e.currentTarget.style.boxShadow = 'none' }}
+                  >
+                    {loading ? 'Opening browser…' : 'Connect Microsoft'}
+                  </button>
+                </div>
+              )}
             </div>
           </IntegrationCard>
 
@@ -437,7 +549,7 @@ export default function GlobalIntegrationsPanel() {
             title="LinkedIn Scraping"
             subtitle="Auto-discover jobs + enable hiring manager outreach"
             tag="OAuth"
-            configured={status.linkedinConfigured}
+            configured={status?.linkedinConfigured ?? false}
             open={linkedinOpen}
             onToggle={() => setLinkedInOpen(o => !o)}
             accentColor="#38bdf8"
