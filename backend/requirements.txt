@@ -38,3 +38,6 @@ faster-whisper>=1.0.3
 semble>=0.1.8
 resemblyzer>=0.1.1.dev0
 spacy>=3.7
+google-auth-oauthlib>=1.2.0
+google-api-python-client>=2.130.0
+msal>=1.28.0
