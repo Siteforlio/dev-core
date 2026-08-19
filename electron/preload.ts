@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   splashDone: () => ipcRenderer.invoke('app:splash-done'),
   openPath:           (p: string) => ipcRenderer.invoke('shell:openPath', p),
+  openExternal:       (url: string) => ipcRenderer.invoke('shell:openExternal', url),
   showItemInFolder:   (p: string) => ipcRenderer.invoke('shell:showItemInFolder', p),
   devcore: {
     getStatus:            () => ipcRenderer.invoke('devcore:session:status'),

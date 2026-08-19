@@ -752,6 +752,9 @@ function _startDeviceWatcher() {
 
 // ── Shell helpers — open files / folders in the OS ───────────────────────────
 ipcMain.handle('shell:openPath', (_e, filePath: string) => shell.openPath(filePath))
+ipcMain.handle('shell:openExternal', (_event, url: string) => {
+  shell.openExternal(url)
+})
 ipcMain.handle('shell:showItemInFolder', (_e, filePath: string) => {
   shell.showItemInFolder(filePath)
 })
