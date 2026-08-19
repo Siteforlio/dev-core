@@ -21,6 +21,13 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     environment: str = "development"
     job_hunter_encryption_key: str | None = None  # Fernet 32-byte URL-safe base64 key
+    # Google OAuth — https://console.cloud.google.com/
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    # Microsoft OAuth — https://portal.azure.com/
+    microsoft_client_id: str = ""
+    microsoft_client_secret: str = ""
+    microsoft_tenant_id: str = "common"   # "common" = personal + org accounts
     playwright_max_concurrency: int = 4
     judge0_api_key: str = ""
     serp_api_key: str = ""
