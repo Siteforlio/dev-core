@@ -1,53 +1,122 @@
-import { useAuthStore } from '../store/authStore'
+import { useState, useCallback } from 'react'
 import { apiFetch } from '../lib/apiFetch'
 
-const BASE = '/api/v1'
+export interface IntegrationStatus {
+  googleConfigured: boolean
+  microsoftConfigured: boolean
+  linkedinConfigured: boolean
+}
+
+export interface OAuthSetup {
+  google_ready: boolean
+  microsoft_ready: boolean
+}
 
 export function useIntegrations() {
-  const token = useAuthStore((s) => s.accessToken)
-  const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
+  const [status, setStatus] = useState<IntegrationStatus | null>(null)
+  const [setup, setSetup] = useState<OAuthSetup | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-  async function getStatus(): Promise<{ emailConfigured: boolean; caldavConfigured: boolean; linkedinConfigured: boolean }> {
-    const res = await apiFetch(`${BASE}/integrations/status`, { headers })
-    const { data } = await res.json()
-    return {
-      emailConfigured: data.email_configured,
-      caldavConfigured: data.caldav_configured,
-      linkedinConfigured: data.linkedin_configured,
+  const getStatus = useCallback(async (): Promise<IntegrationStatus> => {
+    const res = await apiFetch('/api/v1/integrations/status')
+    const json = await res.json()
+    const s: IntegrationStatus = {
+      googleConfigured: json.data.google_configured,
+      microsoftConfigured: json.data.microsoft_configured,
+      linkedinConfigured: json.data.linkedin_configured,
     }
-  }
+    setStatus(s)
+    return s
+  }, [])
 
-  async function testEmail(creds: { host: string; port: number; username: string; password: string; smtp_host?: string; smtp_port?: number }): Promise<void> {
-    const res = await apiFetch(`${BASE}/integrations/email/test`, { method: 'POST', headers, body: JSON.stringify(creds) })
-    if (!res.ok) { const b = await res.json().catch(() => null); throw new Error(b?.detail ?? `HTTP ${res.status}`) }
-  }
+  const getSetup = useCallback(async (): Promise<OAuthSetup> => {
+    const res = await apiFetch('/api/v1/integrations/oauth/setup')
+    const json = await res.json()
+    setSetup(json.data)
+    return json.data
+  }, [])
 
-  async function setEmail(creds: { host: string; port: number; username: string; password: string; smtp_host?: string; smtp_port?: number }): Promise<void> {
-    const res = await apiFetch(`${BASE}/integrations/email`, { method: 'PUT', headers, body: JSON.stringify(creds) })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  }
+  const connectGoogle = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await apiFetch('/api/v1/integrations/oauth/google/url')
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.detail || 'Failed to get Google auth URL')
+      await (window as any).electronAPI?.openExternal(json.data.url)
+    } catch (e: any) {
+      setError(e.message)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
 
-  async function testCalDAV(creds: { url: string; username: string; password: string }): Promise<string> {
-    const res = await apiFetch(`${BASE}/integrations/caldav/test`, { method: 'POST', headers, body: JSON.stringify(creds) })
-    if (!res.ok) { const b = await res.json().catch(() => null); throw new Error(b?.detail ?? `HTTP ${res.status}`) }
-    const { data } = await res.json()
-    return data.message as string
-  }
+  const connectMicrosoft = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await apiFetch('/api/v1/integrations/oauth/microsoft/url')
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.detail || 'Failed to get Microsoft auth URL')
+      await (window as any).electronAPI?.openExternal(json.data.url)
+    } catch (e: any) {
+      setError(e.message)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
 
-  async function setCalDAV(creds: { url: string; username: string; password: string }): Promise<void> {
-    const res = await apiFetch(`${BASE}/integrations/caldav`, { method: 'PUT', headers, body: JSON.stringify(creds) })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  }
+  const disconnectGoogle = useCallback(async () => {
+    await apiFetch('/api/v1/integrations/oauth/google', { method: 'DELETE' })
+    await getStatus()
+  }, [getStatus])
 
-  async function testLinkedIn(creds: { email?: string; password?: string; session_cookie?: string }): Promise<void> {
-    const res = await apiFetch(`${BASE}/integrations/linkedin/test`, { method: 'POST', headers, body: JSON.stringify(creds) })
-    if (!res.ok) { const b = await res.json().catch(() => null); throw new Error(b?.detail ?? `HTTP ${res.status}`) }
-  }
+  const disconnectMicrosoft = useCallback(async () => {
+    await apiFetch('/api/v1/integrations/oauth/microsoft', { method: 'DELETE' })
+    await getStatus()
+  }, [getStatus])
 
-  async function setLinkedIn(creds: { email?: string; password?: string; session_cookie?: string }): Promise<void> {
-    const res = await apiFetch(`${BASE}/integrations/linkedin`, { method: 'PUT', headers, body: JSON.stringify(creds) })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  }
+  const setLinkedIn = useCallback(async (body: Record<string, string>) => {
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await apiFetch('/api/v1/integrations/linkedin', {
+        method: 'PUT',
+        body: JSON.stringify(body),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.detail || 'Failed to save LinkedIn credentials')
+      await getStatus()
+    } catch (e: any) {
+      setError(e.message)
+    } finally {
+      setLoading(false)
+    }
+  }, [getStatus])
 
-  return { getStatus, testEmail, setEmail, testCalDAV, setCalDAV, testLinkedIn, setLinkedIn }
+  const testLinkedIn = useCallback(async (body: Record<string, string>) => {
+    const res = await apiFetch('/api/v1/integrations/linkedin/test', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    })
+    const json = await res.json()
+    if (!res.ok) throw new Error(json.detail || 'LinkedIn test failed')
+    return json.data
+  }, [])
+
+  return {
+    status,
+    setup,
+    loading,
+    error,
+    getStatus,
+    getSetup,
+    connectGoogle,
+    connectMicrosoft,
+    disconnectGoogle,
+    disconnectMicrosoft,
+    setLinkedIn,
+    testLinkedIn,
+  }
 }
