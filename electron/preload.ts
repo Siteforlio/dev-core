@@ -83,6 +83,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.on('devcore:session:title', handler)
       return () => ipcRenderer.removeListener('devcore:session:title', handler)
     },
+    onSessionStarted: (cb: (p: { sessionId: string; startedAt: number }) => void): (() => void) => {
+      const handler = (_e: unknown, p: { sessionId: string; startedAt: number }) => cb(p)
+      ipcRenderer.on('devcore:session:started', handler)
+      return () => ipcRenderer.removeListener('devcore:session:started', handler)
+    },
+    onSessionEnded: (cb: () => void): (() => void) => {
+      const handler = () => cb()
+      ipcRenderer.on('devcore:session:ended', handler)
+      return () => ipcRenderer.removeListener('devcore:session:ended', handler)
+    },
     onDevicesChanged: (cb: (p: { mics: { id: number; name: string }[]; systems: { id: number; name: string }[] }) => void): (() => void) => {
       const handler = (_e: unknown, p: { mics: { id: number; name: string }[]; systems: { id: number; name: string }[] }) => cb(p)
       ipcRenderer.on('devcore:devices:changed', handler)

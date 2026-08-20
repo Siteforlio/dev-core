@@ -58,6 +58,7 @@ from app.api.v1.job_hunter.ws import router as jh_ws_router
 from app.api.v1.job_hunter.ext import router as jh_ext_router
 from app.api.v1.cluely.ws import router as cluely_ws_router
 from app.api.v1.cluely.sessions import router as cluely_sessions_router
+from app.api.v1.api_keys import router as api_keys_router
 from app.api.v1.progress import router as progress_router
 from app.api.v1.sim_sessions import router as sim_sessions_router
 from app.api.v1.meeting_debrief import router as meeting_debrief_router
@@ -86,6 +87,7 @@ async def lifespan(app: FastAPI):
         import app.models.pg.community     # noqa: F401
         import app.models.pg.cluely_session  # noqa: F401
         import app.models.pg.graph          # noqa: F401
+        import app.models.pg.user_settings  # noqa: F401
         from app.models.pg.base import Base
         from app.core.database import engine
         async with engine.begin() as conn:
@@ -136,6 +138,7 @@ app.include_router(jh_ws_router, prefix="/api/v1")
 app.include_router(jh_ext_router, prefix="/api/v1")
 app.include_router(cluely_ws_router,      prefix="/api/v1")
 app.include_router(cluely_sessions_router, prefix="/api/v1")
+app.include_router(api_keys_router, prefix="/api/v1")
 app.include_router(progress_router, prefix="/api/v1")
 app.include_router(sim_sessions_router, prefix="/api/v1")
 app.include_router(meeting_debrief_router, prefix="/api/v1")

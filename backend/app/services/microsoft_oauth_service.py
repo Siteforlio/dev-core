@@ -11,7 +11,7 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-SCOPES = ["Calendars.Read", "Mail.Send", "offline_access", "User.Read"]
+SCOPES = ["Calendars.Read", "Mail.Send", "User.Read"]
 
 _pending_states: dict[str, str] = {}
 

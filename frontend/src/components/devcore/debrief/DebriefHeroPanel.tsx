@@ -1,3 +1,6 @@
+import { useState, useEffect } from 'react'
+import { useOverlayStore } from '../../../store/overlayStore'
+
 interface Props {
   heroKicker: string
   meetingTitle: string
@@ -9,6 +12,23 @@ interface Props {
   meetingStarted: boolean
   onStartSession: () => void
   isLive?: boolean  // realtime live badge from now tick
+}
+
+function useElapsedTimer(startedAt: number | null): string {
+  const [elapsed, setElapsed] = useState(0)
+  useEffect(() => {
+    if (!startedAt) { setElapsed(0); return }
+    const tick = () => setElapsed(Math.floor((Date.now() - startedAt) / 1000))
+    tick()
+    const id = setInterval(tick, 1000)
+    return () => clearInterval(id)
+  }, [startedAt])
+  const h = Math.floor(elapsed / 3600)
+  const m = Math.floor((elapsed % 3600) / 60)
+  const s = elapsed % 60
+  return h > 0
+    ? `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+    : `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
 }
 
 export default function DebriefHeroPanel({
@@ -23,6 +43,12 @@ export default function DebriefHeroPanel({
   onStartSession,
   isLive,
 }: Props) {
+  const sessionId = useOverlayStore((s) => s.sessionId)
+  const sessionState = useOverlayStore((s) => s.state)
+  const sessionStartedAt = useOverlayStore((s) => s.sessionStartedAt)
+  const isSessionActive = !!sessionId
+  const isConnecting = isSessionActive && sessionState === 'idle'
+  const elapsedLabel = useElapsedTimer(isSessionActive && !isConnecting ? sessionStartedAt : null)
   return (
     <div style={{
       position: 'relative',
@@ -112,9 +138,35 @@ export default function DebriefHeroPanel({
           </div>
         </div>
 
-        {/* Right: timer (only when session is live) + action */}
+        {/* Right: elapsed counter (when active) or countdown + action */}
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '14px' }}>
-          {meetingStarted && (
+          {isSessionActive ? (
+            <div style={{ textAlign: 'center' }}>
+              <div style={{
+                fontSize: '10px',
+                fontWeight: 700,
+                letterSpacing: '0.12em',
+                textTransform: 'uppercase',
+                color: 'rgba(52,211,153,0.6)',
+                marginBottom: '4px',
+                fontFamily: 'monospace',
+              }}>
+                Live
+              </div>
+              <div style={{
+                fontFamily: "'Space Grotesk', monospace",
+                fontWeight: 700,
+                fontSize: 'clamp(34px,5vw,56px)',
+                lineHeight: 1,
+                letterSpacing: '-0.02em',
+                fontVariantNumeric: 'tabular-nums',
+                color: '#34d399',
+                textShadow: '0 0 30px rgba(52,211,153,0.3)',
+              }}>
+                {elapsedLabel}
+              </div>
+            </div>
+          ) : meetingStarted ? (
             <div style={{ textAlign: 'center' }}>
               <div style={{
                 fontSize: '10px',
@@ -140,11 +192,11 @@ export default function DebriefHeroPanel({
                 {countdownText}
               </div>
             </div>
-          )}
+          ) : null}
 
           <button
             onClick={onStartSession}
-            disabled={meetingStarted}
+            disabled={isSessionActive}
             style={{
               display: 'inline-flex',
               alignItems: 'center',
@@ -152,41 +204,49 @@ export default function DebriefHeroPanel({
               padding: '11px 22px',
               border: 'none',
               borderRadius: '10px',
-              background: meetingStarted
-                ? 'rgba(34,211,238,0.08)'
+              background: isConnecting
+                ? 'rgba(34,211,238,0.06)'
+                : isSessionActive
+                ? 'rgba(52,211,153,0.06)'
                 : 'linear-gradient(180deg, rgba(34,211,238,0.18), rgba(34,211,238,0.1))',
-              borderColor: meetingStarted ? 'rgba(34,211,238,0.1)' : 'rgba(34,211,238,0.35)',
+              borderColor: isConnecting ? 'rgba(34,211,238,0.2)' : isSessionActive ? 'rgba(52,211,153,0.15)' : 'rgba(34,211,238,0.35)',
               borderStyle: 'solid',
               borderWidth: '1px',
-              color: meetingStarted ? 'rgba(34,211,238,0.45)' : '#22d3ee',
+              color: isConnecting ? 'rgba(34,211,238,0.6)' : isSessionActive ? 'rgba(52,211,153,0.5)' : '#22d3ee',
               fontFamily: "'Space Grotesk', sans-serif",
               fontWeight: 700,
               fontSize: '13.5px',
-              cursor: meetingStarted ? 'default' : 'pointer',
+              cursor: isSessionActive ? 'not-allowed' : 'pointer',
               transition: 'all .18s ease',
               outline: 'none',
               letterSpacing: '0.02em',
             } as React.CSSProperties}
             onMouseEnter={e => {
-              if (!meetingStarted) {
+              if (!isSessionActive) {
                 e.currentTarget.style.background = 'linear-gradient(180deg, rgba(34,211,238,0.24), rgba(34,211,238,0.14))'
                 e.currentTarget.style.boxShadow = '0 0 20px rgba(34,211,238,0.15)'
               }
             }}
             onMouseLeave={e => {
-              if (!meetingStarted) {
+              if (!isSessionActive) {
                 e.currentTarget.style.background = 'linear-gradient(180deg, rgba(34,211,238,0.18), rgba(34,211,238,0.1))'
                 e.currentTarget.style.boxShadow = 'none'
               }
             }}
           >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
-              {meetingStarted
-                ? <path d="M8 6h3v12H8zM13 6h3v12h-3z" fill="currentColor"/>
-                : <path d="M7 5v14l12-7z" fill="currentColor"/>
-              }
-            </svg>
-            {meetingStarted ? 'Meeting live' : 'Start meeting'}
+            {isConnecting ? (
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ animation: 'spin 1s linear infinite' }}>
+                <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+              </svg>
+            ) : (
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
+                {isSessionActive
+                  ? <path d="M8 6h3v12H8zM13 6h3v12h-3z" fill="currentColor"/>
+                  : <path d="M7 5v14l12-7z" fill="currentColor"/>
+                }
+              </svg>
+            )}
+            {isConnecting ? 'Starting…' : isSessionActive ? 'Session active' : 'Start meeting'}
           </button>
         </div>
       </div>

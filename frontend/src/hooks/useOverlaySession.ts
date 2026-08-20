@@ -25,6 +25,14 @@ export function useOverlaySession() {
     })
 
     // onSuggestion and onStatus are handled in SuggestionCard to drive the chat UI
+    const removeSessionStarted = api.onSessionStarted?.((p: { sessionId: string; startedAt: number }) => {
+      store.setSessionId(p.sessionId)
+      store.setSessionStartedAt(p.startedAt)
+    })
+    const removeSessionEnded = api.onSessionEnded?.(() => {
+      store.setSessionId(null)
+      store.setSessionStartedAt(null)
+    })
     const removeSessionMode = api.onSessionMode?.((p: { assessmentMode: string | null }) => {
       store.setAssessmentMode(p.assessmentMode as any)
     })
@@ -51,6 +59,8 @@ export function useOverlaySession() {
       store.setAgentSolution(p)
     })
     return () => {
+      removeSessionStarted?.()
+      removeSessionEnded?.()
       removeSessionMode?.()
       removeTranscript?.()
       removeTranscriptWord?.()

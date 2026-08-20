@@ -358,6 +358,7 @@ export function SuggestionCard() {
       if (!s.connected && cur !== 'idle') {
         useOverlayStore.getState().setState('idle')
         useOverlayStore.getState().setSessionId(null)
+        useOverlayStore.getState().setSessionStartedAt(null)
       }
     }
     sync()
@@ -465,6 +466,7 @@ export function SuggestionCard() {
       if (lastSessionRef.current) {
         const prev = lastSessionRef.current
         setSessionId(prev.id)
+        useOverlayStore.getState().setSessionStartedAt(Date.now())
         setSessionTitle(prev.title)
         await devcore.startSession({
           sessionId: prev.id,
@@ -474,6 +476,7 @@ export function SuggestionCard() {
       } else {
         const id = crypto.randomUUID()
         setSessionId(id)
+        useOverlayStore.getState().setSessionStartedAt(Date.now())
         setSessionTitle('Starting…')
         setMessages([])
         useOverlayStore.getState().setTranscript([])
@@ -535,6 +538,7 @@ export function SuggestionCard() {
     if (sid) lastSessionRef.current = { id: sid, title, role: '', company: '' }
     api()?.endSession?.()
     setSessionId(null)
+    useOverlayStore.getState().setSessionStartedAt(null)
     setOutcome(null)
     useOverlayStore.getState().setState('idle')
     // messages and transcript intentionally kept in state

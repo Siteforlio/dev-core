@@ -72,22 +72,20 @@ class OverlayService:
         self._recent_texts: dict[str, list[tuple[float, str]]] = {}
         self._DEDUP_WINDOW = 4.0
         self._DEDUP_RATIO  = 0.75
-        # BERT classifier — injectable for testing
+        # BERT classifier and diarizer are lazy-initialized on first use to avoid
+        # loading weights (~80-500 MB) at session startup.
         if hasattr(audio_service, '_bert_override'):
             # test injection path
             self._bert = audio_service._bert_override  # type: ignore
             self._use_bert = self._bert is not None
+            self._bert_checked = True
         else:
-            try:
-                self._bert = BertClassifier()
-                self._use_bert = True
-            except BertClassifierError:
-                logger.warning("BERT unavailable — using silence detection fallback")
-                self._use_bert = False
-                self._bert = None
+            self._bert: 'BertClassifier | None' = None
+            self._use_bert: bool = False
+            self._bert_checked: bool = False  # False = not yet attempted
 
-        # One diarizer per service instance; reset() called per session.
-        self._diarizer = SpeakerDiarizer()
+        # Diarizer: None until first audio frame
+        self._diarizer: 'SpeakerDiarizer | None' = None
 
     # ------------------------------------------------------------------
     # WebSocket entry point
@@ -127,6 +125,26 @@ class OverlayService:
             return
 
         logger.info("WS auth OK — waiting for session_start | user_id=%s", user_id)
+
+        # Guard: Deepgram is required for audio transcription.
+        # Check DB (user Settings) first, fall back to .env.
+        from app.core.database import AsyncSessionLocal
+        from app.core.config import get_api_key
+        async with AsyncSessionLocal() as _check_db:
+            _deepgram_key = await get_api_key(user_id, "deepgram_api_key", _check_db)
+        if not _deepgram_key:
+            await _safe_send(ws, {
+                "type": "error",
+                "code": "DEEPGRAM_MISSING",
+                "message": (
+                    "Deepgram API key is not set. DevCore needs it to transcribe your audio. "
+                    "Go to Settings → API Keys and add your Deepgram key. "
+                    "A fully local transcription option is planned for a future release so you won't need any external API."
+                ),
+            })
+            await ws.close(code=4003)
+            return
+
         try:
             while True:
                 msg = await ws.receive()
@@ -315,7 +333,8 @@ class OverlayService:
         outcome_svc = OutcomeService()
         ctx["_outcome_svc"] = outcome_svc
 
-        self._diarizer.reset()
+        if self._diarizer is not None:
+            self._diarizer.reset()
 
         ctx_mgr = ContextManager(session_id=sid)
         if not await ctx_mgr.session_exists():
@@ -495,9 +514,14 @@ class OverlayService:
             if stream == "mic":
                 speaker = "user"
                 # Feed mic frames into the diarizer to build the user's voice profile.
+                # Lazy-init: weights load on first audio frame, not at session startup.
+                if self._diarizer is None:
+                    self._diarizer = SpeakerDiarizer()
                 self._diarizer.enroll_user(pcm)
             else:
                 # System audio: use voice embeddings to detect echo/bleed vs interviewer.
+                if self._diarizer is None:
+                    self._diarizer = SpeakerDiarizer()
                 speaker = self._diarizer.classify_system_audio(pcm)
 
             t_transcribe = time.monotonic()
@@ -569,6 +593,16 @@ class OverlayService:
         self, ws, ctx_mgr, rag, session_ctx: dict, question_text: str
     ):
         now = time.monotonic()
+        # Lazy-init BERT on first call (loads weights once, then reused)
+        if not self._bert_checked:
+            try:
+                self._bert = BertClassifier()
+                self._use_bert = True
+            except BertClassifierError:
+                logger.warning("BERT unavailable — using silence detection fallback")
+                self._use_bert = False
+                self._bert = None
+            self._bert_checked = True
         if not self._use_bert or self._bert is None:
             return
         if now - self._last_trigger <= BERT_COOLDOWN:

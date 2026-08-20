@@ -258,7 +258,12 @@ async def get_calendar_events(
 
     # Sort merged events by start time
     all_events.sort(key=lambda e: e.get("dtstart_iso", ""))
-    return {"data": {"events": all_events, "configured": configured}, "error": None}
+    return {"data": {
+        "events": all_events,
+        "configured": configured,
+        "google_configured": bool(row.google_oauth_encrypted),
+        "microsoft_configured": bool(row.microsoft_oauth_encrypted),
+    }, "error": None}
 
 
 # ─── Email Send (Google preferred, Microsoft fallback) ────────────────────────

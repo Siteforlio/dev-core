@@ -246,7 +246,7 @@ export function SessionSetup({ onClose, onSessionStarted }: { onClose: () => voi
           )}
           {tab === 'calendar' && (
             <div className="flex items-center justify-center py-6">
-              <p className="font-mono text-[12px] text-white/40">Connect a CalDAV calendar in Settings to see upcoming events.</p>
+              <p className="font-mono text-[12px] text-white/40">Connect Google or Microsoft in Settings to see upcoming events.</p>
             </div>
           )}
 

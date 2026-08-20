@@ -1,13 +1,28 @@
+import os
 from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Resolve .env relative to backend/ (two levels up from this file: app/core/config.py → backend/app/core → backend/app → backend)
 _ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
+# Use the Electron userData directory for the database if available (passed by
+# Electron in both dev and packaged modes via DEVCORE_USER_DATA env var).
+# This guarantees the database always lives at the same absolute path regardless
+# of what working directory the backend process started from.
+_user_data = os.environ.get('DEVCORE_USER_DATA', '')
+if _user_data:
+    os.makedirs(_user_data, exist_ok=True)  # ensure dir exists before SQLite creates the file
+_default_db_url = (
+    f"sqlite+aiosqlite:///{os.path.join(_user_data, 'devcore.db')}"
+    if _user_data
+    else "sqlite+aiosqlite:///./devcore.db"
+)
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=str(_ENV_FILE), env_file_encoding="utf-8", extra="ignore")
 
-    database_url: str = "sqlite+aiosqlite:///./devcore.db"
+    database_url: str = _default_db_url
     redis_url: str = ""
     jwt_secret: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"
@@ -44,3 +59,18 @@ class Settings(BaseSettings):
     kokoro_models_dir: str = "backend/models/kokoro"
 
 settings = Settings()
+
+
+async def get_api_key(user_id: str, key_name: str, db) -> str:
+    """Get an API key: DB (per-user) first, then .env fallback.
+
+    This is the single entry point all services should use to obtain
+    provider API keys so that user-configured keys take precedence.
+    """
+    from app.services.api_keys_service import ApiKeysService
+    service = ApiKeysService(db)
+    value = await service.get_decrypted(user_id, key_name)
+    if value:
+        return value
+    # Fallback to .env / environment variable
+    return getattr(settings, key_name, "") or ""

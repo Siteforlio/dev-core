@@ -80,7 +80,15 @@ async function startBackend(): Promise<void> {
       _backendProcess = spawn(
         PYTHON_EXE,
         ['-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', String(_backendPort), '--no-access-log'],
-        { cwd: path.join(PROJECT_ROOT, 'backend'), stdio: ['ignore', 'pipe', 'pipe'] }
+        {
+          cwd: path.join(PROJECT_ROOT, 'backend'),
+          env: {
+            ...process.env,
+            DEVCORE_USER_DATA: app.getPath('userData'),
+            DEVCORE_PORT: String(_backendPort),
+          },
+          stdio: ['ignore', 'pipe', 'pipe'],
+        }
       )
     }
 
@@ -180,10 +188,12 @@ function createWindow() {
     },
   })
 
+  _mainWindow = win
   win.once('ready-to-show', () => {
     win.show()
     win.webContents.openDevTools()  // TODO: remove after debugging
   })
+  win.on('closed', () => { _mainWindow = null })
 
   if (process.env.NODE_ENV === 'development') {
     win.loadURL('http://localhost:5173')
@@ -191,6 +201,9 @@ function createWindow() {
     win.loadFile(path.join(__dirname, '../frontend/dist/index.html'))
   }
 }
+
+let _mainWindow: BrowserWindow | null = null
+function getMainWindow() { return _mainWindow }
 
 let _lastToken: string = ''
 let _lastRefreshToken: string = ''
@@ -470,13 +483,28 @@ ipcMain.handle('devcore:session:start', async (_e, payload) => {
       req.end()
     })
     startAudioCapture(BACKEND_WS(), token, audioSource, sessionId, context, micDeviceId, sysDeviceId)
+    // Hide main window so it doesn't appear in screen shares or taskbar
+    const mainWin = getMainWindow()
+    if (mainWin && !mainWin.isDestroyed()) {
+      mainWin.setSkipTaskbar(true)
+      mainWin.hide()
+    }
     // Forward assessment mode to the overlay window so its store stays in sync
     const overlayWin = getOverlayWindow()
     if (overlayWin && !overlayWin.isDestroyed()) {
+      // Auto-show overlay if it was hidden
+      if (!overlayWin.isVisible()) overlayWin.show()
       overlayWin.webContents.send('devcore:session:mode', {
         assessmentMode: payload.context?.assessmentMode ?? null,
       })
     }
+    // Notify ALL windows (including overlay) so every store reflects the active session
+    const startedAt = Date.now()
+    BrowserWindow.getAllWindows().forEach(w => {
+      if (!w.isDestroyed()) {
+        w.webContents.send('devcore:session:started', { sessionId, startedAt })
+      }
+    })
   } catch (err) {
     console.error('[devcore] session:start failed:', err)
     throw err  // surface to renderer so handleStart can catch and log it
@@ -501,7 +529,17 @@ ipcMain.handle('devcore:session:resume', async () => {
 
 ipcMain.handle('devcore:session:end', async () => {
   stopAudioCapture()
-  // Clear assessment mode in the overlay
+  // Restore main window
+  const mainWin = getMainWindow()
+  if (mainWin && !mainWin.isDestroyed()) {
+    mainWin.setSkipTaskbar(false)
+    mainWin.show()
+    mainWin.focus()
+  }
+  // Notify ALL windows that the session ended so every store clears
+  BrowserWindow.getAllWindows().forEach(w => {
+    if (!w.isDestroyed()) w.webContents.send('devcore:session:ended')
+  })
   const overlayWin = getOverlayWindow()
   if (overlayWin && !overlayWin.isDestroyed()) {
     overlayWin.webContents.send('devcore:session:mode', { assessmentMode: null })
@@ -807,15 +845,17 @@ app.whenReady().then(async () => {
     webPreferences: { contextIsolation: true },
   })
   splash.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`
+    <html style="margin:0;padding:0;overflow:hidden;">
     <body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;
       background:rgba(2,8,16,0.95);border-radius:12px;font-family:system-ui;color:#e2e8f0;flex-direction:column;gap:16px;
-      border:1px solid rgba(59,130,246,0.2);">
+      border:1px solid rgba(59,130,246,0.2);overflow:hidden;">
       <div style="width:32px;height:32px;border:3px solid rgba(59,130,246,0.3);border-top-color:#3b82f6;
         border-radius:50%;animation:spin 1s linear infinite;"></div>
-      <p style="font-size:14px;font-weight:500;">Starting Developer Core...</p>
-      <p id="status" style="font-size:11px;color:#64748b;">Loading backend services</p>
-      <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
+      <p style="font-size:14px;font-weight:500;margin:0;">Starting Developer Core...</p>
+      <p id="status" style="font-size:11px;color:#64748b;margin:0;">Loading backend services</p>
+      <style>@keyframes spin{to{transform:rotate(360deg)}}*{overflow:hidden;}</style>
     </body>
+    </html>
   `)}`)
 
   // Start backend — splash stays visible while it loads

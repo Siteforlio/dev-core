@@ -5,6 +5,7 @@ export interface AudioDevice { id: number; name: string }
 
 interface OverlayStore {
   sessionId: string | null
+  sessionStartedAt: number | null   // Date.now() when session became active
   sessionTitle: string
   state: OverlayState
   suggestion: string
@@ -27,6 +28,7 @@ interface OverlayStore {
   readingMode: 'normal' | 'narrow' | 'large' | 'teleprompter'
 
   setSessionId:      (id: string | null) => void
+  setSessionStartedAt: (ts: number | null) => void
   setSessionTitle:   (title: string) => void
   setState:          (s: OverlayState) => void
   appendSuggestion:  (delta: string) => void
@@ -52,6 +54,7 @@ interface OverlayStore {
 
 export const useOverlayStore = create<OverlayStore>((set) => ({
   sessionId: null,
+  sessionStartedAt: null,
   sessionTitle: 'Untitled',
   state: 'idle',
   suggestion: '',
@@ -72,6 +75,7 @@ export const useOverlayStore = create<OverlayStore>((set) => ({
   readingMode: 'normal',
 
   setSessionId:      (id)   => set({ sessionId: id }),
+  setSessionStartedAt: (ts) => set({ sessionStartedAt: ts }),
   setSessionTitle:   (title)=> set({ sessionTitle: title }),
   setState:          (s)    => set({ state: s }),
   appendSuggestion:  (d)    => set((st) => ({ suggestion: st.suggestion + d })),

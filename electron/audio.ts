@@ -343,8 +343,11 @@ function _openWebSocket(
 
   localWs.on('close', (code: number) => {
     console.log(`[devcore-audio] WS closed code=${code}`)
-    const win = getOverlayWindow()
-    win?.webContents.send('devcore:error', { code: `WS_CLOSED_${code}`, message: `WebSocket closed with code ${code}` })
+    // 1000 = normal closure, 4001 = auth — don't surface these as errors to the user
+    if (code !== 1000 && code !== 4001) {
+      const win = getOverlayWindow()
+      win?.webContents.send('devcore:error', { code: `WS_CLOSED_${code}`, message: `WebSocket closed with code ${code}` })
+    }
     // Only act if this is still the active socket (guard against stale close events)
     if (ws === localWs) ws = null
     // 1000 = normal closure (user called endSession/pause), 4001 = auth failure — don't reconnect

@@ -101,8 +101,10 @@ function useAudioBars(active: boolean) {
 }
 
 export function ListeningPill() {
-  const { state, assessmentMode } = useOverlayStore()
+  const { state, assessmentMode, sessionId } = useOverlayStore()
 
+  // Connecting = session was started but WS hasn't confirmed listening yet
+  const isConnecting   = !!sessionId && state === 'idle'
   const isActive       = state !== 'idle'
   const isThinking     = state === 'thinking'
   const isReconnecting = state === 'reconnecting'
@@ -123,7 +125,8 @@ export function ListeningPill() {
   return (
     <div className={`flex items-center gap-3 px-6 py-2.5 rounded-full border shadow-lg ${style.pill}`}>
       <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
-        isReconnecting ? 'bg-yellow-400 shadow-[0_0_10px_rgba(250,204,21,0.8)]'
+        isConnecting   ? 'bg-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.8)]'
+        : isReconnecting ? 'bg-yellow-400 shadow-[0_0_10px_rgba(250,204,21,0.8)]'
         : isActive     ? 'bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.8)]'
                        : style.dot
       } animate-pulse`} />
@@ -133,7 +136,9 @@ export function ListeningPill() {
       </span>
       <div className="w-px h-5 bg-white/[0.07]" />
 
-      {isReconnecting ? (
+      {isConnecting ? (
+        <span className="font-mono text-[12px] text-cyan-400 tracking-wider">loading…</span>
+      ) : isReconnecting ? (
         <span className="font-mono text-[12px] text-yellow-400 tracking-wider">reconnecting…</span>
       ) : isThinking ? (
         <span className="font-mono text-[12px] text-amber-400 tracking-wider">thinking...</span>
@@ -152,7 +157,7 @@ export function ListeningPill() {
       )}
 
       <span className="font-mono text-[12px] text-white/40 tracking-wider ml-1">
-        {isReconnecting ? 'reconnecting...' : isActive ? 'listening...' : 'Ctrl+Shift+Enter to start'}
+        {isConnecting ? 'starting session…' : isReconnecting ? 'reconnecting...' : isActive ? 'listening...' : 'Ctrl+Shift+Enter to start'}
       </span>
     </div>
   )

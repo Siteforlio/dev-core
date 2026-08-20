@@ -139,11 +139,17 @@ export default function SplashScreen({ onDone }: Props) {
 
   /* ── Quote typewriter ── */
   const typeQuote = (qi: number) => {
+    // Clear any in-flight typing interval before starting a new quote
+    if (typeTimerRef.current) { clearInterval(typeTimerRef.current); typeTimerRef.current = null }
+
     const q = QUOTES[qi % QUOTES.length]
     setQModVisible(false)
     setQAuthorVisible(false)
     setQAuthorText('')
-    if (qTextRef.current) qTextRef.current.textContent = ''
+
+    const el = qTextRef.current
+    if (!el) return
+    el.textContent = ''
 
     setTimeout(() => {
       setQModLabel(q.mod.toUpperCase())
@@ -152,10 +158,6 @@ export default function SplashScreen({ onDone }: Props) {
       setQModVisible(true)
     }, 150)
 
-    const el = qTextRef.current
-    if (!el) return
-    el.textContent = ''
-
     /* cursor node */
     const cursor = document.createElement('span')
     cursor.style.cssText = 'display:inline-block;width:2px;height:1.1em;background:#22d3ee;margin-left:2px;vertical-align:middle;animation:q-blink 0.7s step-end infinite;box-shadow:0 0 8px rgba(34,211,238,0.8)'
@@ -163,11 +165,16 @@ export default function SplashScreen({ onDone }: Props) {
 
     let i = 0
     typeTimerRef.current = setInterval(() => {
+      // Guard: if cursor was removed from DOM (unmount / next quote race), stop
+      if (!cursor.parentNode) {
+        if (typeTimerRef.current) { clearInterval(typeTimerRef.current); typeTimerRef.current = null }
+        return
+      }
       if (i < q.text.length) {
         el.insertBefore(document.createTextNode(q.text[i]), cursor)
         i++
       } else {
-        if (typeTimerRef.current) clearInterval(typeTimerRef.current)
+        if (typeTimerRef.current) { clearInterval(typeTimerRef.current); typeTimerRef.current = null }
         cursor.remove()
         setTimeout(() => {
           setQAuthorText('\u2014 ' + q.author)

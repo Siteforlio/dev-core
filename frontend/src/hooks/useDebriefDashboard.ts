@@ -80,9 +80,8 @@ export function useDebriefDashboard(pendingSessionId: string | null = null) {
         { headers: authHeaders.current },
       )
       const { data } = await res.json()
-      if (!data.configured) return
-
       setCalendarConfigured(data.google_configured || data.microsoft_configured)
+      if (!data.configured) return
       const byDay: Record<number, AgendaItem[]> = {}
       const days = new Set<number>()
       for (const ev of data.events as AgendaItem[]) {

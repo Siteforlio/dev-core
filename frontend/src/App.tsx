@@ -9,6 +9,7 @@ import InterviewSession from './components/interview/InterviewSession'
 import PinUnlock from './components/PinUnlock'
 import { useSimulationStore } from './store/simulationStore'
 import SimulationSessionPage from './pages/SimulationSessionPage'
+import UpdateNotification from './components/UpdateNotification'
 
 type Screen = 'splash' | 'pin' | 'login' | 'register' | 'dashboard'
 
@@ -40,35 +41,47 @@ export default function App() {
     return <SplashScreen onDone={handleSplashDone} />
   }
 
+  // Update notification renders on all screens after splash
+  const updateBanner = <UpdateNotification />
+
   if (screen === 'pin') {
     return (
-      <PinUnlock
-        onUnlocked={handleLoggedIn}
-        onForgot={() => setScreen('login')}
-      />
+      <>
+        <PinUnlock
+          onUnlocked={handleLoggedIn}
+          onForgot={() => setScreen('login')}
+        />
+        {updateBanner}
+      </>
     )
   }
 
   if (screen === 'login') {
     return (
-      <Login
-        onGoToRegister={() => setScreen('register')}
-        onLoggedIn={handleLoggedIn}
-      />
+      <>
+        <Login
+          onGoToRegister={() => setScreen('register')}
+          onLoggedIn={handleLoggedIn}
+        />
+        {updateBanner}
+      </>
     )
   }
 
   if (screen === 'register') {
     return (
-      <Onboarding
-        onGoToLogin={() => setScreen('login')}
-        onRegistered={handleLoggedIn}
-      />
+      <>
+        <Onboarding
+          onGoToLogin={() => setScreen('login')}
+          onRegistered={handleLoggedIn}
+        />
+        {updateBanner}
+      </>
     )
   }
 
-  if (sessionId) return <InterviewSession token={token ?? ''} />
-  if (activeSimSessionId) return <SimulationSessionPage />
+  if (sessionId) return <><InterviewSession token={token ?? ''} />{updateBanner}</>
+  if (activeSimSessionId) return <><SimulationSessionPage />{updateBanner}</>
 
-  return <Dashboard />
+  return <><Dashboard />{updateBanner}</>
 }

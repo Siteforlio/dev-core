@@ -134,7 +134,11 @@ class SessionRepository:
         row = result.fetchone()
         duration = None
         if row and row.started_at:
-            delta = now - row.started_at
+            started = row.started_at
+            if isinstance(started, str):
+                from datetime import datetime
+                started = datetime.fromisoformat(started.replace("Z", "+00:00")).replace(tzinfo=None)
+            delta = now - started
             duration = int(delta.total_seconds())
 
         await self._db.execute(

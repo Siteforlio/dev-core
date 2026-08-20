@@ -489,6 +489,19 @@ export default function GlobalIntegrationsPanel() {
                 </div>
               )}
 
+              {(() => {
+                const backendPort = (window as any).electronAPI?.backendPort
+                const wrongPort = backendPort && backendPort !== 8000
+                return wrongPort ? (
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', background: 'rgba(248,113,113,0.06)', border: '1px solid rgba(248,113,113,0.18)', borderRadius: '10px', padding: '12px 16px' }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f87171" strokeWidth="2" strokeLinecap="round" style={{ marginTop: '1px', flexShrink: 0 }}><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                    <p style={{ fontSize: '11px', fontFamily: 'monospace', color: '#f87171', lineHeight: 1.6 }}>
+                      Backend is running on port <strong>{backendPort}</strong>, but the redirect URI registered in Azure uses port <strong>8000</strong>. Close any process using port 8000 and restart DevCore for Microsoft sign-in to work.
+                    </p>
+                  </div>
+                ) : null
+              })()}
+
               {status?.microsoftConfigured ? (
                 <div className="flex items-center justify-between" style={{ marginTop: '4px' }}>
                   <span style={{ fontSize: '12px', fontFamily: 'monospace', color: 'rgba(100,116,139,0.7)' }}>Your Microsoft account is linked.</span>
