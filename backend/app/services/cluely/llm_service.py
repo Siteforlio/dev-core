@@ -38,12 +38,23 @@ class LLMService:
             situation = "You are in a live conversation."
 
         base = (
-            f"{situation} "
-            "Speak entirely in the first person as the person being asked — "
-            "naturally, confidently, as if saying this aloud right now. "
-            "Never identify as an AI. Never say 'as an AI' or 'I can help with that'. "
-            "No bullet points, no preamble, no meta-commentary. "
-            "One flowing answer, 2-4 sentences unless the question demands more."
+            f"{situation}\n\n"
+            "You are ghostwriting what the user will say out loud. "
+            "They will read your words verbatim, so write EXACTLY how a composed, "
+            "senior professional actually talks in real conversation.\n\n"
+            "VOICE RULES:\n"
+            "- Plain, direct language. Short sentences. No filler, no fluff.\n"
+            "- Never fabricate context. If the conversation has no relevant history, "
+            "just answer the question directly. Do NOT invent scenarios, numbers, "
+            "or references that weren't mentioned.\n"
+            "- No exclamation marks. No 'Oh man', 'honestly', 'I mean', 'like', "
+            "'you know', 'actually', 'basically', 'literally'. No nervous qualifiers.\n"
+            "- No bullet points, no markdown, no headers. Just clean spoken prose.\n"
+            "- Sound like a calm, competent person — not enthusiastic, not casual, "
+            "not robotic. Think senior engineer in a meeting, not a chatbot.\n"
+            "- 2-4 sentences unless the question demands more.\n"
+            "- Never identify as an AI. Never say 'I can help with that' or 'great question'.\n"
+            "- First person only. No preamble. Start with the answer."
         )
 
         if resume_text:
@@ -150,7 +161,6 @@ class LLMService:
         if recent is None:
             recent = []
 
-        intent = await self._detect_intent(text, has_transcript=bool(recent or summary))
         ctx_block = self._build_context_block(facts, summary, recent, rag_chunks)
         system = self._build_system_prompt(context)
 
@@ -160,25 +170,24 @@ class LLMService:
             return
 
         if mode == "solve":
-            prompt = f"{ctx_block}\n\nThe candidate (you) types: \"{text}\"\nWrite a complete, clean solution in their voice."
-        elif intent == "contextual":
-            # User is engaging with the interview flow — respond as the candidate continuing the conversation
+            prompt = f"{ctx_block}\n\nQuestion: \"{text}\"\nWrite a complete, clean solution. Plain spoken prose, first person."
+        elif recent or summary:
+            # Has conversation context — continue naturally
             prompt = (
                 f"{ctx_block}\n\n"
-                f"The candidate adds: \"{text}\"\n"
-                "Continue speaking as the candidate, building naturally on the conversation above. "
-                "Stay in first person, conversational, 1-3 sentences."
+                f"User asks: \"{text}\"\n"
+                "Answer based on the conversation above. First person, 1-3 sentences. "
+                "Only reference prior context if directly relevant to this question."
             )
         else:
-            # Standalone question — answer it directly as the candidate
+            # No transcript context — answer directly
             prompt = (
                 f"{ctx_block}\n\n"
-                f"The candidate wants to answer this specific question: \"{text}\"\n"
-                "Respond directly and specifically to this question in first person, as the candidate speaking aloud. "
-                "Do not reference the conversation above unless directly relevant. 2-4 sentences."
+                f"Question: \"{text}\"\n"
+                "Answer directly. First person, 2-4 sentences."
             )
 
-        logger.info("[llm] manual_ask intent=%s mode=%s text=%r", intent, mode, text[:60])
+        logger.info("[llm] manual_ask mode=%s text=%r", mode, text[:60])
 
         try:
             async for delta in deepseek_stream(prompt, system=system, temperature=0.7, max_tokens=300):

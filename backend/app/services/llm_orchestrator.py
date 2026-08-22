@@ -56,6 +56,8 @@ class LLMOrchestrator:
         round_type: str,
         graph_context: dict | None,
         knowledge_context: dict | None = None,
+        jd_analysis: dict | None = None,
+        topics: list[str] | None = None,
     ) -> list[str]:
         context_note = (
             f"Known interview context: {json.dumps(graph_context)}"
@@ -67,10 +69,36 @@ class LLMOrchestrator:
             if knowledge_context
             else ""
         )
+
+        # Topics: explicit competency areas to test — highest priority signal
+        if topics:
+            topic_lines = "\n".join(f"- {t}" for t in topics)
+            topic_note = (
+                f"\nThis interview specifically tests these competency areas:\n{topic_lines}\n"
+                "Generate questions that directly target each area. "
+                "Spread the 5 questions across the listed topics — do not cluster on one."
+            )
+        else:
+            topic_note = ""
+
+        # JD analysis: use extracted skills and responsibilities if available
+        jd_note = ""
+        if jd_analysis:
+            skills = [str(s) for s in jd_analysis.get("required_skills", [])[:8]]
+            responsibilities = [str(r) for r in jd_analysis.get("key_responsibilities", [])[:4]]
+            red_flags = [str(f) for f in jd_analysis.get("red_flags_to_avoid", [])[:3]]
+            if skills:
+                jd_note += f"\nRequired skills from JD: {', '.join(skills)}"
+            if responsibilities:
+                jd_note += f"\nKey responsibilities: {', '.join(responsibilities)}"
+            if red_flags:
+                jd_note += f"\nProbe for these red flags: {', '.join(red_flags)}"
+
         prompt = (
             f"You are preparing interview questions for a {round_type} interview at {company} "
-            f"for a {role} position.\n{context_note}{knowledge_note}\n\n"
-            "Generate 5 interview questions appropriate for this round and seniority level. "
+            f"for a {role} position.\n{context_note}{knowledge_note}{topic_note}{jd_note}\n\n"
+            "Generate exactly 5 interview questions appropriate for this round and seniority level. "
+            "Make them specific — not generic filler. "
             'Return only a JSON array of question strings.\nExample: ["Question 1?", "Question 2?"]'
         )
         raw = await self._call_llm(prompt)
@@ -230,6 +258,8 @@ class LLMOrchestrator:
         jd_text: str | None = None,
         graph_context: dict | None = None,
         knowledge_context: dict | None = None,
+        jd_analysis: dict | None = None,
+        topics: list[str] | None = None,
     ) -> dict:
         """Generate a hands-on skills task for a skills_task round."""
         TECH_TRACKS = {"technology", "data_science", "product", "design"}
@@ -240,8 +270,21 @@ class LLMOrchestrator:
             context_parts.append(f"Company context: {json.dumps(graph_context)}")
         if knowledge_context:
             context_parts.append(f"Role knowledge: {json.dumps(knowledge_context)}")
-        if jd_text:
+        if jd_analysis:
+            skills = [str(s) for s in jd_analysis.get("required_skills", [])[:8]]
+            responsibilities = [str(r) for r in jd_analysis.get("key_responsibilities", [])[:4]]
+            if skills:
+                context_parts.append(f"Required skills: {', '.join(skills)}")
+            if responsibilities:
+                context_parts.append(f"Key responsibilities: {', '.join(responsibilities)}")
+        elif jd_text:
             context_parts.append(f"Job description excerpt: {jd_text[:600]}")
+        if topics:
+            topic_lines = ", ".join(topics)
+            context_parts.append(
+                f"The task must directly test these competency areas: {topic_lines}. "
+                "Design the task around the most important of these."
+            )
         context_note = "\n".join(context_parts) or "Use general industry knowledge."
 
         tech_note = (
@@ -376,6 +419,52 @@ class LLMOrchestrator:
             return "Can you tell me more about how you approached the most challenging part of this task?"
         return None
 
+    async def interpret_interview_context(self, context: str) -> dict:
+        """
+        Extract structured interview parameters from any free-form text —
+        job postings, interview invite emails, micro1/Greenhouse/Lever pages,
+        screenshots described in text, or anything else the user pastes.
+
+        Returns a dict matching InterpretResponse fields.
+        """
+        prompt = (
+            "You are parsing text that describes an interview scenario. "
+            "Extract structured parameters so we can simulate the interview.\n\n"
+            f"Input text:\n{context[:6000]}\n\n"
+            "Return JSON only — no other text. Use these exact field names and allowed values:\n\n"
+            "{\n"
+            '  "company": "Company name, or empty string if not mentioned",\n'
+            '  "role": "Job title / role, or empty string if not mentioned",\n'
+            '  "career_track": "One of: technology | finance_fintech | healthcare | business_consulting | sales_marketing | design_creative | legal_compliance | hr_people | education_training | operations_supply_chain",\n'
+            '  "level": "One of: entry_junior | mid_level | senior | lead_manager | director_vp_csuite",\n'
+            '  "interview_stage": "One of: phone_screen | hr_interview | hiring_manager | skills_domain | panel_interview | case_presentation | final_executive | offer_negotiation",\n'
+            '  "round_types": ["Array of: behavioral | hr_interview | hiring_manager | skills_domain | panel_interview | skills_task | leetcode | case_presentation | final_executive | offer_negotiation"],\n'
+            '  "topics": ["Array of specific competency areas or topics the interview will test — extract verbatim from the text if listed, otherwise infer from the role and stage"],\n'
+            '  "time_minutes": null or integer minutes if a duration is mentioned,\n'
+            '  "summary": "One sentence: what this interview is and what it tests"\n'
+            "}\n\n"
+            "Rules:\n"
+            "- topics should be specific (e.g. 'Backend Engineering', 'System Design', 'Production Reliability') not vague\n"
+            "- If the text lists competency areas, topic badges, or 'you will be interviewed on', extract them exactly\n"
+            "- career_track: default to technology unless clearly otherwise\n"
+            "- level: infer from seniority signals in the role title or description\n"
+            "- interview_stage: infer from context (e.g. '25 minutes, technical topics' → skills_domain)\n"
+            "- round_types: match the stage (skills_domain → skills_domain or skills_task, behavioral panel → behavioral)\n"
+            "- If unsure about a field, use the default value shown above"
+        )
+        raw = await self._call_llm(prompt)
+        return self._parse_json(raw, {
+            "company": "",
+            "role": "",
+            "career_track": "technology",
+            "level": "mid_level",
+            "interview_stage": "hr_interview",
+            "round_types": ["behavioral"],
+            "topics": [],
+            "time_minutes": None,
+            "summary": "",
+        })
+
     async def coach_candidate(
         self,
         question: str,
@@ -385,60 +474,80 @@ class LLMOrchestrator:
         career_track: str,
         level: str,
         conversation_history: list[dict],
+        session_context: dict | None = None,
     ):
         """
-        Async generator — streams coaching tokens for the in-session coach panel.
+        Async generator — streams coaching tokens for the full-screen coach mode.
 
-        On the first call (empty conversation_history) the coach decodes what the
-        question is really testing and asks 1-2 prompts to surface the candidate's
-        own stories.  On follow-up calls it answers the candidate's specific
-        question concisely while keeping them focused on structure and their own
-        experience.
+        The candidate has paused their interview to get help. On the first call
+        (empty conversation_history) the coach reads the full session context,
+        decodes what the question is testing, and starts a coaching conversation.
+        On follow-up calls it continues the conversation from history.
+
+        When the candidate seems ready, the coach should tell them explicitly and
+        suggest returning to the interview.
 
         Yields str chunks as they arrive from DeepSeek V3.
         """
+        level_label = level.replace("_", " ").title()
         system_prompt = (
-            f"You are a private interview coach helping a candidate in real-time during "
-            f"a {round_type} interview at {company} for a {role} position "
-            f"({level}, {career_track} track).\n\n"
-            "Your coaching rules:\n"
-            "1. NEVER write the candidate's answer for them. They must use their own words and stories.\n"
-            "2. Decode the question: explain in one sentence what the interviewer is really testing.\n"
+            f"You are a private interview coach helping a {level_label} {career_track} candidate "
+            f"who has paused a {round_type} interview at {company} for a {role} position to get your help.\n\n"
+            "COACHING RULES:\n"
+            "1. NEVER write the candidate's answer for them — they must use their own words and stories.\n"
+            "2. Start by decoding the question in one sentence: what is the interviewer really testing?\n"
             "3. Ask 1-2 short questions to help the candidate surface a relevant story from their own experience.\n"
-            "4. If they ask you something specific, answer in 2-3 sentences max — stay grounded in THIS question and THIS company.\n"
-            "5. If they're stuck, suggest a structure (STAR, problem/solution/impact) — don't fill it in.\n"
-            "6. Be direct. Sound like a coach in a hallway, not a textbook.\n"
-            "7. Max 4 sentences per response. No bullet lists unless the candidate explicitly asks for one.\n"
+            "4. Answer follow-up questions in 2-3 sentences max, grounded in THIS question and THIS company.\n"
+            "5. If they're stuck, suggest a structure (STAR, Problem→Solution→Impact) — don't fill it in.\n"
+            "6. Track what they struggle with across the conversation. If they keep asking the same type of question, name the pattern.\n"
+            "7. When they sound confident and have a clear story, tell them: 'You're ready. Head back and lead with [specific opening line].'\n"
+            "8. Be direct. Sound like a smart friend who has done 100 interviews, not a textbook.\n"
+            "9. Max 5 sentences per response unless they ask for more detail. No bullet lists unless asked.\n"
         )
 
         is_first_message = len(conversation_history) == 0
         if is_first_message:
-            user_content = (
-                f'The interviewer just asked: "{question}"\n\n'
-                "Decode what they are really testing with this question, then ask me 1-2 questions "
-                "to help me find a relevant story from my own experience."
+            ctx_parts = [f'The interviewer just asked: "{question}"']
+            if session_context:
+                q_num = session_context.get("question_number")
+                total_q = session_context.get("total_questions")
+                time_rem = session_context.get("time_remaining_seconds")
+                last_fb = session_context.get("last_feedback")
+                if q_num and total_q:
+                    ctx_parts.append(f"This is question {q_num} of {total_q} in the {round_type} round.")
+                if time_rem is not None:
+                    mins = int(time_rem) // 60
+                    secs = int(time_rem) % 60
+                    ctx_parts.append(f"They have {mins}:{secs:02d} remaining in this round.")
+                if last_fb and last_fb.get("what_was_missing"):
+                    ctx_parts.append(
+                        f"On the previous question they struggled with: {last_fb['what_was_missing']}. "
+                        "Keep that weakness in mind when coaching."
+                    )
+            ctx_parts.append(
+                "\nDecode what this question is really testing, then help me find a story "
+                "from my own experience to answer it well."
             )
             messages = [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content},
+                {"role": "user", "content": "\n".join(ctx_parts)},
             ]
         else:
             messages = [{"role": "system", "content": system_prompt}]
-            # Inject question context as the first exchange if not already there
             messages.append({
                 "role": "user",
                 "content": f'We are working on this interview question: "{question}"',
             })
             messages.append({
                 "role": "assistant",
-                "content": "Got it, I'll help you work through this.",
+                "content": "Got it — I'm here, let's work through this together.",
             })
             messages.extend(conversation_history)
 
         stream = await self._client.chat.completions.create(
             model=self._model_fast,
             messages=messages,
-            max_tokens=300,
+            max_tokens=400,
             stream=True,
         )
         async for chunk in stream:

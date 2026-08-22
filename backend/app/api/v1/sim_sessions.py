@@ -15,13 +15,35 @@ from app.core import ws_registry
 from app.models.pg.simulation import SimulationSession, SimulationDebrief, SimulationTurn
 from app.schemas.simulation import CreateSimSessionRequest
 from app.services.simulation_engine import SimulationEngine, utcnow
-from app.services.sim_llm_orchestrator import SimLLMOrchestrator
+from app.services.sim_llm_orchestrator import SimLLMOrchestrator, ToolCall
 from app.services.sim_debrief_service import generate_pdf
 from app.services.speech_service import SpeechService
+from app.services.api_keys_service import ApiKeysService
 
 router = APIRouter(prefix="/sim-sessions", tags=["simulation"])
 logger = logging.getLogger(__name__)
 bearer = HTTPBearer()
+
+import re as _re
+import io as _io
+import wave as _wave
+
+
+def _pcm_to_wav(pcm: bytes, sample_rate: int = 16000) -> bytes:
+    """Wrap raw Int16 LE PCM bytes in a WAV header."""
+    buf = _io.BytesIO()
+    with _wave.open(buf, 'wb') as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        wf.writeframes(pcm)
+    return buf.getvalue()
+
+
+def _split_sentences(text: str) -> list[str]:
+    """Split text on sentence boundaries for sentence-by-sentence TTS pipelining."""
+    parts = _re.split(r'(?<=[.!?])\s+', text.strip())
+    return [p for p in parts if p.strip()]
 
 
 # ── Auth helpers ────────────────────────────────────────────────────────────
@@ -209,6 +231,8 @@ async def sim_session_ws(
 
     engine = SimulationEngine(db)
     speech = SpeechService()
+    # Fetch Deepgram key from user's in-app settings (falls back to .env if not set)
+    deepgram_key = await ApiKeysService(db).get_decrypted(user_id, "deepgram_api_key")
     budget = session.time_budget_seconds
     started_at = session.started_at
 
@@ -262,11 +286,25 @@ async def sim_session_ws(
 
     # In-memory turn cache — avoids DB read on every message as session grows
     turns_cache: list[dict] = []
+    _ws_closed = False
+
+    async def _ws_send(data: dict) -> bool:
+        """Send JSON to the client; returns False if the connection is gone."""
+        nonlocal _ws_closed
+        if _ws_closed:
+            return False
+        try:
+            await websocket.send_json(data)
+            return True
+        except Exception:
+            _ws_closed = True
+            return False
 
     # Generate and send AI opening message, persist to DB so it survives reconnect
     try:
         _llm = SimLLMOrchestrator()
-        await websocket.send_json({"type": "thinking", "active": True})
+        await _ws_send({"type": "status", "message": "Generating opening message..."})
+        await _ws_send({"type": "thinking", "active": True})
         opening = await _llm.opening_message(
             brief=session.brief or {},
             persona_note=session.persona or "",
@@ -282,28 +320,44 @@ async def sim_session_ws(
         db.add(opening_turn)
         await db.commit()
         turns_cache.append({"speaker": "ai", "content": opening, "time_offset_seconds": 0})
-        await websocket.send_json({"type": "thinking", "active": False})
-        await websocket.send_json({
+        await _ws_send({"type": "thinking", "active": False})
+        await _ws_send({
             "type": "transcript", "speaker": "ai",
             "text": opening, "seq": 0, "final": True,
         })
+        # TTS — may need to download model on first use (~90 MB)
         try:
+            await _ws_send({"type": "status", "message": "Preparing voice..."})
             async for chunk in speech.synthesize_stream(opening):
-                await websocket.send_json({
+                if not await _ws_send({
                     "type": "ai_audio",
                     "data": base64.b64encode(chunk).decode(),
-                })
+                }):
+                    break
         except Exception as e:
-            logger.warning("[sim_ws] TTS error on opening: %s", e)
+            logger.warning("[sim_ws] TTS error on opening (text-only fallback): %s", e)
     except Exception as e:
         logger.warning("[sim_ws] Failed to generate opening message: %s", e)
-        await websocket.send_json({"type": "thinking", "active": False})
+        await _ws_send({"type": "thinking", "active": False})
 
-    # Audio buffer for voice turns
+    # Audio buffer for voice turns + interim transcription state
     audio_buf = bytearray()
+    interim_chunks_since_last: int = 0   # count of 500ms chunks since last interim transcription
+    INTERIM_EVERY_N_CHUNKS = 4           # run Parakeet every ~2s of audio
 
     async def handle_user_turn(content: str, modality: str = "text") -> tuple[bool, bool]:
-        """Process a user turn, get AI response, stream TTS. Returns (session_complete, cutoff)."""
+        """
+        Process a user turn with pipelined LLM → sentence-by-sentence TTS.
+
+        Flow:
+          1. Save user message & load context (prepare_turn)
+          2. Call LLM via respond_stream — collects full text + eval block
+          3. Send transcript + eval immediately (coach receives eval)
+          4. Stream TTS sentence-by-sentence for lower time-to-first-audio
+          5. Persist AI turn to DB (save_ai_turn)
+
+        Returns (session_complete, cutoff).
+        """
         offset = int((utcnow() - session.started_at).total_seconds())
         turns_cache.append({"speaker": "user", "content": content, "time_offset_seconds": offset})
         await websocket.send_json({
@@ -312,7 +366,8 @@ async def sim_session_ws(
         })
         await websocket.send_json({"type": "thinking", "active": True})
 
-        turn_result = await engine.submit_turn(
+        # ── Prepare: DB ops + context load ──────────────────────────────────────
+        prep = await engine.prepare_turn(
             session_id=session_id,
             content=content,
             modality=modality,
@@ -320,30 +375,87 @@ async def sim_session_ws(
             cached_turns=turns_cache[:-1],
         )
 
-        for te in turn_result.get("tool_events", []):
-            await websocket.send_json({"type": "tool_event", **te})
+        if prep.get("cutoff"):
+            await websocket.send_json({"type": "thinking", "active": False})
+            return False, True
 
-        ai_text = turn_result.get("response", "")
+        if prep.get("error"):
+            await websocket.send_json({"type": "thinking", "active": False})
+            return False, False
+
+        brief = prep["brief"]
+        turns = prep["turns"]
+        attachment_context = prep["attachment_context"]
+        time_remaining_pct = prep["time_remaining_pct"]
+        seq = prep["seq"]
+        elapsed = prep["elapsed"]
+
+        # ── LLM: collect full response + eval ──────────────────────────────────
+        full_text = ""
+        feedback: dict = {}
+        end_signal = False
+        tool_calls: list[ToolCall] = []
+
+        try:
+            async for item in _llm.respond_stream(
+                brief, turns, content, attachment_context, time_remaining_pct
+            ):
+                if isinstance(item, str):
+                    full_text = item
+                elif isinstance(item, dict):
+                    if "__feedback__" in item:
+                        feedback = item["__feedback__"]
+                        end_signal = bool(item.get("__end__", False))
+                    elif "__tool_calls__" in item:
+                        tool_calls = [
+                            ToolCall(tool=t["tool"], command=t["command"])
+                            for t in item["__tool_calls__"]
+                        ]
+        except RuntimeError as e:
+            logger.error("[sim_ws] LLM error: %s", e)
+            full_text = "I'm having trouble responding right now. Please try again."
+
+        # ── Tool execution ──────────────────────────────────────────────────────
+        if tool_calls:
+            tool_events = []
+            for tc in tool_calls:
+                event = await engine._execute_tool(tc)
+                tool_events.append(event)
+                await websocket.send_json({"type": "tool_event", **event})
+            tool_summary = "\n".join(
+                f"[Tool {e['tool']}] {e.get('output', '')[:500]}" for e in tool_events
+            )
+            full_text = f"{full_text}\n\n{tool_summary}".strip()
+
+        # ── Send transcript + private eval ──────────────────────────────────────
         turns_cache.append({
-            "speaker": "ai", "content": ai_text,
+            "speaker": "ai", "content": full_text,
             "time_offset_seconds": int((utcnow() - session.started_at).total_seconds()),
         })
         await websocket.send_json({"type": "thinking", "active": False})
         await websocket.send_json({
             "type": "transcript", "speaker": "ai",
-            "text": ai_text, "seq": 1, "final": True,
+            "text": full_text, "seq": 1, "final": True,
         })
+        if feedback:
+            await websocket.send_json({"type": "answer_eval", "data": feedback})
 
+        # ── TTS: sentence-by-sentence pipeline ─────────────────────────────────
         try:
-            async for chunk in speech.synthesize_stream(ai_text):
-                await websocket.send_json({
-                    "type": "ai_audio",
-                    "data": base64.b64encode(chunk).decode(),
-                })
+            for sentence in _split_sentences(full_text):
+                async for chunk in speech.synthesize_stream(sentence):
+                    await websocket.send_json({
+                        "type": "ai_audio",
+                        "data": base64.b64encode(chunk).decode(),
+                    })
         except Exception as e:
             logger.warning("[sim_ws] TTS error: %s", e)
 
-        return bool(turn_result.get("session_complete")), bool(turn_result.get("cutoff"))
+        # ── Persist AI turn ─────────────────────────────────────────────────────
+        await engine.save_ai_turn(session_id, full_text, seq, elapsed, tool_calls)
+
+        session_complete = end_signal or (time_remaining_pct == 0)
+        return session_complete, False
 
     try:
         while True:
@@ -370,6 +482,21 @@ async def sim_session_ws(
                 # Accumulate raw audio bytes from the browser MediaRecorder
                 raw = base64.b64decode(msg.get("data", ""))
                 audio_buf.extend(raw)
+                interim_chunks_since_last += 1
+
+                # Every ~2s, run Parakeet on accumulated buffer for live caption
+                if interim_chunks_since_last >= INTERIM_EVERY_N_CHUNKS and len(audio_buf) > 8000:
+                    interim_chunks_since_last = 0
+                    buf_snapshot = bytes(audio_buf)
+                    try:
+                        interim_text = await speech.transcribe(_pcm_to_wav(buf_snapshot), api_key=deepgram_key)
+                        if interim_text:
+                            await websocket.send_json({
+                                "type": "transcript_interim",
+                                "text": interim_text,
+                            })
+                    except Exception:
+                        pass
 
             elif msg_type == "audio_flush":
                 # User stopped speaking — transcribe accumulated buffer
@@ -377,8 +504,9 @@ async def sim_session_ws(
                     continue
                 buf_copy = bytes(audio_buf)
                 audio_buf.clear()
+                interim_chunks_since_last = 0
                 try:
-                    transcript = await speech.transcribe(buf_copy)
+                    transcript = await speech.transcribe(_pcm_to_wav(buf_copy), api_key=deepgram_key)
                 except Exception as e:
                     logger.warning("[sim_ws] Transcription error: %s", e)
                     transcript = ""
@@ -398,7 +526,7 @@ async def sim_session_ws(
                 await websocket.send_json({"type": "session_end", "reason": "user_ended"})
                 break
 
-    except (WebSocketDisconnect, asyncio.CancelledError):
+    except (WebSocketDisconnect, asyncio.CancelledError, RuntimeError):
         pass
     finally:
         timer_task.cancel()

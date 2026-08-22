@@ -2,7 +2,17 @@
 DeepSeek API client — OpenAI-compatible REST interface.
 
 Uses httpx SSE streaming for token-by-token delivery.
-Model: deepseek-chat (DeepSeek-V3) for all real-time paths.
+
+Model selection:
+  - STREAM model (real-time overlay): deepseek-v4-flash — no reasoning overhead,
+    first token in ~300-600ms.  The overlay needs speed, not deep thinking.
+  - GENERATE model (background tasks: titles, summaries, outcome inference):
+    deepseek-v4-pro — higher quality, reasoning overhead is fine for async tasks.
+
+A persistent httpx.AsyncClient is reused across requests to keep TCP/TLS
+connections alive (HTTP/2 multiplexing where supported).  This eliminates
+the ~200-500ms TLS handshake that occurred on every call when a fresh
+client was created per request.
 """
 import json
 import logging
@@ -15,8 +25,34 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 _BASE = "https://api.deepseek.com"
-_MODEL = "deepseek-v4-pro"
+_MODEL_FAST = "deepseek-v4-flash"     # streaming / real-time — speed-critical
+_MODEL_DEEP = "deepseek-v4-pro"       # background / non-streaming — quality-critical
 _TIMEOUT = 60.0
+
+# Persistent client — reused across all calls for connection pooling.
+# Lazy-initialized on first use so module import doesn't trigger network.
+_client: httpx.AsyncClient | None = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    global _client
+    if _client is None or _client.is_closed:
+        # Use HTTP/2 if h2 is installed, otherwise fall back to HTTP/1.1
+        try:
+            import h2  # noqa: F401
+            use_h2 = True
+        except ImportError:
+            use_h2 = False
+        _client = httpx.AsyncClient(
+            timeout=_TIMEOUT,
+            http2=use_h2,
+            limits=httpx.Limits(
+                max_connections=10,
+                max_keepalive_connections=5,
+                keepalive_expiry=120,
+            ),
+        )
+    return _client
 
 
 def _headers() -> dict:
@@ -31,14 +67,19 @@ def _build_body(
     temperature: float = 0.7,
     max_tokens: int = 512,
     stream: bool = True,
+    model: str | None = None,
+    reasoning: bool = False,
 ) -> dict:
-    return {
-        "model": _MODEL,
+    body: dict = {
+        "model": model or (_MODEL_FAST if stream else _MODEL_DEEP),
         "messages": messages,
         "temperature": temperature,
         "max_tokens": max_tokens,
         "stream": stream,
     }
+    if not reasoning:
+        body["reasoning_effort"] = "none"
+    return body
 
 
 def _to_messages(prompt: str, system: str = "") -> list[dict]:
@@ -56,24 +97,38 @@ async def deepseek_stream(
     max_tokens: int = 512,
 ) -> AsyncGenerator[str, None]:
     """Stream token deltas from DeepSeek chat API."""
+    import time as _time
+    t_start = _time.monotonic()
     url = f"{_BASE}/chat/completions"
     body = _build_body(_to_messages(prompt, system), temperature=temperature, max_tokens=max_tokens)
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-        async with client.stream("POST", url, json=body, headers=_headers()) as resp:
-            resp.raise_for_status()
-            async for line in resp.aiter_lines():
-                if not line.startswith("data: "):
-                    continue
-                raw = line[6:].strip()
-                if not raw or raw == "[DONE]":
-                    continue
-                try:
-                    chunk = json.loads(raw)
-                    delta = chunk["choices"][0]["delta"].get("content", "")
-                    if delta:
-                        yield delta
-                except (KeyError, json.JSONDecodeError):
-                    continue
+    client = _get_client()
+    logger.info("[deepseek] stream request starting — prompt=%d chars", len(prompt))
+    async with client.stream("POST", url, json=body, headers=_headers()) as resp:
+        logger.info("[deepseek] stream connected in %dms — status=%d",
+                    round((_time.monotonic() - t_start) * 1000), resp.status_code)
+        resp.raise_for_status()
+        first_token = True
+        async for line in resp.aiter_lines():
+            if not line.startswith("data: "):
+                continue
+            raw = line[6:].strip()
+            if not raw or raw == "[DONE]":
+                continue
+            try:
+                chunk = json.loads(raw)
+                delta_obj = chunk["choices"][0]["delta"]
+                # DeepSeek v4 models put the actual response in
+                # "reasoning_content" (chain-of-thought output), while
+                # "content" is often empty or null.  Yield whichever has text.
+                delta = delta_obj.get("content") or delta_obj.get("reasoning_content") or ""
+                if delta:
+                    if first_token:
+                        logger.info("[deepseek] first token in %dms",
+                                    round((_time.monotonic() - t_start) * 1000))
+                        first_token = False
+                    yield delta
+            except (KeyError, json.JSONDecodeError):
+                continue
 
 
 async def deepseek_generate(
@@ -90,11 +145,12 @@ async def deepseek_generate(
         max_tokens=max_tokens,
         stream=False,
     )
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-        resp = await client.post(url, json=body, headers=_headers())
-        resp.raise_for_status()
-        data = resp.json()
-        return data["choices"][0]["message"]["content"]
+    client = _get_client()
+    resp = await client.post(url, json=body, headers=_headers())
+    resp.raise_for_status()
+    data = resp.json()
+    msg = data["choices"][0]["message"]
+    return msg.get("content") or msg.get("reasoning_content") or ""
 
 
 async def deepseek_with_tools(
@@ -109,20 +165,21 @@ async def deepseek_with_tools(
     """
     url = f"{_BASE}/chat/completions"
     body = {
-        "model": _MODEL,
+        "model": _MODEL_DEEP,
         "messages": _sanitize_messages(messages),
         "tools": tools,
         "tool_choice": "auto",
         "temperature": temperature,
         "max_tokens": max_tokens,
         "stream": False,
+        "reasoning_effort": "none",
     }
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-        resp = await client.post(url, json=body, headers=_headers())
-        if not resp.is_success:
-            logger.error("[deepseek] 400 body: %s", resp.text[:1000])
-            resp.raise_for_status()
-        data = resp.json()
+    client = _get_client()
+    resp = await client.post(url, json=body, headers=_headers())
+    if not resp.is_success:
+        logger.error("[deepseek] 400 body: %s", resp.text[:1000])
+        resp.raise_for_status()
+    data = resp.json()
     return data["choices"][0]
 
 
@@ -177,16 +234,17 @@ async def deepseek_stream_messages(
     """Stream token deltas from a full messages list (for multi-turn tool conversations)."""
     url = f"{_BASE}/chat/completions"
     body = {
-        "model": _MODEL,
+        "model": _MODEL_FAST,
         "messages": _sanitize_messages(messages),
         "temperature": temperature,
         "max_tokens": max_tokens,
         "stream": True,
+        "reasoning_effort": "none",
     }
     # Buffer to catch DSML tags that span chunk boundaries
     buf = ""
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-        async with client.stream("POST", url, json=body, headers=_headers()) as resp:
+    client = _get_client()
+    async with client.stream("POST", url, json=body, headers=_headers()) as resp:
             resp.raise_for_status()
             async for line in resp.aiter_lines():
                 if not line.startswith("data: "):
@@ -200,7 +258,8 @@ async def deepseek_stream_messages(
                     continue
                 try:
                     chunk = json.loads(raw)
-                    delta = chunk["choices"][0]["delta"].get("content", "")
+                    delta_obj = chunk["choices"][0]["delta"]
+                    delta = delta_obj.get("content") or delta_obj.get("reasoning_content") or ""
                     if not delta:
                         continue
                     buf += delta

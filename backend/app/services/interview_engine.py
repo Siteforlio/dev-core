@@ -81,6 +81,7 @@ class InterviewEngine:
         interview_stage: str = "hr_interview",
         jd_text: str | None = None,
         manager_name: str | None = None,
+        topics: list[str] | None = None,
     ) -> dict:
         session = InterviewSession(
             id=str(uuid.uuid4()),
@@ -136,6 +137,8 @@ class InterviewEngine:
                 jd_text=jd_text,
                 graph_context=context["graph_context"],
                 knowledge_context=context["knowledge_profile"],
+                jd_analysis=context.get("jd_analysis"),
+                topics=topics or [],
             )
             # Persist task brief on the round so follow-up handler can access it
             round_.task_brief = _validate_task_brief(task)
@@ -143,9 +146,13 @@ class InterviewEngine:
             result["task"] = task
         else:
             questions = await self.orchestrator.generate_questions(
-                company=company, role=role, round_type=first_round_type,
+                company=company,
+                role=role,
+                round_type=first_round_type,
                 graph_context=context["graph_context"],
                 knowledge_context=context["knowledge_profile"],
+                jd_analysis=context.get("jd_analysis"),
+                topics=topics or [],
             )
             result["questions"] = questions
 

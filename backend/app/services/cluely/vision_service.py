@@ -1,5 +1,5 @@
 """
-vision_service.py — Screenshot analysis using Claude Sonnet 3.5 (Anthropic).
+vision_service.py — Screenshot analysis using Claude Haiku (Anthropic).
 
 Design:
 - Caller maintains a buffer of up to MAX_BUFFER screenshots per session.
@@ -7,13 +7,17 @@ Design:
 - System prompt adapts to assessment mode (coding/leetcode vs general).
 - Session context (role, resume, JD, transcript) is injected so the AI can
   give personalised, situation-aware responses.
-- Returns a structured result: { text, needs_more, cleared_buffer }
+- stream_analyze() yields token deltas for real-time display.
+- Images are compressed (resized + JPEG) before sending to cut upload time.
 - Only the screenshot/vision path uses Anthropic — all other LLM calls use DeepSeek.
 """
 from __future__ import annotations
 
+import base64
+import io
 import logging
 import time
+from typing import AsyncGenerator
 
 import anthropic
 from app.core.config import settings
@@ -26,6 +30,47 @@ VISION_MODEL   = "claude-haiku-4-5-20251001"
 
 # Minimum base64 length to be a real image (~1 KB encoded)
 MIN_B64_LEN = 1000
+
+# Image compression settings
+_MAX_WIDTH  = 1280   # resize wider images to this
+_JPEG_QUALITY = 72   # JPEG quality — good enough for text/code on screen
+
+
+def _compress_image(b64_png: str) -> tuple[str, str]:
+    """
+    Compress a base64 PNG screenshot → smaller JPEG.
+    Returns (base64_data, media_type).
+    Falls back to the original PNG on any error.
+    """
+    try:
+        from PIL import Image
+        raw = base64.b64decode(b64_png)
+        img = Image.open(io.BytesIO(raw))
+
+        # Resize if wider than _MAX_WIDTH (preserve aspect ratio)
+        if img.width > _MAX_WIDTH:
+            ratio = _MAX_WIDTH / img.width
+            img = img.resize(
+                (int(img.width * ratio), int(img.height * ratio)),
+                Image.LANCZOS,
+            )
+
+        # Convert to RGB (JPEG doesn't support alpha)
+        if img.mode in ("RGBA", "P"):
+            img = img.convert("RGB")
+
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=_JPEG_QUALITY)
+        compressed = base64.b64encode(buf.getvalue()).decode()
+        logger.debug(
+            "[vision] compressed %d→%d chars (%.0f%% reduction)",
+            len(b64_png), len(compressed),
+            (1 - len(compressed) / len(b64_png)) * 100,
+        )
+        return compressed, "image/jpeg"
+    except Exception as e:
+        logger.warning("[vision] compression failed, using original PNG: %s", e)
+        return b64_png, "image/png"
 
 
 def _system_prompt(mode: str | None) -> str:
@@ -195,12 +240,13 @@ class VisionService:
         content: list[dict] = []
 
         for img_b64 in images:
+            compressed, media_type = _compress_image(img_b64)
             content.append({
                 "type": "image",
                 "source": {
                     "type": "base64",
-                    "media_type": "image/png",
-                    "data": img_b64,
+                    "media_type": media_type,
+                    "data": compressed,
                 },
             })
 
@@ -246,3 +292,88 @@ class VisionService:
 
         logger.info("[vision] Done | needs_more=%s | cleared=%s | len=%d chars", needs_more, cleared, len(text))
         return {"text": text, "needs_more": needs_more, "buffer_size": n, "cleared": cleared}
+
+    async def stream_analyze(
+        self,
+        session_id: str,
+        mode: str | None = None,
+        extra_context: str | None = None,
+        session_ctx: dict | None = None,
+    ) -> AsyncGenerator[str, None]:
+        """
+        Streaming version of analyze() — yields token deltas as they arrive.
+        Buffer management (needs_more detection, clearing) happens after the
+        stream completes via a final metadata yield prefixed with \\x00.
+        """
+        if self._client is None:
+            return
+
+        buf = self._buffers.get(session_id)
+        if not buf or not buf["images"]:
+            return
+
+        images = buf["images"]
+        n = len(images)
+        logger.info("[vision] stream_analyze %d screenshot(s) | session=%s", n, session_id)
+
+        t_start = time.time()
+
+        # Build content blocks with compressed images
+        content: list[dict] = []
+        for img_b64 in images:
+            compressed, media_type = _compress_image(img_b64)
+            content.append({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": media_type,
+                    "data": compressed,
+                },
+            })
+
+        context_note = _build_context_note(session_ctx)
+        if not context_note and extra_context:
+            context_note = f"\n\nAdditional context: {extra_context}"
+
+        if n == 1:
+            user_text = f"I've shared 1 screenshot of my screen.{context_note}\n\nPlease read it and help me."
+        else:
+            user_text = (
+                f"I've shared {n} screenshots taken consecutively — they may show different parts "
+                f"of the same content (e.g. a scrolled page, multiple tabs).{context_note}\n\n"
+                f"Analyze them together as one context and help me."
+            )
+        content.append({"type": "text", "text": user_text})
+
+        full_text_parts: list[str] = []
+        try:
+            async with self._client.messages.stream(
+                model=VISION_MODEL,
+                system=_system_prompt(mode),
+                messages=[{"role": "user", "content": content}],
+                max_tokens=1024,
+            ) as stream:
+                first_token = True
+                async for delta in stream.text_stream:
+                    if first_token:
+                        elapsed = round((time.time() - t_start) * 1000)
+                        logger.info("[vision] first token in %dms", elapsed)
+                        first_token = False
+                    full_text_parts.append(delta)
+                    yield delta
+        except Exception as e:
+            logger.error("[vision] stream error: %s", e)
+            return
+
+        full_text = "".join(full_text_parts)
+        elapsed_total = round((time.time() - t_start) * 1000)
+        logger.info("[vision] stream done in %dms | %d chars", elapsed_total, len(full_text))
+
+        # Buffer management — same logic as non-streaming analyze
+        needs_more = any(phrase in full_text.lower() for phrase in [
+            "need more", "another screenshot", "scroll down", "send more",
+            "can't see", "cannot see", "cut off", "partial", "more context",
+            "see the rest", "rest of the", "more screenshots",
+        ])
+        if not needs_more:
+            self.clear_buffer(session_id)

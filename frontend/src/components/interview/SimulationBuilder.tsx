@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import './SimulationBuilder.css'
 import { useSimulationStore } from '../../store/simulationStore'
 import { apiFetch } from '../../lib/apiFetch'
+import { pickCharacter } from './InterviewerCharacters'
 
 // ============================================================
 // TYPES
@@ -949,11 +950,20 @@ export default function SimulationBuilder({ onLaunch }: Props) {
       })
       const json = await res.json()
       if (json.data?.session_id) {
+        const scenarioType: string = json.data.scenario_type ?? 'custom'
+        const levelMap: Record<string, string> = {
+          pitch: 'entry_junior', behavioral: 'mid_level',
+          mr_review: 'senior', system_design: 'senior',
+          teaching: 'mid_level', negotiation: 'mid_level',
+        }
+        const level = levelMap[scenarioType] ?? 'mid_level'
+        const character = pickCharacter(json.data.session_id, level)
         setSession(
           json.data.session_id,
           json.data.persona ?? '',
           json.data.time_budget_seconds ?? null,
-          json.data.scenario_type ?? 'custom',
+          scenarioType,
+          character.id,
         )
       }
     } catch (e) {
@@ -1086,8 +1096,19 @@ export default function SimulationBuilder({ onLaunch }: Props) {
                 <Icon name="send" size={14} />
               </button>
             </div>
-            <div style={{ marginTop: 7, fontSize: 10.5, color: 'var(--ink-ghost)', letterSpacing: '0.05em' }}>
-              ↵ send · shift+↵ newline
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 7 }}>
+              <span style={{ fontSize: 10.5, color: 'var(--ink-ghost)', letterSpacing: '0.05em' }}>
+                ↵ send · shift+↵ newline
+              </span>
+              {phase === 'understood' && (
+                <button
+                  className="sim-btn btn-launch"
+                  onClick={doLaunch}
+                  style={{ padding: '6px 16px', fontSize: 12 }}
+                >
+                  <Icon name="play" size={14} /> Start Session
+                </button>
+              )}
             </div>
           </div>
 

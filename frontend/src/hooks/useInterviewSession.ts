@@ -15,6 +15,7 @@ export function useInterviewSession() {
     interviewStage: string = '',
     jdText?: string,
     managerName?: string,
+    topics?: string[],
   ) => {
     const res = await apiFetch(`${API_BASE()}/interview-sessions`, {
       method: 'POST',
@@ -28,6 +29,7 @@ export function useInterviewSession() {
         interview_stage: interviewStage,
         jd_text: jdText || null,
         manager_name: managerName || null,
+        topics: topics ?? [],
       }),
     })
     const { data } = await res.json()

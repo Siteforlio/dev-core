@@ -3,6 +3,7 @@ import WebSocket from 'ws'
 import path from 'path'
 import { spawn, ChildProcess } from 'child_process'
 import { Worker } from 'worker_threads'
+import { BrowserWindow } from 'electron'
 import { getOverlayWindow } from './overlay'
 
 const PROJECT_ROOT = path.join(__dirname, '..')
@@ -304,7 +305,7 @@ function _openWebSocket(
   localWs.on('open', () => {
     if (!localWs || localWs.readyState !== 1) return
     _reconnectAttempts = 0  // reset on successful connect
-    console.log(`[devcore-audio] WS open — sending auth, token=${token ? token.slice(0,20)+'…' : 'EMPTY'}`)
+    console.log('[devcore-audio] WS open — sending auth')
     try {
       localWs.send(JSON.stringify({ type: 'auth', token }))
       localWs.send(JSON.stringify({
@@ -357,6 +358,10 @@ function _openWebSocket(
       _scheduleReconnect()  // _scheduleReconnect stops streams itself
     } else {
       _stopStreams(`WS closed intentionally code=${code}`)
+      // Broadcast session ended to ALL windows so Dashboard clears its timer/state
+      BrowserWindow.getAllWindows().forEach(w => {
+        if (!w.isDestroyed()) w.webContents.send('devcore:session:ended')
+      })
     }
   })
 

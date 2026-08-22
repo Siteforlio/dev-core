@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.security import decode_token
-from app.schemas.session import CreateSessionRequest, AnswerRequest, AdvanceRoundRequest, BehavioralSignalRequest, CheatSignalRequest, CoachRequest
+from app.schemas.session import CreateSessionRequest, AnswerRequest, AdvanceRoundRequest, BehavioralSignalRequest, CheatSignalRequest, CoachRequest, InterpretRequest
 from app.services.llm_orchestrator import LLMOrchestrator
 from app.services.interview_engine import InterviewEngine
 from app.services.debrief_service import DebriefService
@@ -17,6 +17,20 @@ bearer = HTTPBearer()
 
 def get_user_id(credentials: HTTPAuthorizationCredentials = Depends(bearer)) -> str:
     return decode_token(credentials.credentials)
+
+
+@router.post("/interpret")
+async def interpret_context(
+    body: InterpretRequest,
+    user_id: str = Depends(get_user_id),
+):
+    """
+    Extract structured interview parameters from any free-form text.
+    Route handler is thin (§4.2) — delegates entirely to LLMOrchestrator.
+    """
+    orchestrator = LLMOrchestrator()
+    result = await orchestrator.interpret_interview_context(context=body.context)
+    return {"data": result, "error": None}
 
 
 @router.post("")
@@ -37,6 +51,7 @@ async def create_session(
         interview_stage=body.interview_stage,
         jd_text=body.jd_text,
         manager_name=body.manager_name,
+        topics=body.topics,
     )
     return {"data": session, "error": None}
 
@@ -159,8 +174,12 @@ async def coach(
         )
     )
     session = result.scalar_one_or_none()
-    if not session:
-        return {"data": None, "error": {"code": "SESSION_NOT_FOUND", "message": "Session not found"}}
+
+    # Session may be None when coach is called from simulation mode (different session type).
+    # Fall back to company/role from session_context in the request body.
+    ctx = body.session_context or {}
+    company = session.company if session else ctx.get("company", "")
+    role = session.role if session else ctx.get("role", "")
 
     # Build conversation history including the new user message (if any)
     history = [{"role": m.role, "content": m.content} for m in body.conversation_history]
@@ -173,17 +192,18 @@ async def coach(
         try:
             async for token in orchestrator.coach_candidate(
                 question=body.question,
-                company=session.company,
-                role=session.role,
+                company=company,
+                role=role,
                 round_type=body.round_type,
                 career_track=body.career_track,
                 level=body.level,
                 conversation_history=history,
+                session_context=body.session_context,
             ):
-                # SSE format: each token as a data event
                 yield f"data: {token}\n\n"
         except Exception:
-            pass
+            # Surface error to client so the UI can show a message instead of hanging
+            yield "data: [ERROR]\n\n"
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(

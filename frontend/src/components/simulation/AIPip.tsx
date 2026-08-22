@@ -1,11 +1,16 @@
 // frontend/src/components/simulation/AIPip.tsx
+import { CHARACTERS } from '../interview/InterviewerCharacters'
 
 interface Props {
   speaking: boolean
   thinking: boolean
+  characterId?: number
 }
 
-export default function AIPip({ speaking, thinking }: Props) {
+export default function AIPip({ speaking, thinking, characterId = 0 }: Props) {
+  const char = CHARACTERS[characterId] ?? CHARACTERS[0]
+  const { Face, name, title, bg } = char
+
   return (
     <div style={{
       position: 'absolute', top: 16, right: 16,
@@ -19,7 +24,7 @@ export default function AIPip({ speaking, thinking }: Props) {
         className={speaking && !thinking ? 'sim-speaking' : ''}
         style={{
           width: '100%', height: '100%',
-          background: 'linear-gradient(180deg, #111420 0%, #08090f 100%)',
+          background: bg,
           display: 'flex', flexDirection: 'column',
           alignItems: 'center', justifyContent: 'center',
           gap: 8, position: 'relative',
@@ -36,25 +41,9 @@ export default function AIPip({ speaking, thinking }: Props) {
           <div style={{
             width: 56, height: 56, borderRadius: '50%', overflow: 'hidden',
             border: '1.5px solid rgba(167,139,250,0.2)',
-            background: 'radial-gradient(circle at 42% 38%, #9fa8c0, #6b7490 45%, #3d4262)',
             position: 'relative',
           }}>
-            <svg viewBox="0 0 48 48" fill="none" style={{ width: 46, height: 46, position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)' }}>
-              <ellipse cx="24" cy="26" rx="15" ry="17" fill="#9fa8c0" opacity="0.3"/>
-              <ellipse cx="18" cy="22" rx="2.8" ry="3" fill="#2d3148"/>
-              <ellipse cx="30" cy="22" rx="2.8" ry="3" fill="#2d3148"/>
-              <circle cx="18" cy="22" r="2" fill="#4a5070"/>
-              <circle cx="30" cy="22" r="2" fill="#4a5070"/>
-              <circle cx="18.5" cy="22.5" r="1" fill="#1a1c28"/>
-              <circle cx="30.5" cy="22.5" r="1" fill="#1a1c28"/>
-              <circle cx="19.2" cy="21.4" r="0.5" fill="rgba(255,255,255,0.5)"/>
-              <circle cx="31.2" cy="21.4" r="0.5" fill="rgba(255,255,255,0.5)"/>
-              <path d="M19 33 Q24 37 29 33" stroke="rgba(80,90,120,0.7)" strokeWidth="1.5" fill="none" strokeLinecap="round"/>
-              <path d="M23.5 25 L22 29 L26 29" stroke="rgba(100,110,140,0.5)" strokeWidth="1.2" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
-              <ellipse cx="9" cy="26" rx="2" ry="3.5" fill="#8a93ad" opacity="0.4"/>
-              <ellipse cx="39" cy="26" rx="2" ry="3.5" fill="#8a93ad" opacity="0.4"/>
-              <ellipse cx="24" cy="11" rx="15" ry="8" fill="#2d3148" opacity="0.7"/>
-            </svg>
+            <Face />
           </div>
           <div className="sim-speak-ring" style={{ position: 'absolute', inset: -5, borderRadius: '50%', border: '1.5px solid rgba(167,139,250,0.25)' }} />
           <div className="sim-speak-ring2" style={{ position: 'absolute', inset: -11, borderRadius: '50%', border: '1px solid rgba(167,139,250,0.1)' }} />
@@ -78,10 +67,11 @@ export default function AIPip({ speaking, thinking }: Props) {
           background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(4px)',
           padding: '5px 8px', fontSize: '0.58rem', fontWeight: 500,
           color: 'rgba(167,139,250,0.7)', textAlign: 'center',
-          letterSpacing: '0.06em', textTransform: 'uppercase' as const,
+          letterSpacing: '0.06em',
           borderTop: '1px solid rgba(167,139,250,0.08)',
         }}>
-          Interviewer
+          <div>{name}</div>
+          <div style={{ fontSize: '0.5rem', color: 'rgba(167,139,250,0.4)', marginTop: 1 }}>{title}</div>
         </div>
 
         {/* Thinking overlay */}

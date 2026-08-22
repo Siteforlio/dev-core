@@ -18,6 +18,16 @@ export interface SimToolEvent {
   status: 'running' | 'done'
 }
 
+export interface SimAnswerEval {
+  answer_quality: string
+  score: number
+  what_worked: string
+  gap: string
+  follow_up_needed: boolean
+  topic_drift: boolean
+  inconsistency: boolean
+}
+
 export interface SimDebriefData {
   overall_score: number
   hire_signal: string
@@ -46,6 +56,8 @@ interface UseSimulationSessionReturn {
   activeTool: SimToolEvent | null
   wsReady: boolean
   isRecording: boolean
+  lastEval: SimAnswerEval | null
+  interimTranscript: string
   sendText: (content: string) => void
   endSession: () => void
 }
@@ -70,12 +82,16 @@ export function useSimulationSession(
   const [activeTool, setActiveTool] = useState<SimToolEvent | null>(null)
   const [wsReady, setWsReady] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
+  const [lastEval, setLastEval] = useState<SimAnswerEval | null>(null)
+  const [interimTranscript, setInterimTranscript] = useState('')
+  const [statusMessage, setStatusMessage] = useState('')
 
   const wsRef = useRef<WebSocket | null>(null)
   const audioCtxRef = useRef<AudioContext | null>(null)
   const audioQueueRef = useRef<ArrayBuffer[]>([])
   const audioPlayingRef = useRef(false)
-  const recorderRef = useRef<MediaRecorder | null>(null)
+  const captureProcRef = useRef<ScriptProcessorNode | null>(null)
+  const captureCtxRef  = useRef<AudioContext | null>(null)
   const micStreamRef = useRef<MediaStream | null>(null)
 
   // ── Audio playback ──────────────────────────────────────────────────────────
@@ -132,6 +148,10 @@ export function useSimulationSession(
     ws.onmessage = (e) => {
       const msg = JSON.parse(e.data) as Record<string, unknown>
 
+      if (msg.type === 'status') {
+        setStatusMessage(msg.message as string)
+      }
+
       if (msg.type === 'thinking') {
         setAiThinking(msg.active as boolean)
         if (msg.active) setAiSpeaking(false)
@@ -145,6 +165,7 @@ export function useSimulationSession(
           text: msg.text as string,
         }
         setTurns((prev) => [...prev, turn])
+        if (msg.speaker === 'user') setInterimTranscript('')
         // Mark session ready after the first AI turn (opening message)
         if (msg.speaker === 'ai') setWsReady(true)
       }
@@ -186,6 +207,14 @@ export function useSimulationSession(
           .catch(() => {})
       }
 
+      if (msg.type === 'transcript_interim') {
+        setInterimTranscript(msg.text as string)
+      }
+
+      if (msg.type === 'answer_eval') {
+        setLastEval(msg.data as SimAnswerEval)
+      }
+
       if (msg.type === 'ai_audio') {
         const bytes = Uint8Array.from(atob(msg.data as string), (c) => c.charCodeAt(0))
         audioQueueRef.current.push(bytes.buffer)
@@ -206,54 +235,67 @@ export function useSimulationSession(
 
   useEffect(() => {
     if (micMuted || sessionEnded) {
-      // Stop recorder and flush accumulated audio to backend
-      if (recorderRef.current && recorderRef.current.state !== 'inactive') {
-        recorderRef.current.stop()
+      // Disconnect ScriptProcessor → send flush
+      if (captureProcRef.current) {
+        captureProcRef.current.disconnect()
+        captureProcRef.current = null
+      }
+      if (captureCtxRef.current) {
+        captureCtxRef.current.close()
+        captureCtxRef.current = null
+      }
+      micStreamRef.current?.getTracks().forEach((t) => t.stop())
+      micStreamRef.current = null
+      setIsRecording(false)
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: 'audio_flush' }))
       }
       return
     }
 
-    // Start mic recording
+    // Start mic recording — capture raw PCM Int16 at 16 kHz (WAV-compatible)
     const constraints: MediaStreamConstraints = {
       audio: selectedMicId ? { deviceId: { exact: selectedMicId } } : true,
     }
 
     navigator.mediaDevices.getUserMedia(constraints).then((stream) => {
       micStreamRef.current = stream
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-        ? 'audio/webm;codecs=opus'
-        : 'audio/webm'
-      const recorder = new MediaRecorder(stream, { mimeType })
-      recorderRef.current = recorder
 
-      recorder.ondataavailable = (e) => {
-        if (e.data.size < 10 || wsRef.current?.readyState !== WebSocket.OPEN) return
-        const reader = new FileReader()
-        reader.onload = () => {
-          const b64 = (reader.result as string).split(',')[1]
-          if (wsRef.current?.readyState === WebSocket.OPEN) {
-            wsRef.current.send(JSON.stringify({ type: 'audio_chunk', data: b64 }))
-          }
+      // Use native sample rate; ScriptProcessor downsamples automatically if browser supports it
+      const ctx = new AudioContext({ sampleRate: 16000 })
+      captureCtxRef.current = ctx
+
+      const source = ctx.createMediaStreamSource(stream)
+      // 4096-sample buffer ≈ 256 ms at 16 kHz — sent as one audio_chunk per callback
+      const proc = ctx.createScriptProcessor(4096, 1, 1)
+      captureProcRef.current = proc
+
+      proc.onaudioprocess = (e: AudioProcessingEvent) => {
+        if (wsRef.current?.readyState !== WebSocket.OPEN) return
+        const float32 = e.inputBuffer.getChannelData(0)
+        // Float32 → Int16 LE PCM
+        const int16 = new Int16Array(float32.length)
+        for (let i = 0; i < float32.length; i++) {
+          int16[i] = Math.max(-32768, Math.min(32767, Math.round(float32[i] * 32768)))
         }
-        reader.readAsDataURL(e.data)
+        // Safe base64 encoding for binary data
+        const bytes = new Uint8Array(int16.buffer)
+        let binary = ''
+        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
+        const b64 = btoa(binary)
+        wsRef.current!.send(JSON.stringify({ type: 'audio_chunk', data: b64 }))
       }
 
-      recorder.onstop = () => {
-        setIsRecording(false)
-        stream.getTracks().forEach((t) => t.stop())
-        micStreamRef.current = null
-        // Send flush to trigger transcription
-        if (wsRef.current?.readyState === WebSocket.OPEN) {
-          wsRef.current.send(JSON.stringify({ type: 'audio_flush' }))
-        }
-      }
-
-      recorder.start(500) // 500ms timeslice chunks
+      source.connect(proc)
+      proc.connect(ctx.destination)
       setIsRecording(true)
     }).catch(() => {})
 
     return () => {
-      recorderRef.current?.stop()
+      captureProcRef.current?.disconnect()
+      captureProcRef.current = null
+      captureCtxRef.current?.close()
+      captureCtxRef.current = null
       micStreamRef.current?.getTracks().forEach((t) => t.stop())
       micStreamRef.current = null
     }
@@ -274,7 +316,7 @@ export function useSimulationSession(
   return {
     turns, remaining, hardCutoff, cutoffMsg,
     sessionEnded, aiThinking, aiSpeaking, activeTool,
-    wsReady, isRecording,
+    wsReady, isRecording, lastEval, interimTranscript, statusMessage,
     sendText, endSession,
   }
 }

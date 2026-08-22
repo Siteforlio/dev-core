@@ -10,11 +10,27 @@ import type { EmotionState } from './FeedbackStrip'
 import DebriefReport from './DebriefReport'
 import CodeEditor from './CodeEditor'
 import SkillsTaskEditor from './SkillsTaskEditor'
-import CoachPanel from './CoachPanel'
+import CoachMode from './CoachMode'
 import { pickCharacter } from './InterviewerCharacters'
 
-// Silence threshold — seconds with no answer/speech before nudging user toward coach
-const SILENCE_NUDGE_SECONDS = 25
+// ── SVG icon primitives ───────────────────────────────────────────────────────
+
+const _ip = { width: 15, height: 15, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: '2', strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }
+
+const IconMic = () => <svg {..._ip}><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+const IconMicOff = () => <svg {..._ip}><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+const IconVideo = () => <svg {..._ip}><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+const IconVideoOff = () => <svg {..._ip}><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 7H1v12h12.5"/><path d="M16 7h2a2 2 0 0 1 2 2v5"/><polygon points="23 7 16 12 23 17 23 7"/></svg>
+const IconVolume = () => <svg {..._ip}><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+const IconKeyboard = () => <svg {..._ip}><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 13h.01M10 13h.01M14 13h.01M18 13h.01M8 17h8"/></svg>
+const IconEye = () => <svg {..._ip}><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+const IconLightbulb = () => <svg {..._ip}><line x1="9" y1="18" x2="15" y2="18"/><line x1="10" y1="22" x2="14" y2="22"/><path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14"/></svg>
+const IconUser = () => <svg {..._ip}><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+const IconSquare = () => <svg {..._ip}><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+const IconClock = () => <svg {..._ip}><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+const IconCheck = () => <svg {..._ip}><polyline points="20 6 9 17 4 12"/></svg>
+const IconArrowRight = () => <svg {..._ip}><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+const IconLoader = () => <svg {..._ip} style={{ animation: 'spin 1s linear infinite' }}><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg>
 
 interface Props {
   token: string
@@ -53,11 +69,11 @@ const chip: React.CSSProperties = {
 const ctrlBtn: React.CSSProperties = {
   width: 36, height: 36,
   borderRadius: '50%',
-  border: '1px solid rgba(255,255,255,0.08)',
+  border: '1px solid rgba(255,255,255,0.15)',
   display: 'flex', alignItems: 'center', justifyContent: 'center',
   fontSize: 15,
   cursor: 'pointer',
-  background: '#1a1d28',
+  background: '#22263a',
   color: '#94a3b8',
   flexShrink: 0,
 }
@@ -83,6 +99,7 @@ export default function InterviewSession({ token }: Props) {
     company,
     role,
     persona,
+    careerTrack,
     level,
     remainingRounds,
     sessionComplete,
@@ -120,13 +137,14 @@ export default function InterviewSession({ token }: Props) {
   })
 
   // ── Coach ─────────────────────────────────────────────────────────────────
+  // Note: followUpQuestion is not available here (declared below); the active question
+  // is passed via sessionContext when entering coach mode instead.
   const coach = useCoach({
     sessionId,
-    token,
     question: currentRound?.questions[currentRound?.currentQuestionIndex ?? 0] ?? '',
     roundType: currentRound?.type ?? 'behavioral',
-    careerTrack: useInterviewStore.getState().careerTrack,
-    level: useInterviewStore.getState().level,
+    careerTrack,
+    level,
   })
 
   // ── Answer / flow state ──
@@ -159,7 +177,12 @@ export default function InterviewSession({ token }: Props) {
   const [timeRemaining, setTimeRemaining] = useState(1800)
   const [showSpeakerMenu, setShowSpeakerMenu] = useState(false)
   const [audioOutputs, setAudioOutputs] = useState<MediaDeviceInfo[]>([])
-  const [silenceNudge, setSilenceNudge] = useState(false)
+
+  // ── Coach mode state ──
+  const [coachMode, setCoachMode] = useState(false)
+  const coachModeRef = useRef(false)                  // ref mirrors state so the timer closure can read it
+  const pausedTimeRemainingRef = useRef(0)            // seconds left when coach mode was entered
+  const pausedQuestionElapsedRef = useRef(0)          // seconds spent on current question at pause
 
   // ── Refs ──
   const prevQuestionRef = useRef('')
@@ -191,12 +214,11 @@ export default function InterviewSession({ token }: Props) {
     }
   }, [question]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Reset timer + rewrite counter + silence nudge on question change
+  // Reset timer + rewrite counter on question change
   useEffect(() => {
     questionStartTimeRef.current = Date.now()
     rewriteCountRef.current = 0
     prevAnswerLengthRef.current = 0
-    setSilenceNudge(false)
   }, [question])
 
   // Reset round start time on round change
@@ -207,9 +229,11 @@ export default function InterviewSession({ token }: Props) {
   }, [currentRound?.id])
 
   // Timer tick — updates progress bar + time remaining + warns
+  // Frozen while coachModeRef.current is true (coach pauses the clock)
   useEffect(() => {
     const budget = currentRound?.timeBudgetSeconds ?? 1800
     const tick = () => {
+      if (coachModeRef.current) return
       const elapsed = (Date.now() - roundStartTimeRef.current) / 1000
       const pct = Math.min((elapsed / budget) * 100, 100)
       setTimerPct(pct)
@@ -223,18 +247,6 @@ export default function InterviewSession({ token }: Props) {
         setTimeWarning('amber')
       } else {
         setTimeWarning(null)
-      }
-
-      // Silence detection — nudge toward coach after SILENCE_NUDGE_SECONDS
-      const questionElapsed = (Date.now() - questionStartTimeRef.current) / 1000
-      if (
-        questionElapsed >= SILENCE_NUDGE_SECONDS &&
-        !feedback &&
-        !answer.trim() &&
-        !isRecording &&
-        !coach.isOpen
-      ) {
-        setSilenceNudge(true)
       }
     }
     tick()
@@ -286,7 +298,11 @@ export default function InterviewSession({ token }: Props) {
     return (
       <div className="min-h-screen bg-gray-950 text-white flex items-center justify-center">
         <div className="text-center max-w-md space-y-4">
-          <div className="text-5xl">✗</div>
+          <div style={{ color: '#f87171' }}>
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>
+            </svg>
+          </div>
           <h1 className="text-2xl font-bold text-red-400">Round Failed</h1>
           <p className="text-gray-400">
             Your score was too low to continue the{' '}
@@ -383,7 +399,6 @@ export default function InterviewSession({ token }: Props) {
   // ── Handlers ──
 
   const handleAnswerChange = (newValue: string) => {
-    if (newValue.length > 0) setSilenceNudge(false)
     const dropped = prevAnswerLengthRef.current - newValue.length
     if (dropped >= 40) {
       rewriteCountRef.current += 1
@@ -496,9 +511,39 @@ export default function InterviewSession({ token }: Props) {
   // Mic button toggles mute — when muted, text input is shown instead of VAD
   const handleMic = () => setMuted((m) => !m)
 
-  const handleOpenCoach = () => {
-    setSilenceNudge(false)
-    coach.open()
+  /** Enter full-screen coach mode: pause timer + open coach with session snapshot. */
+  const handleEnterCoach = () => {
+    const timeRem = timeRemaining
+    pausedTimeRemainingRef.current = timeRem
+    pausedQuestionElapsedRef.current = (Date.now() - questionStartTimeRef.current) / 1000
+    coachModeRef.current = true
+    setCoachMode(true)
+    coach.open({
+      company,
+      role,
+      round_type: currentRound?.type ?? 'behavioral',
+      level,
+      career_track: careerTrack,
+      current_question: followUpQuestion ?? question,
+      question_number: qIndex + 1,
+      total_questions: totalQuestions,
+      time_remaining_seconds: Math.round(timeRem),
+      last_feedback: feedback
+        ? { what_worked: feedback.what_worked, what_was_missing: feedback.what_was_missing }
+        : null,
+    })
+  }
+
+  /** Exit coach mode: resume the frozen timer from where it was paused. */
+  const handleReturnFromCoach = () => {
+    const budget = currentRound?.timeBudgetSeconds ?? 1800
+    // Shift roundStartRef so that elapsed recalculates to (budget - pausedTimeRemaining)
+    roundStartTimeRef.current = Date.now() - (budget - pausedTimeRemainingRef.current) * 1000
+    // Shift questionStartRef so the per-question elapsed is preserved
+    questionStartTimeRef.current = Date.now() - pausedQuestionElapsedRef.current * 1000
+    coachModeRef.current = false
+    setCoachMode(false)
+    coach.close()
   }
 
   const handleNext = async () => {
@@ -572,189 +617,263 @@ export default function InterviewSession({ token }: Props) {
   }
 
   // ── Controls bar (shared between layouts) ──────────────────────────────────
-  const ControlsBar = () => (
-    <div style={{
-      height: 58, flexShrink: 0,
-      background: '#0e0f14',
-      borderTop: '1px solid #1a1d28',
-      display: 'flex', alignItems: 'center',
-      justifyContent: 'space-between',
-      padding: '0 16px',
-      gap: 8,
-    }}>
-      {/* Left — timer + round type only */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={{ ...chip, color: timerPct >= 95 ? '#f87171' : timerPct >= 80 ? '#fbbf24' : '#c4c9d8' }}>
-          ⏱ {formatTime(timeRemaining)}
-        </span>
-        <span style={chip}>
-          {currentRound.type.charAt(0).toUpperCase() + currentRound.type.slice(1)}
-        </span>
-      </div>
+  const ControlsBar = () => {
+    const submitDisabled = loading || advancing || (!feedback && !answer.trim() && !isLeetcode)
+    const timerColor2 = timerPct >= 95 ? '#f87171' : timerPct >= 80 ? '#fbbf24' : '#64748b'
 
-      {/* Center — main action buttons */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        {/* Mic — mute toggle (VAD listens automatically when unmuted) */}
-        <button
-          onClick={handleMic}
-          title={muted ? 'Unmute mic (switch to voice)' : 'Mute mic (switch to text)'}
-          style={{
-            ...ctrlBtn,
-            background: muted ? 'rgba(239,68,68,0.12)' : isRecording ? 'rgba(34,197,94,0.15)' : '#1a1d28',
-            color: muted ? '#f87171' : isRecording ? '#4ade80' : '#94a3b8',
-            border: muted
-              ? '1px solid rgba(239,68,68,0.3)'
-              : isRecording
-              ? '1px solid rgba(34,197,94,0.3)'
-              : '1px solid rgba(255,255,255,0.08)',
-            animation: isRecording ? 'micPulse 1s ease-in-out infinite' : 'none',
-          }}
-        >
-          {muted ? '🔇' : isRecording ? '🔴' : '🎙'}
-        </button>
+    return (
+      <div style={{
+        height: 62, flexShrink: 0,
+        background: '#0b0c11',
+        borderTop: '1px solid rgba(255,255,255,0.05)',
+        display: 'flex', alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: '0 20px',
+        gap: 12,
+      }}>
 
-        {/* Camera */}
-        <button
-          onClick={() => setCameraOn((v) => !v)}
-          title={cameraOn ? 'Turn camera off' : 'Turn camera on'}
-          style={{
-            ...ctrlBtn,
-            background: cameraOn ? '#1a1d28' : 'rgba(239,68,68,0.1)',
-            color: cameraOn ? '#94a3b8' : '#f87171',
-            border: cameraOn ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(239,68,68,0.2)',
-          }}
-        >
-          {cameraOn ? '📷' : '🚫'}
-        </button>
-
-        {/* Submit / Next — primary action */}
-        <button
-          onClick={feedback ? handleNext : handleSubmit}
-          disabled={loading || advancing || (!feedback && !answer.trim() && !isLeetcode)}
-          title={feedback ? (advancing ? 'Loading…' : 'Next') : 'Submit answer'}
-          style={{
-            width: 46, height: 46, borderRadius: '50%',
-            background: '#ffffff', color: '#0f0f13',
-            border: 'none', fontWeight: 700, fontSize: 18,
-            cursor: 'pointer',
-            opacity: (loading || advancing || (!feedback && !answer.trim() && !isLeetcode)) ? 0.4 : 1,
-            flexShrink: 0,
-          }}
-        >
-          {loading || advancing ? '…' : feedback ? '→' : '✓'}
-        </button>
-
-        {/* End session */}
-        <button
-          onClick={reset}
-          title="End interview"
-          style={{
-            ...ctrlBtn,
-            background: 'rgba(239,68,68,0.08)',
-            color: '#f87171',
-            border: '1px solid rgba(239,68,68,0.12)',
-          }}
-        >
-          ■
-        </button>
-      </div>
-
-      {/* Right — speaker, type, face analysis */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, position: 'relative' }}>
-        {/* Speaker select */}
-        <div style={{ position: 'relative' }}>
-          <button
-            onClick={() => setShowSpeakerMenu((v) => !v)}
-            title="Select speaker"
-            style={ctrlBtn}
-          >
-            🔊
-          </button>
-          {showSpeakerMenu && (
-            <div style={{
-              position: 'absolute', bottom: '100%', right: 0, marginBottom: 8,
-              background: '#1a1d28', border: '1px solid rgba(255,255,255,0.08)',
-              borderRadius: 8, padding: '4px 0', minWidth: 220, zIndex: 50,
-              boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
-            }}>
-              <div style={{ padding: '6px 14px 4px', fontSize: 10, color: '#4a5168', fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase' }}>
-                Audio Output
-              </div>
-              {audioOutputs.length === 0 ? (
-                <div style={{ padding: '6px 14px', fontSize: 12, color: '#4a5168' }}>
-                  No devices found (Chrome only)
-                </div>
-              ) : audioOutputs.map((d) => (
-                <div
-                  key={d.deviceId}
-                  onClick={() => setShowSpeakerMenu(false)}
-                  style={{ padding: '7px 14px', fontSize: 12, color: '#94a3b8', cursor: 'pointer' }}
-                >
-                  {d.label || `Speaker ${d.deviceId.slice(0, 8)}`}
-                </div>
-              ))}
-            </div>
-          )}
+        {/* ── Left: timer + round label ── */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flexShrink: 0 }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            background: timerPct >= 95 ? 'rgba(239,68,68,0.1)' : timerPct >= 80 ? 'rgba(245,158,11,0.08)' : 'rgba(255,255,255,0.04)',
+            border: `1px solid ${timerPct >= 95 ? 'rgba(239,68,68,0.25)' : timerPct >= 80 ? 'rgba(245,158,11,0.2)' : 'rgba(255,255,255,0.06)'}`,
+            borderRadius: 8, padding: '5px 10px',
+            color: timerColor2, fontSize: 12, fontWeight: 600, fontVariantNumeric: 'tabular-nums',
+          }}>
+            <IconClock />
+            {formatTime(timeRemaining)}
+          </div>
+          <div style={{
+            ...chip,
+            fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600,
+          }}>
+            {currentRound.type.charAt(0).toUpperCase() + currentRound.type.slice(1)}
+          </div>
         </div>
 
-        {/* Text input toggle */}
-        <button
-          onClick={() => setTextMode((v) => !v)}
-          style={toggleBtn(textMode, 'rgba(34,197,94,0.1)', 'rgba(34,197,94,0.25)', '#4ade80')}
-        >
-          ⌨️ Type
-        </button>
+        {/* ── Center: core action buttons ── */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
 
-        {/* Face analysis toggle */}
-        <button
-          onClick={() => setFaceAnalysisEnabled((v) => !v)}
-          style={toggleBtn(faceAnalysisEnabled)}
-        >
-          <span>👁</span>
-          <span>Face Analysis</span>
-          <span style={{
-            width: 6, height: 6, borderRadius: '50%',
-            background: faceAnalysisEnabled ? '#818cf8' : '#3d4459',
-            flexShrink: 0,
-          }} />
-        </button>
+          {/* Mic toggle */}
+          <button
+            onClick={handleMic}
+            title={muted ? 'Unmute mic' : 'Mute mic'}
+            style={{
+              ...ctrlBtn,
+              background: muted ? 'rgba(239,68,68,0.12)' : isRecording ? 'rgba(34,197,94,0.12)' : 'rgba(255,255,255,0.04)',
+              color: muted ? '#f87171' : isRecording ? '#4ade80' : '#64748b',
+              border: `1px solid ${muted ? 'rgba(239,68,68,0.3)' : isRecording ? 'rgba(34,197,94,0.25)' : 'rgba(255,255,255,0.07)'}`,
+              animation: isRecording && !muted ? 'micPulse 1.4s ease-in-out infinite' : 'none',
+              position: 'relative',
+            }}
+          >
+            {muted ? <IconMicOff /> : <IconMic />}
+            {isRecording && !muted && (
+              <span style={{ position: 'absolute', top: 7, right: 7, width: 5, height: 5, borderRadius: '50%', background: '#ef4444' }} />
+            )}
+          </button>
 
-        {/* Coach toggle */}
-        <button
-          onClick={handleOpenCoach}
-          title="Open coach"
-          style={toggleBtn(coach.isOpen, 'rgba(99,102,241,0.15)', 'rgba(99,102,241,0.35)', '#a5b4fc')}
-        >
-          <span>🧠</span>
-          <span>Coach</span>
-          {silenceNudge && !coach.isOpen && (
-            <span style={{
-              width: 6, height: 6, borderRadius: '50%',
-              background: '#f59e0b',
+          {/* Camera toggle */}
+          <button
+            onClick={() => setCameraOn((v) => !v)}
+            title={cameraOn ? 'Turn camera off' : 'Turn camera on'}
+            style={{
+              ...ctrlBtn,
+              background: cameraOn ? 'rgba(255,255,255,0.04)' : 'rgba(239,68,68,0.1)',
+              color: cameraOn ? '#64748b' : '#f87171',
+              border: `1px solid ${cameraOn ? 'rgba(255,255,255,0.07)' : 'rgba(239,68,68,0.25)'}`,
+            }}
+          >
+            {cameraOn ? <IconVideo /> : <IconVideoOff />}
+          </button>
+
+          {/* Divider */}
+          <div style={{ width: 1, height: 22, background: 'rgba(255,255,255,0.06)', margin: '0 4px' }} />
+
+          {/* Coach */}
+          <button
+            onClick={handleEnterCoach}
+            title="Open coach"
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              height: 36, padding: '0 14px',
+              background: 'rgba(99,102,241,0.12)',
+              border: '1px solid rgba(99,102,241,0.3)',
+              borderRadius: 8,
+              color: '#a5b4fc',
+              fontSize: 12, fontWeight: 600,
+              cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0,
+            }}
+          >
+            <IconLightbulb />
+            Coach
+          </button>
+
+          {/* Submit / Next — primary CTA */}
+          <button
+            onClick={feedback ? handleNext : handleSubmit}
+            disabled={submitDisabled}
+            title={feedback ? 'Next question' : 'Submit answer'}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 7,
+              height: 36, padding: '0 16px',
+              background: submitDisabled ? 'rgba(255,255,255,0.04)' : '#ffffff',
+              color: submitDisabled ? '#2d3148' : '#0a0a0d',
+              border: submitDisabled ? '1px solid rgba(255,255,255,0.06)' : 'none',
+              borderRadius: 8,
+              fontSize: 12, fontWeight: 700,
+              cursor: submitDisabled ? 'not-allowed' : 'pointer',
               flexShrink: 0,
-              animation: 'coachNudgeDot 1s ease-in-out infinite',
+              transition: 'background 0.15s, color 0.15s',
+            }}
+          >
+            {loading || advancing
+              ? <><IconLoader /><span>Loading</span></>
+              : feedback
+              ? <><IconArrowRight /><span>Next</span></>
+              : <><IconCheck /><span>Submit</span></>
+            }
+          </button>
+
+          {/* Divider */}
+          <div style={{ width: 1, height: 22, background: 'rgba(255,255,255,0.06)', margin: '0 4px' }} />
+
+          {/* End session */}
+          <button
+            onClick={reset}
+            title="End interview"
+            style={{
+              ...ctrlBtn,
+              background: 'rgba(239,68,68,0.08)',
+              color: '#f87171',
+              border: '1px solid rgba(239,68,68,0.2)',
+            }}
+          >
+            <IconSquare />
+          </button>
+        </div>
+
+        {/* ── Right: toggles + speaker ── */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, position: 'relative' }}>
+
+          {/* Speaker */}
+          <div style={{ position: 'relative' }}>
+            <button
+              onClick={() => setShowSpeakerMenu((v) => !v)}
+              title="Audio output"
+              style={{
+                ...ctrlBtn,
+                background: showSpeakerMenu ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.04)',
+                color: showSpeakerMenu ? '#94a3b8' : '#475569',
+                border: `1px solid ${showSpeakerMenu ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.06)'}`,
+              }}
+            >
+              <IconVolume />
+            </button>
+            {showSpeakerMenu && (
+              <div style={{
+                position: 'absolute', bottom: 'calc(100% + 8px)', right: 0,
+                background: '#13151f', border: '1px solid rgba(255,255,255,0.08)',
+                borderRadius: 10, padding: '6px 0', minWidth: 230, zIndex: 50,
+                boxShadow: '0 8px 32px rgba(0,0,0,0.7)',
+              }}>
+                <div style={{ padding: '6px 14px 5px', fontSize: 10, color: '#334155', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+                  Audio Output
+                </div>
+                {audioOutputs.length === 0 ? (
+                  <div style={{ padding: '8px 14px', fontSize: 12, color: '#334155' }}>No devices found</div>
+                ) : audioOutputs.map((d) => (
+                  <div key={d.deviceId} onClick={() => setShowSpeakerMenu(false)}
+                    style={{ padding: '8px 14px', fontSize: 12, color: '#94a3b8', cursor: 'pointer' }}>
+                    {d.label || `Speaker ${d.deviceId.slice(0, 8)}`}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Type toggle */}
+          <button
+            onClick={() => setTextMode((v) => !v)}
+            title={textMode ? 'Switch to voice' : 'Switch to text input'}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              height: 36, padding: '0 12px',
+              background: textMode ? 'rgba(34,197,94,0.1)' : 'rgba(255,255,255,0.04)',
+              border: `1px solid ${textMode ? 'rgba(34,197,94,0.25)' : 'rgba(255,255,255,0.06)'}`,
+              borderRadius: 8,
+              color: textMode ? '#4ade80' : '#475569',
+              fontSize: 12, fontWeight: 600,
+              cursor: 'pointer', whiteSpace: 'nowrap',
+            }}
+          >
+            <IconKeyboard />
+            Type
+          </button>
+
+          {/* Face analysis toggle */}
+          <button
+            onClick={() => setFaceAnalysisEnabled((v) => !v)}
+            title={faceAnalysisEnabled ? 'Disable face analysis' : 'Enable face analysis'}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              height: 36, padding: '0 12px',
+              background: faceAnalysisEnabled ? 'rgba(99,102,241,0.1)' : 'rgba(255,255,255,0.04)',
+              border: `1px solid ${faceAnalysisEnabled ? 'rgba(99,102,241,0.25)' : 'rgba(255,255,255,0.06)'}`,
+              borderRadius: 8,
+              color: faceAnalysisEnabled ? '#818cf8' : '#475569',
+              fontSize: 12, fontWeight: 600,
+              cursor: 'pointer', whiteSpace: 'nowrap',
+            }}
+          >
+            <IconEye />
+            Face
+            <span style={{
+              width: 5, height: 5, borderRadius: '50%',
+              background: faceAnalysisEnabled ? '#818cf8' : '#1e2235',
+              flexShrink: 0,
             }} />
-          )}
-        </button>
+          </button>
+        </div>
 
+        <style>{`
+          @keyframes micPulse {
+            0%,100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.35); }
+            50%      { box-shadow: 0 0 0 5px rgba(239,68,68,0); }
+          }
+          @keyframes emotionPulse {
+            0%,100% { opacity: 1; }
+            50%      { opacity: 0.35; }
+          }
+          @keyframes spin {
+            to { transform: rotate(360deg); }
+          }
+        `}</style>
       </div>
+    )
+  }
 
-      <style>{`
-        @keyframes micPulse {
-          0%,100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.4); }
-          50%      { box-shadow: 0 0 0 6px rgba(239,68,68,0); }
-        }
-        @keyframes emotionPulse {
-          0%,100% { opacity: 1; }
-          50%      { opacity: 0.35; }
-        }
-        @keyframes coachNudgeDot {
-          0%,100% { opacity: 1; transform: scale(1); }
-          50%      { opacity: 0.4; transform: scale(0.7); }
-        }
-      `}</style>
-    </div>
-  )
+  // ── COACH MODE — full-screen, pauses the interview ───────────────────────
+  if (coachMode) {
+    return (
+      <CoachMode
+        messages={coach.messages}
+        isStreaming={coach.isStreaming}
+        sessionInfo={{
+          company,
+          role,
+          roundType: currentRound.type,
+          questionNumber: qIndex + 1,
+          totalQuestions,
+          timeRemaining: pausedTimeRemainingRef.current,
+          currentQuestion: followUpQuestion ?? question,
+        }}
+        onSend={coach.sendMessage}
+        onReturn={handleReturnFromCoach}
+      />
+    )
+  }
 
   // ── SKILLS TASK LAYOUT (Phase 1) ──────────────────────────────────────────
   if (isSkillsTask && currentRound.skillsPhase === 'task' && currentRound.task) {
@@ -772,8 +891,8 @@ export default function InterviewSession({ token }: Props) {
           display: 'flex', alignItems: 'center',
           padding: '0 16px', gap: 10,
         }}>
-          <span style={{ ...chip, color: timerPct >= 95 ? '#f87171' : timerPct >= 80 ? '#fbbf24' : '#c4c9d8' }}>
-            ⏱ {formatTime(timeRemaining)}
+          <span style={{ ...chip, display: 'flex', alignItems: 'center', gap: 5, color: timerPct >= 95 ? '#f87171' : timerPct >= 80 ? '#fbbf24' : '#c4c9d8' }}>
+            <IconClock />{formatTime(timeRemaining)}
           </span>
           <span style={{ ...chip, color: '#7c85f0' }}>Skills Assessment</span>
           <div style={{ flex: 1 }} />
@@ -788,7 +907,7 @@ export default function InterviewSession({ token }: Props) {
             }}
             title={cameraOn ? 'Camera on' : 'Camera off — required'}
           >
-            {cameraOn ? '📷' : '🚫'}
+            {cameraOn ? <IconVideo /> : <IconVideoOff />}
           </button>
           {/* User camera pip */}
           {cameraOn && (
@@ -801,7 +920,15 @@ export default function InterviewSession({ token }: Props) {
               <AvatarPanel character={character} isSpeaking={isSpeaking} />
             </div>
           )}
-          <button onClick={reset} title="End interview" style={{ ...ctrlBtn, background: 'rgba(239,68,68,0.08)', color: '#f87171', border: '1px solid rgba(239,68,68,0.12)' }}>■</button>
+          <button
+            onClick={handleEnterCoach}
+            title="Open coach"
+            style={toggleBtn(false, 'rgba(99,102,241,0.15)', 'rgba(99,102,241,0.35)', '#a5b4fc')}
+          >
+            <IconLightbulb />
+            <span>Coach</span>
+          </button>
+          <button onClick={reset} title="End interview" style={{ ...ctrlBtn, background: 'rgba(239,68,68,0.08)', color: '#f87171', border: '1px solid rgba(239,68,68,0.12)' }}><IconSquare /></button>
         </div>
 
         {/* Task editor — fills remaining height */}
@@ -819,9 +946,9 @@ export default function InterviewSession({ token }: Props) {
             // Phase 1 round-complete feedback (edge case)
             <div style={{ padding: 32, display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 600 }}>
               <div style={{ background: feedback.passed ? 'rgba(22,101,52,0.5)' : 'rgba(127,29,29,0.5)', border: `1px solid ${feedback.passed ? 'rgba(34,197,94,0.25)' : 'rgba(239,68,68,0.25)'}`, borderRadius: 10, padding: '16px 20px', fontSize: 13, lineHeight: 1.6 }}>
-                {feedback.what_worked && <p style={{ color: '#86efac', margin: '0 0 8px' }}><strong>✓ Worked: </strong>{feedback.what_worked}</p>}
-                {feedback.what_was_missing && <p style={{ color: '#fde68a', margin: '0 0 8px' }}><strong>△ Missing: </strong>{feedback.what_was_missing}</p>}
-                {feedback.stronger_version && <p style={{ color: '#93c5fd', margin: 0 }}><strong>→ Stronger: </strong>{feedback.stronger_version}</p>}
+                {feedback.what_worked && <p style={{ color: '#86efac', margin: '0 0 8px', display: 'flex', gap: 6, alignItems: 'flex-start' }}><span style={{ flexShrink: 0, marginTop: 2 }}><IconCheck /></span><span><strong>Worked: </strong>{feedback.what_worked}</span></p>}
+                {feedback.what_was_missing && <p style={{ color: '#fde68a', margin: '0 0 8px', display: 'flex', gap: 6, alignItems: 'flex-start' }}><span style={{ flexShrink: 0, marginTop: 2 }}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span><span><strong>Missing: </strong>{feedback.what_was_missing}</span></p>}
+                {feedback.stronger_version && <p style={{ color: '#93c5fd', margin: 0, display: 'flex', gap: 6, alignItems: 'flex-start' }}><span style={{ flexShrink: 0, marginTop: 2 }}><IconArrowRight /></span><span><strong>Stronger: </strong>{feedback.stronger_version}</span></p>}
               </div>
               <button onClick={handleNext} disabled={advancing} style={{ background: '#fff', color: '#0f0f13', border: 'none', borderRadius: 8, padding: '10px 28px', fontWeight: 600, fontSize: 13, cursor: 'pointer', alignSelf: 'flex-start' }}>
                 {advancing ? 'Loading…' : 'Continue →'}
@@ -850,8 +977,8 @@ export default function InterviewSession({ token }: Props) {
                 style={{ width: '100%', height: '100%', objectFit: 'cover', display: cameraOn ? 'block' : 'none' }}
               />
               {!cameraOn && (
-                <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28 }}>
-                  🧑‍💻
+                <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#3d4459' }}>
+                  <IconUser />
                 </div>
               )}
               <div style={{ position: 'absolute', bottom: 6, left: 8, fontSize: 10, color: 'rgba(255,255,255,0.4)', background: 'rgba(0,0,0,0.5)', borderRadius: 4, padding: '2px 7px', display: 'flex', alignItems: 'center', gap: 5 }}>
@@ -974,8 +1101,12 @@ export default function InterviewSession({ token }: Props) {
               width: 96, height: 96, borderRadius: '50%',
               background: '#1e2130', border: '2px solid #2a3050',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: '2.4rem',
-            }}>🧑‍💻</div>
+              color: '#3d4459',
+            }}>
+              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+              </svg>
+            </div>
             <span style={{ fontSize: 13, color: '#3d4459' }}>Camera is off</span>
           </div>
         )}
@@ -1038,7 +1169,7 @@ export default function InterviewSession({ token }: Props) {
             </div>
             <div style={{ width: 1, height: 20, background: 'rgba(255,255,255,0.1)' }} />
             <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)' }}>
-              {emotion.eye_contact ? '👁 Eye contact' : '↗ Look at camera'}
+              {emotion.eye_contact ? 'Eye contact' : '↗ Look at camera'}
             </div>
             <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)' }}>
               {Math.round(emotion.confidence * 100)}% conf
@@ -1074,29 +1205,6 @@ export default function InterviewSession({ token }: Props) {
           </div>
         )}
 
-        {/* Silence nudge — appears bottom-center after 25s of no answer */}
-        {silenceNudge && !coach.isOpen && !feedback && (
-          <div
-            onClick={handleOpenCoach}
-            style={{
-              position: 'absolute', bottom: 76, left: '50%', transform: 'translateX(-50%)',
-              background: 'rgba(99,102,241,0.12)',
-              border: '1px solid rgba(99,102,241,0.3)',
-              borderRadius: 20,
-              padding: '5px 14px',
-              fontSize: 11, fontWeight: 600, color: '#a5b4fc',
-              cursor: 'pointer',
-              display: 'flex', alignItems: 'center', gap: 6,
-              zIndex: 25,
-              whiteSpace: 'nowrap',
-              animation: 'fadeInUp 0.3s ease',
-            }}
-          >
-            <span>🧠</span>
-            Stuck? Coach can help decode this →
-          </div>
-        )}
-
         {/* ── Bottom overlay: feedback / text input / question ── */}
 
         {feedback ? (
@@ -1115,18 +1223,23 @@ export default function InterviewSession({ token }: Props) {
               backdropFilter: 'blur(4px)',
             }}>
               {feedback.what_worked && (
-                <p style={{ color: '#86efac', margin: '0 0 6px' }}>
-                  <strong>✓ Worked: </strong>{feedback.what_worked}
+                <p style={{ color: '#86efac', margin: '0 0 6px', display: 'flex', gap: 7, alignItems: 'flex-start' }}>
+                  <span style={{ flexShrink: 0, marginTop: 2 }}><IconCheck /></span>
+                  <span><strong>Worked: </strong>{feedback.what_worked}</span>
                 </p>
               )}
               {feedback.what_was_missing && (
-                <p style={{ color: '#fde68a', margin: '0 0 6px' }}>
-                  <strong>△ Missing: </strong>{feedback.what_was_missing}
+                <p style={{ color: '#fde68a', margin: '0 0 6px', display: 'flex', gap: 7, alignItems: 'flex-start' }}>
+                  <span style={{ flexShrink: 0, marginTop: 2 }}>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                  </span>
+                  <span><strong>Missing: </strong>{feedback.what_was_missing}</span>
                 </p>
               )}
               {feedback.stronger_version && (
-                <p style={{ color: '#93c5fd', margin: 0 }}>
-                  <strong>→ Stronger: </strong>{feedback.stronger_version}
+                <p style={{ color: '#93c5fd', margin: 0, display: 'flex', gap: 7, alignItems: 'flex-start' }}>
+                  <span style={{ flexShrink: 0, marginTop: 2 }}><IconArrowRight /></span>
+                  <span><strong>Stronger: </strong>{feedback.stronger_version}</span>
                 </p>
               )}
             </div>
@@ -1159,7 +1272,11 @@ export default function InterviewSession({ token }: Props) {
               borderRadius: 10, padding: '12px 16px',
               display: 'flex', alignItems: 'flex-start', gap: 12,
             }}>
-              <span style={{ fontSize: 15, flexShrink: 0, marginTop: 1 }}>🎤</span>
+              <span style={{ flexShrink: 0, marginTop: 1, color: '#4ade80' }}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>
+                </svg>
+              </span>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 13, color: '#e2e8f0', lineHeight: 1.55, wordBreak: 'break-word' }}>
                   {pendingTranscript}
@@ -1202,7 +1319,7 @@ export default function InterviewSession({ token }: Props) {
             zIndex: 20,
           }}>
             <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)', marginBottom: 8 }}>
-              {muted ? '🔇 Mic muted — type your answer' : `Q${qIndex + 1} — Type your answer`}
+              {muted ? 'Mic muted — type your answer' : `Q${qIndex + 1} — Type your answer`}
             </div>
             <textarea
               style={{
@@ -1261,22 +1378,6 @@ export default function InterviewSession({ token }: Props) {
       </div>
 
       <ControlsBar />
-
-      {/* Coach panel — fixed position, slides in from right, sits above all overlays */}
-      <CoachPanel
-        isOpen={coach.isOpen}
-        messages={coach.messages}
-        isStreaming={coach.isStreaming}
-        onClose={coach.close}
-        onSend={coach.sendMessage}
-      />
-
-      <style>{`
-        @keyframes fadeInUp {
-          from { opacity: 0; transform: translateX(-50%) translateY(6px); }
-          to   { opacity: 1; transform: translateX(-50%) translateY(0); }
-        }
-      `}</style>
     </div>
   )
 }

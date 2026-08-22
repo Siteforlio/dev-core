@@ -17,6 +17,14 @@ _default_db_url = (
     if _user_data
     else "sqlite+aiosqlite:///./devcore.db"
 )
+# Kokoro model files are large (~400 MB) and downloaded on first TTS use.
+# Store them in the user's writable data directory in packaged mode so the
+# app installation directory (which may be read-only) is never written to.
+_default_kokoro_dir = (
+    os.path.join(_user_data, 'models', 'kokoro')
+    if _user_data
+    else "backend/models/kokoro"
+)
 
 
 class Settings(BaseSettings):
@@ -55,8 +63,8 @@ class Settings(BaseSettings):
     adzuna_api_key: str = ""  # https://developer.adzuna.com/
     reed_api_key: str = ""    # https://www.reed.co.uk/developers/jobseeker
     scrapfly_key: str = ""    # https://scrapfly.io/ — used for Wellfound
-    # Kokoro TTS — local ONNX model directory (run backend/scripts/download_kokoro.py first)
-    kokoro_models_dir: str = "backend/models/kokoro"
+    # Kokoro TTS — local ONNX model directory, auto-downloaded on first TTS use
+    kokoro_models_dir: str = _default_kokoro_dir
 
 settings = Settings()
 

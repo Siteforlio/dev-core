@@ -1,5 +1,5 @@
 from typing import Optional, Literal
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 # ── JSONB field schemas ───────────────────────────────────────────────────────
@@ -49,6 +49,7 @@ class CreateSessionRequest(BaseModel):
     interview_stage: str = "hr_interview"
     jd_text: str | None = None
     manager_name: str | None = None
+    topics: list[str] = []   # competency areas to test on (e.g. ["Backend Engineering", "System Design"])
 
 
 class SkillsTaskSchema(BaseModel):
@@ -102,8 +103,8 @@ class AdvanceRoundRequest(BaseModel):
 
 
 class CoachMessage(BaseModel):
-    role: str   # "user" | "assistant"
-    content: str
+    role: Literal["user", "assistant"]
+    content: str = Field(..., max_length=4000)
 
 
 class CoachRequest(BaseModel):
@@ -111,8 +112,25 @@ class CoachRequest(BaseModel):
     round_type: str = "behavioral"
     career_track: str = "technology"
     level: str = "mid_level"
-    message: Optional[str] = None          # None on first open (decode mode)
+    message: Optional[str] = Field(None, max_length=2000)   # None on first open (decode mode)
     conversation_history: list[CoachMessage] = []
+    session_context: Optional[dict] = None                   # snapshot captured when user enters coach mode
+
+
+class InterpretRequest(BaseModel):
+    context: str = Field(..., max_length=8000)   # raw pasted text — JD, invite email, interview page, etc.
+
+
+class InterpretResponse(BaseModel):
+    company: str = ""
+    role: str = ""
+    career_track: str = "technology"
+    level: str = "mid_level"
+    interview_stage: str = "hr_interview"
+    round_types: list[str] = ["behavioral"]
+    topics: list[str] = []
+    time_minutes: Optional[int] = None
+    summary: str = ""           # one-line human-readable description of what was detected
 
 
 class GradeResponse(BaseModel):

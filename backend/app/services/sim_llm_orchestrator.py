@@ -1,6 +1,7 @@
 # backend/app/services/sim_llm_orchestrator.py
 import json
 import re
+import asyncio
 import openai
 from dataclasses import dataclass, field
 from app.core.config import settings
@@ -8,7 +9,7 @@ from app.core.config import settings
 
 @dataclass
 class ToolCall:
-    tool: str           # "terminal" | "code" | "file"
+    tool: str
     command: str
     output: str = ""
     duration_ms: int = 0
@@ -16,9 +17,10 @@ class ToolCall:
 
 @dataclass
 class SimResponse:
-    text: str
+    text: str                          # spoken interviewer response
     tool_calls: list[ToolCall] = field(default_factory=list)
     end_signal: bool = False
+    feedback: dict = field(default_factory=dict)  # private — sent to coach only, never shown
 
 
 @dataclass
@@ -54,6 +56,19 @@ class SimLLMOrchestrator:
         except openai.APIError as e:
             raise RuntimeError(f"LLM call failed: {e}") from e
 
+    async def _call_stream(self, messages: list[dict], max_tokens: int = 1024):
+        """Async generator yielding text chunks from streaming completion."""
+        stream = await self._client.chat.completions.create(
+            model=self._fast,
+            messages=messages,
+            max_tokens=max_tokens,
+            stream=True,
+        )
+        async for chunk in stream:
+            delta = chunk.choices[0].delta.content if chunk.choices else None
+            if delta:
+                yield delta
+
     def _parse_json(self, raw: str, fallback: dict) -> dict:
         if isinstance(raw, dict):
             return raw
@@ -67,7 +82,6 @@ class SimLLMOrchestrator:
                 return fallback
 
     def _get_field(self, brief: dict, name: str) -> str:
-        """Extract a field value — supports both {label,value} and {k,v} shapes."""
         for f in brief.get("fields", []):
             if not isinstance(f, dict):
                 continue
@@ -78,7 +92,6 @@ class SimLLMOrchestrator:
 
     @staticmethod
     def _flatten_summary(parts: list) -> str:
-        """Flatten summaryParts — handles plain strings and {hl: str} objects."""
         out = []
         for p in parts:
             if isinstance(p, str):
@@ -91,10 +104,7 @@ class SimLLMOrchestrator:
         role_playing = self._get_field(brief, "I'll play")
         pressure = self._get_field(brief, "Pressure")
         raw_summary = brief.get("summaryParts", ["a simulation"])
-        if isinstance(raw_summary, list):
-            summary = self._flatten_summary(raw_summary)
-        else:
-            summary = str(raw_summary)
+        summary = self._flatten_summary(raw_summary) if isinstance(raw_summary, list) else str(raw_summary)
         prompt = (
             f"You are about to play a character in a simulation. "
             f"Your character: {role_playing}. "
@@ -107,7 +117,6 @@ class SimLLMOrchestrator:
         return await self._call(prompt)
 
     async def opening_message(self, brief: dict, persona_note: str) -> str:
-        """Generate the AI interviewer's opening line to kick off the simulation."""
         scenario = self._get_field(brief, "Scenario")
         format_field = self._get_field(brief, "Format")
         role_playing = self._get_field(brief, "I'll play")
@@ -123,14 +132,27 @@ class SimLLMOrchestrator:
         )
         return await self._call(prompt)
 
-    async def respond(
+    async def respond_stream(
         self,
         brief: dict,
         turns: list[dict],
         user_content: str,
         attachment_context: str,
         time_remaining_pct: float,
-    ) -> SimResponse:
+    ):
+        """
+        Async generator that streams the interviewer's spoken response token by token.
+
+        Yields: str chunks for the spoken response.
+        Final yield: a dict {"__feedback__": {...}} containing private evaluation data.
+
+        Architecture:
+        - Single LLM call returns JSON with two fields:
+            "say": <interviewer's spoken words — streamed>
+            "eval": <private feedback — returned at end>
+        - Caller streams "say" to TTS immediately for low latency.
+        - "eval" is stored and sent to coach only, never rendered on screen.
+        """
         scenario = self._get_field(brief, "Scenario")
         format_field = self._get_field(brief, "Format")
         push_on = self._get_field(brief, "I'll push on")
@@ -138,26 +160,28 @@ class SimLLMOrchestrator:
 
         time_pressure = ""
         if time_remaining_pct < 0.10:
-            time_pressure = "CRITICAL: Less than 10% of time remains. You may cut off mid-sentence if needed. Be very direct."
+            time_pressure = "CRITICAL: Less than 10% time remains. Be very direct, cut if needed."
         elif time_remaining_pct < 0.20:
-            time_pressure = "Time is running short. Be more pressing and direct."
+            time_pressure = "Time is running short. Be more pressing."
 
+        # Build conversation history (last 20 turns)
+        history_turns = turns[-20:] if len(turns) > 20 else turns
         history = "\n".join(
             f"[{t['speaker'].upper()}] {t['content']}"
-            for t in (turns[-20:] if len(turns) > 20 else turns)
+            for t in history_turns
         )
+
+        # Count user turns to track interview depth
+        user_turns = [t for t in turns if t.get("speaker") == "user"]
+        turn_number = len(user_turns) + 1
 
         tool_instruction = (
-            'If you need to run code or read a file, reply with JSON in this exact format: '
-            '{"tool": "terminal", "command": "<shell command>"} — on its own line before your spoken response. '
-            'For file reads: {"tool": "file", "command": "<path>"}. '
-            'For code execution: {"tool": "code", "command": "<python code>"}. '
-            'You may only use a tool if the attachment context shows files or code are available.'
-            if attachment_context else
-            ""
+            'If you need to run code or read a file, include a tool call JSON on its own line '
+            'inside "say": {"tool": "terminal", "command": "<cmd>"}. '
+            if attachment_context else ""
         )
 
-        prompt = f"""You are playing this character:
+        system_prompt = f"""You are playing this interviewer character:
 {persona_note}
 
 Scenario: {scenario}
@@ -165,27 +189,69 @@ Format: {format_field}
 Push on: {push_on}
 {time_pressure}
 
-Attached context (pre-analyzed — you know this already, simulate discovering it live):
-{attachment_context or "No attachments."}
+INTERVIEW INTELLIGENCE RULES (follow these strictly):
+1. VAGUE ANSWERS: If the candidate's answer lacks specifics, concrete examples, or measurable outcomes — probe deeper. Ask "Can you give me a specific example?" or "What was the actual outcome?"
+2. OFF-TOPIC DRIFT: If the candidate starts talking about something unrelated to the scenario/question — redirect them immediately. Say something like "That's interesting, but let's stay focused on [topic]."
+3. INCONSISTENCY: If the candidate contradicts something they said earlier in this conversation — call it out naturally. "Earlier you mentioned X, but now you're saying Y — help me understand."
+4. INCOMPLETE ANSWERS: If they only answered part of a multi-part question — explicitly ask about the missing part.
+5. STRONG ANSWERS: If the answer is clear, specific, and complete — acknowledge briefly and move the interview forward naturally.
+6. FOLLOW-UP DEPTH: Push for 2-3 layers of depth on important topics before moving on. Real interviewers do this.
+
+{tool_instruction}
 
 Conversation so far:
 {history}
 
-[USER]: {user_content}
+[CANDIDATE - Turn {turn_number}]: {user_content}
 
-{tool_instruction}
+Attachments: {attachment_context or "None."}"""
 
-Respond as your character now. Stay in role. One focused response — no rambling.
-If the simulation is naturally complete (e.g. Q&A period ended, session goal achieved),
-add a final line: END_SESSION"""
+        user_prompt = """Respond with ONLY this JSON (no other text):
+{
+  "say": "<your in-character spoken response — what you actually say out loud>",
+  "end_session": false,
+  "eval": {
+    "answer_quality": "<strong|adequate|vague|incomplete|off_topic|inconsistent>",
+    "score": <0-10 float for this specific answer>,
+    "what_worked": "<one sentence — what was good, or empty string>",
+    "gap": "<one sentence — what was missing or wrong, or empty string>",
+    "follow_up_needed": <true|false>,
+    "topic_drift": <true|false>,
+    "inconsistency": <true|false>
+  }
+}
 
-        raw = await self._call(prompt)
+Rules for "say":
+- Stay in character. No meta-commentary.
+- One focused response. No rambling.
+- If the simulation is naturally complete, set end_session to true and give a closing line.
+- Include END_SESSION as a word in "say" only if end_session is true."""
 
-        # Extract tool calls — parse each line that starts with {"tool":
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+
+        # Collect full response for JSON parsing
+        full_response = ""
+        async for chunk in self._call_stream(messages, max_tokens=1024):
+            full_response += chunk
+
+        # Parse JSON response
+        parsed = self._parse_json(full_response, {
+            "say": full_response,  # fallback: treat whole response as spoken text
+            "end_session": False,
+            "eval": {},
+        })
+
+        say_text = parsed.get("say", "").strip()
+        end_signal = bool(parsed.get("end_session", False)) or bool(re.search(r'\bEND_SESSION\b', say_text))
+        say_text = re.sub(r'\s*\bEND_SESSION\b\s*', '', say_text).strip()
+
+        # Extract tool calls from say_text
         tool_calls: list[ToolCall] = []
-        lines = raw.splitlines()
-        non_tool_lines = []
-        for line in lines:
+        clean_lines = []
+        for line in say_text.splitlines():
             stripped = line.strip()
             if stripped.startswith('{"tool":'):
                 try:
@@ -195,14 +261,39 @@ add a final line: END_SESSION"""
                         continue
                 except json.JSONDecodeError:
                     pass
-            non_tool_lines.append(line)
-        raw = "\n".join(non_tool_lines).strip()
+            clean_lines.append(line)
+        say_text = "\n".join(clean_lines).strip()
 
-        # END_SESSION detection (word-boundary safe)
-        end_signal = bool(re.search(r'\bEND_SESSION\b', raw))
-        text = re.sub(r'\s*\bEND_SESSION\b\s*', '', raw).strip()
+        # Yield the spoken text and feedback
+        yield say_text
+        yield {"__tool_calls__": [{"tool": tc.tool, "command": tc.command} for tc in tool_calls]}
+        yield {"__feedback__": parsed.get("eval", {}), "__end__": end_signal}
 
-        return SimResponse(text=text, tool_calls=tool_calls, end_signal=end_signal)
+    async def respond(
+        self,
+        brief: dict,
+        turns: list[dict],
+        user_content: str,
+        attachment_context: str,
+        time_remaining_pct: float,
+    ) -> SimResponse:
+        """Non-streaming wrapper — collects full response. Used as fallback."""
+        say_text = ""
+        feedback = {}
+        end_signal = False
+        tool_calls = []
+
+        async for item in self.respond_stream(brief, turns, user_content, attachment_context, time_remaining_pct):
+            if isinstance(item, str):
+                say_text = item
+            elif isinstance(item, dict):
+                if "__feedback__" in item:
+                    feedback = item["__feedback__"]
+                    end_signal = item.get("__end__", False)
+                elif "__tool_calls__" in item:
+                    tool_calls = [ToolCall(tool=t["tool"], command=t["command"]) for t in item["__tool_calls__"]]
+
+        return SimResponse(text=say_text, tool_calls=tool_calls, end_signal=end_signal, feedback=feedback)
 
     async def debrief(self, brief: dict, turns: list[dict], think: bool = True) -> DebriefResult:
         scenario = self._get_field(brief, "Scenario")
@@ -234,7 +325,7 @@ Format: {format_field}
 Transcript:
 {transcript}
 
-Return ONLY valid JSON with this exact structure:
+Return ONLY valid JSON:
 {{
   "overall_score": <float 0-10>,
   "hire_signal": "<strong_yes|yes|borderline|no|strong_no>",
@@ -246,13 +337,12 @@ Return ONLY valid JSON with this exact structure:
     "depth": <0-10>
   }},
   "scenario_scores": {{
-    "<dimension_name>": <0-10>,
-    ...  (2-4 dimensions specific to THIS scenario format, you decide what matters)
+    "<dimension>": <0-10>
   }},
   "summary": "<2-3 sentence honest summary>",
-  "strengths": ["<specific strength>", ...],
-  "improvements": ["<specific improvement>", ...],
-  "focus_areas": ["<top focus>", "<second>", "<third>"]
+  "strengths": ["<specific>"],
+  "improvements": ["<specific>"],
+  "focus_areas": ["<top>", "<second>", "<third>"]
 }}"""
 
         raw = await self._call(prompt, think=think)

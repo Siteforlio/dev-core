@@ -450,16 +450,13 @@ export function SuggestionCard() {
   }, [sessionPickerOpen])
 
   const handleStart = async () => {
-    console.log('[devcore] handleStart called')
     const t = await getOverlayToken()
-    console.log('[devcore] token:', t ? `${t.slice(0, 20)}…` : 'NULL')
     if (!t) {
-      console.error('[devcore] No token — cannot start session. Check localStorage auth key.')
+      console.error('[devcore] No token — cannot start session')
       return
     }
 
     const devcore = api()
-    console.log('[devcore] electronAPI.devcore:', devcore ? 'OK' : 'MISSING')
     if (!devcore) return
 
     try {
@@ -536,6 +533,7 @@ export function SuggestionCard() {
     const { sessionId: sid, sessionTitle: title } = useOverlayStore.getState()
     // Save session ref so Start can reconnect — do NOT clear messages or transcript
     if (sid) lastSessionRef.current = { id: sid, title, role: '', company: '' }
+    api()?.disableInteract?.()   // release mouse events immediately
     api()?.endSession?.()
     setSessionId(null)
     useOverlayStore.getState().setSessionStartedAt(null)
@@ -552,8 +550,14 @@ export function SuggestionCard() {
       .filter(m => !m.pending && m.role !== 'auto' && m.text)
       .slice(-10)
       .map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', text: m.text }))
-    // Show user message immediately
-    setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'user', text: trimmed }])
+    // Show user message + thinking state immediately — don't wait for backend round trip
+    setMessages(prev => [
+      ...prev,
+      { id: crypto.randomUUID(), role: 'user', text: trimmed },
+      { id: AI_PENDING_ID, role: 'ai', text: '', pending: true },
+    ])
+    setAiStreaming(true)
+    useOverlayStore.getState().setState('thinking')
     api()?.manualAsk?.({ text: trimmed, mode: 'hints', history })
     setAsk('')
   }
@@ -827,12 +831,25 @@ export function SuggestionCard() {
                     ? (
                         readingMode === 'teleprompter'
                           ? <TeleprompterMessage content={msg.text} pending={msg.pending} />
-                          : <>
-                              <MarkdownMessage content={msg.text} readingMode={readingMode} />
-                              {msg.pending && (
+                          : msg.pending
+                            ? /* Plain text while streaming — avoids re-parsing markdown on every token */
+                              <p
+                                className={readingMode === 'large'
+                                  ? 'font-semibold leading-snug tracking-[-0.01em]'
+                                  : 'font-medium leading-relaxed tracking-[-0.005em]'}
+                                style={{
+                                  fontSize: readingMode === 'large' ? '18px' : '14px',
+                                  background: 'linear-gradient(135deg, #e2e8f0 0%, #c4b5fd 55%, #93c5fd 100%)',
+                                  WebkitBackgroundClip: 'text',
+                                  WebkitTextFillColor: 'transparent',
+                                  backgroundClip: 'text',
+                                  whiteSpace: 'pre-wrap',
+                                }}
+                              >
+                                {msg.text}
                                 <span className="inline-block w-0.5 h-3.5 bg-violet-400 ml-0.5 animate-pulse align-middle" />
-                              )}
-                            </>
+                              </p>
+                            : <MarkdownMessage content={msg.text} readingMode={readingMode} />
                       )
                     : <span className="flex gap-1 items-center text-white/30">
                         <span className="w-1 h-1 rounded-full bg-violet-400 animate-bounce" style={{ animationDelay: '0ms' }} />

@@ -7,6 +7,7 @@ import { useJobHunter } from '../hooks/useJobHunter'
 import { useApiKeys, type ApiKeyInfo } from '../hooks/useApiKeys'
 import Sidebar from '../components/job-hunter/Sidebar'
 import SimulationBuilder from '../components/interview/SimulationBuilder'
+import SessionSetupForm from '../components/interview/SessionSetupForm'
 import CampaignList from '../components/job-hunter/CampaignList'
 import CampaignForm from '../components/job-hunter/CampaignForm'
 import CampaignProfileBuilder from '../components/job-hunter/CampaignProfileBuilder'
@@ -30,6 +31,7 @@ export default function Dashboard() {
   const { getStatus: getKeyStatus } = useApiKeys()
 
   const [activeModule, setActiveModule] = useState<Module>('debrief')
+  const [interviewMode, setInterviewMode] = useState<'simulation' | 'prep'>('simulation')
   const [showSessionSetup, setShowSessionSetup] = useState(false)
   const [pendingSessionId, setPendingSessionId] = useState<string | null>(null)
   const [missingLLM, setMissingLLM] = useState(false)
@@ -69,6 +71,7 @@ export default function Dashboard() {
     const offEnded = api.onSessionEnded?.(() => {
       useOverlayStore.getState().setSessionId(null)
       useOverlayStore.getState().setSessionStartedAt(null)
+      useOverlayStore.getState().setState('idle')
     })
     return () => { offStarted?.(); offEnded?.() }
   }, [])
@@ -232,9 +235,36 @@ export default function Dashboard() {
             /* ── Debrief Dashboard ── */
             <DebriefDashboard onStartSession={() => setShowSessionSetup(true)} pendingSessionId={pendingSessionId} />
           ) : activeModule === 'interview' ? (
-            /* ── Interview Prep — Simulation Builder ── */
-            <div style={{ height: '100%', overflow: 'hidden' }}>
-              <SimulationBuilder />
+            /* ── Interview — tab toggle between Simulation and Prep ── */
+            <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+              {/* Mode toggle */}
+              <div style={{ display: 'flex', gap: 4, padding: '12px 20px', borderBottom: '1px solid rgba(34,211,238,0.07)', flexShrink: 0 }}>
+                {(['simulation', 'prep'] as const).map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => setInterviewMode(m)}
+                    style={{
+                      padding: '5px 16px', borderRadius: 6, fontSize: 11, fontWeight: 600,
+                      fontFamily: 'monospace', letterSpacing: '0.08em', textTransform: 'uppercase',
+                      cursor: 'pointer', border: 'none',
+                      background: interviewMode === m ? 'rgba(34,211,238,0.12)' : 'transparent',
+                      color: interviewMode === m ? '#22d3ee' : 'rgba(148,163,184,0.5)',
+                      outline: interviewMode === m ? '1px solid rgba(34,211,238,0.25)' : 'none',
+                    }}
+                  >
+                    {m === 'simulation' ? 'Interview Simulation' : 'Interview Prep'}
+                  </button>
+                ))}
+              </div>
+              {interviewMode === 'simulation' ? (
+                <div style={{ flex: 1, overflow: 'hidden' }}>
+                  <SimulationBuilder />
+                </div>
+              ) : (
+                <div style={{ flex: 1, overflowY: 'auto', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '40px 20px' }}>
+                  <SessionSetupForm />
+                </div>
+              )}
             </div>
           ) : activeModule === 'settings' ? (
             /* ── Settings ── */

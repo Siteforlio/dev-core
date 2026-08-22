@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 BERT_COOLDOWN        = 0.5   # seconds between BERT triggers
 SUGGESTION_CACHE_TTL = 300   # 5 minutes — skip LLM for identical questions
-WS_BATCH_CHARS       = 12    # buffer chars before flushing to WebSocket
+WS_BATCH_CHARS       = 1     # flush tokens to WebSocket immediately for lowest latency
 
 # Per-message-type rate limits: (max_count, window_seconds)
 _RATE_LIMITS: dict[str, tuple[int, int]] = {
@@ -495,7 +495,72 @@ class OverlayService:
             asyncio.create_task(agent.handle_assessment_trigger({"action": "start"}))
 
         await _safe_send(ws, {"type": "status", "state": "listening", "latency_ms": 0})
+
+        # Stream a greeting so the user immediately sees what context is loaded.
+        asyncio.create_task(self._send_session_greeting(ws, ctx))
+
+        # Warm up the DeepSeek HTTP client in the background so the first
+        # user ask doesn't pay the TLS handshake + connection setup cost.
+        asyncio.create_task(self._warmup_llm_client())
+
         return ctx_mgr, rag, ctx, repo
+
+    # ------------------------------------------------------------------
+    # Session greeting — streamed on connect so the user sees context status
+    # ------------------------------------------------------------------
+
+    async def _send_session_greeting(self, ws: WebSocket, ctx: dict) -> None:
+        job_title     = ctx.get("job_title", "")
+        company       = ctx.get("company", "")
+        resume_text   = ctx.get("resume_text", "")
+        jd_text       = ctx.get("jd_text", "")
+        extra_context = ctx.get("extra_context", "")
+        mode          = ctx.get("assessmentMode") or ctx.get("assessment_mode") or ""
+
+        has_context = bool(job_title or company or resume_text or jd_text or extra_context)
+
+        if has_context:
+            # Summarise what's loaded — let the AI phrase it naturally
+            parts: list[str] = []
+            if job_title and company:
+                parts.append(f"role: **{job_title}** at **{company}**")
+            elif job_title:
+                parts.append(f"role: **{job_title}**")
+            elif company:
+                parts.append(f"company: **{company}**")
+            if resume_text:
+                parts.append("resume loaded")
+            if jd_text:
+                parts.append("job description loaded")
+            if extra_context:
+                parts.append("context files loaded")
+            if mode:
+                parts.append(f"mode: **{mode}**")
+
+            greeting = f"Session ready — {', '.join(parts)}. Listening now."
+        else:
+            greeting = "Session started — no context loaded. Ready to assist with anything you need."
+
+        # Stream word-by-word so it appears as natural typing
+        words = greeting.split(" ")
+        for i, word in enumerate(words):
+            delta = word if i == 0 else " " + word
+            await _safe_send(ws, {"type": "suggestion_delta", "delta": delta})
+            await asyncio.sleep(0.02)  # 20ms per word — fast but readable
+        await _safe_send(ws, {"type": "suggestion_end"})
+
+    async def _warmup_llm_client(self) -> None:
+        """Fire a tiny request to establish TCP+TLS with DeepSeek so
+        the first real ask doesn't pay the cold-start cost (~1-2s)."""
+        try:
+            from app.services.cluely.deepseek_client import deepseek_generate
+            await asyncio.wait_for(
+                deepseek_generate("hi", system="Reply with one word.", max_tokens=1),
+                timeout=5,
+            )
+            logger.info("[warmup] DeepSeek client warmed up")
+        except Exception as e:
+            logger.debug("[warmup] DeepSeek warmup failed (non-fatal): %s", e)
 
     # ------------------------------------------------------------------
     # Audio frame handler
@@ -879,34 +944,44 @@ class OverlayService:
         # Tell the overlay how many screenshots are buffered
         await _safe_send(ws, {"type": "screenshot_buffered", "count": buf_size})
 
-        # Analyze immediately — all buffered images together
+        # Analyze immediately — stream tokens as they arrive
         mode = session_ctx.get("assessmentMode") or session_ctx.get("_assessment_mode")
 
         await _safe_send(ws, {"type": "status", "state": "thinking", "latency_ms": 0})
 
-        # Pass full session_ctx so the vision service can inject role, resume,
-        # JD, and recent transcript for a context-aware response.
-        result = await self._vision.analyze(sid, mode=mode, session_ctx=session_ctx)
+        t0 = time.monotonic()
+        full_response: list[str] = []
+        first = True
 
-        if result["text"]:
-            # Store this response so future screenshots don't repeat the same answer
-            prev = session_ctx.setdefault("_vision_responses", [])
-            prev.append(result["text"][:300])
-            if len(prev) > 5:
-                session_ctx["_vision_responses"] = prev[-5:]
+        try:
+            async for delta in self._vision.stream_analyze(
+                sid, mode=mode, session_ctx=session_ctx,
+            ):
+                if first:
+                    latency = round((time.monotonic() - t0) * 1000)
+                    await _safe_send(ws, {"type": "status", "state": "listening", "latency_ms": latency})
+                    first = True
+                full_response.append(delta)
+                await _safe_send(ws, {"type": "suggestion_delta", "delta": delta})
 
-            # Stream the response token by token via suggestion events
-            words = result["text"].split(" ")
-            for i, word in enumerate(words):
-                delta = word if i == 0 else " " + word
-                await _safe_send(ws, {"type": "suggestion_delta", "delta": delta, "done": False})
-            await _safe_send(ws, {"type": "suggestion_end", "done": True})
+            await _safe_send(ws, {"type": "suggestion_end"})
+
+            full_text = "".join(full_response)
+            if full_text:
+                # Store this response so future screenshots don't repeat the same answer
+                prev = session_ctx.setdefault("_vision_responses", [])
+                prev.append(full_text[:300])
+                if len(prev) > 5:
+                    session_ctx["_vision_responses"] = prev[-5:]
+        except Exception:
+            logger.exception("Screenshot streaming error")
+            await _safe_send(ws, {"type": "error", "code": "VISION_ERROR", "message": "Screenshot analysis failed"})
 
         await _safe_send(ws, {
             "type": "screenshot_result",
-            "needs_more": result["needs_more"],
-            "buffer_size": result["buffer_size"],
-            "cleared": result["cleared"],
+            "needs_more": False,
+            "buffer_size": self._vision.buffer_size(sid),
+            "cleared": self._vision.buffer_size(sid) == 0,
         })
         await _safe_send(ws, {"type": "status", "state": "listening", "latency_ms": 0})
 
@@ -965,6 +1040,7 @@ class OverlayService:
             })
             return
 
+        t_ctx = time.monotonic()
         rag_chunks = await rag.retrieve(text, k=3) if rag else []
         if ctx_mgr:
             summary, facts = await asyncio.gather(ctx_mgr.get_summary(), ctx_mgr.get_facts())
@@ -973,6 +1049,8 @@ class OverlayService:
         recent = session_ctx.get("_transcript_buf", [])[-15:]
         chat_history: list[dict] = data.get("history", [])
         mode = data.get("mode", "hints")
+        logger.info("[manual_ask] context gathered in %dms | rag=%d | mode=%s | text=%r",
+                    round((time.monotonic() - t_ctx) * 1000), len(rag_chunks), mode, text[:60])
 
         await _safe_send(ws, {"type": "status", "state": "thinking", "latency_ms": 0})
         t0 = time.monotonic()
@@ -983,6 +1061,7 @@ class OverlayService:
         # no tool-loop blocking. Only use ChatAgent when tools are actually needed.
         # ------------------------------------------------------------------
         use_agent = self._needs_tools(text) or mode in ("solve", "ultra")
+        logger.info("[manual_ask] use_agent=%s", use_agent)
 
         if not use_agent:
             try:

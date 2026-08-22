@@ -65,6 +65,26 @@ async function startBackend(): Promise<void> {
   _backendPort = await _findFreePort(8000)
   console.log(`[devcore] starting backend on port ${_backendPort}`)
 
+  // Ensure all Python dependencies are installed before starting.
+  // In dev mode the venv may be missing packages if requirements.txt was updated.
+  // In packaged mode PyInstaller bundles everything — skip.
+  if (!app.isPackaged) {
+    const reqFile = path.join(PROJECT_ROOT, 'backend', 'requirements.txt')
+    if (fs.existsSync(reqFile)) {
+      console.log('[devcore] ensuring backend dependencies are installed…')
+      const pipResult = spawnSync(
+        PYTHON_EXE,
+        ['-m', 'pip', 'install', '-q', '-r', reqFile],
+        { cwd: path.join(PROJECT_ROOT, 'backend'), encoding: 'utf8', timeout: 120_000 }
+      )
+      if (pipResult.status !== 0) {
+        console.error('[devcore] pip install failed:', pipResult.stderr)
+      } else {
+        console.log('[devcore] backend dependencies up to date')
+      }
+    }
+  }
+
   return new Promise((resolve, reject) => {
     if (app.isPackaged) {
       _backendProcess = spawn(BACKEND_EXE, [], {
@@ -529,6 +549,9 @@ ipcMain.handle('devcore:session:resume', async () => {
 
 ipcMain.handle('devcore:session:end', async () => {
   stopAudioCapture()
+  // Reset overlay interact state so the transparent window stops blocking clicks
+  const { disableInteract } = await import('./overlay')
+  disableInteract()
   // Restore main window
   const mainWin = getMainWindow()
   if (mainWin && !mainWin.isDestroyed()) {
@@ -554,17 +577,16 @@ ipcMain.on('devcore:content:bounds', (_e, bounds: { x: number; y: number; width:
   setOverlayContentBounds(bounds)
 })
 
-// These are now no-ops since the polling loop manages interact mode automatically.
-// Kept so hotkey-forced interact (Ctrl+Shift+I) still works.
+// Delegate to overlay module's unified interact state so cursor-hover
+// and hotkey-forced interact don't fight each other.
 ipcMain.handle('devcore:interact:enable', async () => {
-  getOverlayWindow()?.setIgnoreMouseEvents(false)
-  getOverlayWindow()?.setFocusable(true)
-  getOverlayWindow()?.focus()
+  const { enableInteract } = await import('./overlay')
+  enableInteract()
 })
 
 ipcMain.handle('devcore:interact:disable', async () => {
-  getOverlayWindow()?.setIgnoreMouseEvents(true, { forward: true })
-  getOverlayWindow()?.setFocusable(false)
+  const { disableInteract } = await import('./overlay')
+  disableInteract()
 })
 
 // Forward assessment trigger from overlay UI → backend via existing WebSocket

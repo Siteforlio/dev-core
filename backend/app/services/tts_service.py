@@ -64,14 +64,33 @@ async def _load_kokoro():
             return _kokoro
 
         models_dir = Path(settings.kokoro_models_dir)
-        onnx_path = models_dir / "kokoro-v0_19.onnx"
+        models_dir.mkdir(parents=True, exist_ok=True)
+        # Use int8 quantized model — 88 MB vs 310 MB full, ~4x less RAM during inference
+        onnx_path = models_dir / "kokoro-v0_19.int8.onnx"
         voices_path = models_dir / "voices.bin"
 
-        if not onnx_path.exists() or not voices_path.exists():
-            raise RuntimeError(
-                f"Kokoro model files not found in {models_dir}. "
-                "Run python backend/scripts/download_kokoro.py first."
-            )
+        # Delete any corrupt/incomplete downloads from previous attempts
+        for old in models_dir.glob("kokoro-v0_19.onnx"):
+            if old.stat().st_size < 50_000_000:  # full model should be 310+ MB
+                _log.warning("[kokoro] Removing corrupt model file %s (%d bytes)", old.name, old.stat().st_size)
+                old.unlink()
+
+        FILES = {
+            onnx_path: "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files/kokoro-v0_19.int8.onnx",
+            voices_path: "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files/voices.bin",
+        }
+
+        for dest, url in FILES.items():
+            if not dest.exists():
+                _log.info("[kokoro] Downloading %s from %s …", dest.name, url)
+                try:
+                    import urllib.request
+                    tmp = dest.with_suffix(".tmp")
+                    urllib.request.urlretrieve(url, tmp)
+                    tmp.replace(dest)
+                    _log.info("[kokoro] Downloaded %s (%.1f MB)", dest.name, dest.stat().st_size / 1_048_576)
+                except Exception as e:
+                    raise RuntimeError(f"Failed to download Kokoro model file {dest.name}: {e}") from e
 
         from kokoro_onnx import Kokoro  # imported lazily — not installed in tests
 
@@ -120,11 +139,14 @@ class TTSService:
         def _run_synthesis():
             try:
                 import numpy as np
-                for samples, _sr in kokoro.create_stream(
-                    text, voice=voice, speed=1.0, lang="en-us"
-                ):
-                    pcm = (np.clip(samples, -1.0, 1.0) * 32_767).astype(np.int16)
-                    asyncio.run_coroutine_threadsafe(queue.put(pcm.tobytes()), loop)
+                # create() is synchronous; create_stream() became async in v0.6.x
+                samples, _sr = kokoro.create(text, voice=voice, speed=1.0, lang="en-us")
+                pcm = (np.clip(samples, -1.0, 1.0) * 32_767).astype(np.int16)
+                # Yield in 4 KB chunks so audio starts playing before synthesis finishes
+                raw = pcm.tobytes()
+                CHUNK = 8192
+                for i in range(0, len(raw), CHUNK):
+                    asyncio.run_coroutine_threadsafe(queue.put(raw[i:i + CHUNK]), loop)
             except Exception as exc:
                 asyncio.run_coroutine_threadsafe(queue.put(exc), loop)
             finally:

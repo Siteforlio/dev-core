@@ -144,6 +144,110 @@ class SimulationEngine:
             lines.append(f"[{kind.upper()}] {name}:\n{content}\n")
         return "\n".join(lines)
 
+    async def prepare_turn(
+        self,
+        session_id: str,
+        content: str,
+        modality: str,
+        time_offset_seconds: int,
+        cached_turns: list[dict] | None = None,
+    ) -> dict:
+        """
+        Validate, save the user turn, and load all context needed for the LLM call.
+
+        Returns a dict with keys:
+          cutoff, brief, turns, attachment_context, time_remaining_pct, seq, elapsed
+        On hard cutoff returns {"cutoff": True}.
+        """
+        result = await self._db.execute(
+            select(SimulationSession).where(SimulationSession.id == session_id)
+        )
+        session = result.scalar_one_or_none()
+        if not session:
+            return {"cutoff": False, "error": "Session not found"}
+
+        elapsed = (utcnow() - session.started_at).total_seconds()
+        if session.time_budget_seconds and elapsed >= session.time_budget_seconds:
+            await self._db.execute(
+                update(SimulationSession)
+                .where(SimulationSession.id == session_id)
+                .values(hard_cutoff_fired=True, ended_at=utcnow())
+            )
+            await self._db.commit()
+            return {"cutoff": True}
+
+        if cached_turns is not None:
+            turns = cached_turns
+            seq = len(turns)
+        else:
+            turns_result = await self._db.execute(
+                select(SimulationTurn)
+                .where(SimulationTurn.session_id == session_id)
+                .order_by(SimulationTurn.seq)
+            )
+            turns = [
+                {"speaker": t.speaker, "content": t.content, "time_offset_seconds": t.time_offset_seconds}
+                for t in turns_result.scalars().all()
+            ]
+            seq = len(turns)
+
+        user_turn = SimulationTurn(
+            session_id=session_id,
+            seq=seq,
+            speaker="user",
+            modality=modality,
+            content=content,
+            time_offset_seconds=time_offset_seconds,
+        )
+        self._db.add(user_turn)
+        await self._db.flush()
+
+        try:
+            cached_att = await cache_get(f"sim:{session_id}:attachments")
+            raw_att = cached_att.get("_raw", "") if cached_att else ""
+        except Exception as e:
+            logger.warning("[sim_engine] cache read failed for %s: %s", session_id, e)
+            raw_att = ""
+
+        time_remaining_pct = 1.0
+        if session.time_budget_seconds:
+            remaining = session.time_budget_seconds - elapsed
+            time_remaining_pct = max(0.0, remaining / session.time_budget_seconds)
+
+        return {
+            "cutoff": False,
+            "brief": session.brief or {},
+            "turns": turns,
+            "attachment_context": raw_att or "",
+            "time_remaining_pct": time_remaining_pct,
+            "seq": seq,
+            "elapsed": elapsed,
+        }
+
+    async def save_ai_turn(
+        self,
+        session_id: str,
+        ai_text: str,
+        seq: int,
+        elapsed: float,
+        tool_calls: list | None = None,
+    ) -> None:
+        """Persist the AI response turn to DB."""
+        ai_turn = SimulationTurn(
+            session_id=session_id,
+            seq=seq + 1,
+            speaker="ai",
+            modality="text",
+            content=ai_text,
+            time_offset_seconds=int(elapsed),
+            tool_calls=[
+                {"tool": tc.tool, "command": tc.command, "output": getattr(tc, "output", "")}
+                for tc in (tool_calls or [])
+            ],
+        )
+        self._db.add(ai_turn)
+        await self._db.commit()
+
     async def submit_turn(
         self,
         session_id: str,

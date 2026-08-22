@@ -9,6 +9,8 @@ import AIPip from './AIPip'
 import SimControls from './SimControls'
 import SimToolOverlay from './SimToolOverlay'
 import SimDevicePicker from './SimDevicePicker'
+import CoachMode from '../interview/CoachMode'
+import { useCoach } from '../../hooks/useCoach'
 
 interface Props {
   onDebrief: (data: SimDebriefData) => void
@@ -41,7 +43,7 @@ const SIM_CSS = `
 `
 
 export default function SimulationSession({ onDebrief, onEnd }: Props) {
-  const { activeSimSessionId, timeBudgetSeconds, scenarioType } = useSimulationStore()
+  const { activeSimSessionId, timeBudgetSeconds, scenarioType, characterId } = useSimulationStore()
 
   const [input, setInput] = useState('')
   const [micMuted, setMicMuted] = useState(false)
@@ -51,6 +53,8 @@ export default function SimulationSession({ onDebrief, onEnd }: Props) {
   const [selectedMicId, setSelectedMicId] = useState<string | undefined>(undefined)
   const [selectedSpeakerId, setSelectedSpeakerId] = useState<string | undefined>(undefined)
   const [showDevices, setShowDevices] = useState(false)
+  const [coachMode, setCoachMode] = useState(false)
+  const micMutedBeforeCoachRef = useRef(false)
 
   const userCamRef = useRef<HTMLVideoElement>(null)
   const userStreamRef = useRef<MediaStream | null>(null)
@@ -74,9 +78,46 @@ export default function SimulationSession({ onDebrief, onEnd }: Props) {
   const {
     turns, remaining, hardCutoff, cutoffMsg,
     sessionEnded, aiThinking, aiSpeaking, activeTool,
-    wsReady, isRecording,
+    wsReady, isRecording, lastEval, interimTranscript, statusMessage,
     sendText, endSession,
   } = useSimulationSession(onDebrief, onEnd, { micMuted, selectedMicId, selectedSpeakerId })
+
+  // Last AI turn = the "question" coach should help with
+  const lastAiTurn = [...turns].reverse().find((t) => t.speaker === 'ai')
+
+  const coach = useCoach({
+    sessionId: activeSimSessionId ?? '',
+    question: lastAiTurn?.text ?? '',
+    roundType: scenarioType || 'behavioral',
+    careerTrack: 'technology',
+    level: 'mid_level',
+  })
+
+  const handleEnterCoach = () => {
+    micMutedBeforeCoachRef.current = micMuted
+    setMicMuted(true)   // mute mic while coaching
+    coach.open({
+      company: '',
+      role: scenarioType || 'Interview Simulation',
+      round_type: scenarioType || 'behavioral',
+      level: 'mid_level',
+      career_track: 'technology',
+      current_question: lastAiTurn?.text ?? '',
+      question_number: turns.filter((t) => t.speaker === 'ai').length,
+      total_questions: null as unknown as number,
+      time_remaining_seconds: remaining ?? 0,
+      last_feedback: lastEval
+        ? { what_worked: lastEval.what_worked, what_was_missing: lastEval.gap }
+        : null,
+    })
+    setCoachMode(true)
+  }
+
+  const handleReturnFromCoach = () => {
+    setMicMuted(micMutedBeforeCoachRef.current)  // restore mic state
+    coach.close()
+    setCoachMode(false)
+  }
 
   // Auto-scroll transcript to bottom when new turns arrive
   useEffect(() => {
@@ -109,6 +150,27 @@ export default function SimulationSession({ onDebrief, onEnd }: Props) {
       display: 'flex', flexDirection: 'column', overflow: 'hidden',
     }}>
       <style>{SIM_CSS}</style>
+
+      {/* Coach overlay — renders on top, keeps simulation mounted underneath */}
+      {coachMode && (
+        <div style={{ position: 'absolute', inset: 0, zIndex: 200 }}>
+          <CoachMode
+            messages={coach.messages}
+            isStreaming={coach.isStreaming}
+            sessionInfo={{
+              company: '',
+              role: scenarioType || 'Interview Simulation',
+              roundType: scenarioType || 'behavioral',
+              questionNumber: turns.filter((t) => t.speaker === 'ai').length,
+              totalQuestions: 0,
+              timeRemaining: remaining ?? 0,
+              currentQuestion: lastAiTurn?.text ?? '',
+            }}
+            onSend={coach.sendMessage}
+            onReturn={handleReturnFromCoach}
+          />
+        </div>
+      )}
 
       {/* Title bar */}
       <div style={{
@@ -178,7 +240,7 @@ export default function SimulationSession({ onDebrief, onEnd }: Props) {
           </div>
           <div style={{ textAlign: 'center' }}>
             <div style={{ fontSize: '0.78rem', color: '#64748b', letterSpacing: '0.08em', marginBottom: 8 }}>
-              {aiThinking ? 'Interviewer is preparing' : 'Connecting'}
+              {statusMessage || (aiThinking ? 'Interviewer is preparing' : 'Connecting')}
             </div>
             <div style={{ display: 'flex', gap: 4, justifyContent: 'center' }}>
               {[0, 1, 2].map((i) => (
@@ -211,7 +273,7 @@ export default function SimulationSession({ onDebrief, onEnd }: Props) {
         {/* Bottom fade overlay */}
         <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: '35%', background: 'linear-gradient(to top, rgba(3,6,12,0.85), transparent)', zIndex: 2 }} />
 
-        <AIPip speaking={aiSpeaking} thinking={aiThinking} />
+        <AIPip speaking={aiSpeaking} thinking={aiThinking} characterId={characterId} />
 
         {/* Emotion strip — real data from FeedbackStrip */}
         {faceActive && (
@@ -308,6 +370,28 @@ export default function SimulationSession({ onDebrief, onEnd }: Props) {
                 </div>
               </div>
             ))}
+
+            {/* Interim transcript — Parakeet live captions while user is speaking */}
+            {interimTranscript && (
+              <div style={{
+                marginTop: 12, display: 'flex', flexDirection: 'column', alignItems: 'flex-end',
+              }}>
+                <div style={{
+                  fontSize: '0.56rem', fontWeight: 600, letterSpacing: '0.1em',
+                  textTransform: 'uppercase', marginBottom: 4,
+                  color: 'rgba(34,211,238,0.35)',
+                }}>
+                  You
+                </div>
+                <div style={{
+                  fontSize: '0.8rem', lineHeight: 1.65, maxWidth: '72%',
+                  color: 'rgba(186,230,253,0.45)',
+                  textAlign: 'right', fontStyle: 'italic',
+                }}>
+                  {interimTranscript}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -400,6 +484,7 @@ export default function SimulationSession({ onDebrief, onEnd }: Props) {
         onTextToggle={() => setTextOpen((o) => !o)}
         onFaceToggle={() => setFaceActive((f) => !f)}
         onDevicesToggle={() => setShowDevices((d) => !d)}
+        onCoachToggle={handleEnterCoach}
       />
     </div>
   )
