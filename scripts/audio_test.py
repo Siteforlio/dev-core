@@ -8,10 +8,13 @@ Usage:
     python scripts/audio_test.py
 """
 
-import sys, io, wave, time, threading, queue
+import os, sys, io, wave, time, threading, queue
 import numpy as np
 
-GROQ_API_KEY = "REDACTED_GROQ_KEY"
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+if not GROQ_API_KEY:
+    print("ERROR: Set GROQ_API_KEY environment variable before running this script.")
+    sys.exit(1)
 SAMPLE_RATE  = 16000
 FRAME_MS     = 30       # VAD frame size in ms
 FRAME_BYTES  = SAMPLE_RATE * FRAME_MS // 1000 * 2  # bytes per frame (int16 mono)
