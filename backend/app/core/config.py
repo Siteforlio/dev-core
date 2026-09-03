@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Resolve .env relative to backend/ (two levels up from this file: app/core/config.py → backend/app/core → backend/app → backend)
@@ -7,8 +8,6 @@ _ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
 # Use the Electron userData directory for the database if available (passed by
 # Electron in both dev and packaged modes via DEVCORE_USER_DATA env var).
-# This guarantees the database always lives at the same absolute path regardless
-# of what working directory the backend process started from.
 _user_data = os.environ.get('DEVCORE_USER_DATA', '')
 if _user_data:
     os.makedirs(_user_data, exist_ok=True)  # ensure dir exists before SQLite creates the file
@@ -18,8 +17,6 @@ _default_db_url = (
     else "sqlite+aiosqlite:///./devcore.db"
 )
 # Kokoro model files are large (~400 MB) and downloaded on first TTS use.
-# Store them in the user's writable data directory in packaged mode so the
-# app installation directory (which may be read-only) is never written to.
 _default_kokoro_dir = (
     os.path.join(_user_data, 'models', 'kokoro')
     if _user_data
@@ -32,9 +29,9 @@ class Settings(BaseSettings):
 
     database_url: str = _default_db_url
     redis_url: str = ""
-    jwt_secret: str = "change-me-in-production"
+    jwt_secret: str = ""  # REQUIRED — no default; app refuses to start if missing or weak
     jwt_algorithm: str = "HS256"
-    jwt_access_expire_minutes: int = 10080  # 7 days — practical for dev
+    jwt_access_expire_minutes: int = 10080  # 7 days — practical for desktop app
     jwt_refresh_expire_days: int = 90
     anthropic_api_key: str = ""
     gemini_api_key: str = ""
@@ -65,6 +62,20 @@ class Settings(BaseSettings):
     scrapfly_key: str = ""    # https://scrapfly.io/ — used for Wellfound
     # Kokoro TTS — local ONNX model directory, auto-downloaded on first TTS use
     kokoro_models_dir: str = _default_kokoro_dir
+
+    @field_validator("jwt_secret")
+    @classmethod
+    def _require_strong_jwt_secret(cls, v: str) -> str:
+        _WEAK = {"", "change-me-in-production", "devcore-jwt-secret-change-in-prod",
+                 "secret", "changeme", "change-me", "your-secret-here"}
+        if v in _WEAK or len(v) < 32:
+            import secrets as _secrets
+            suggestion = _secrets.token_hex(32)
+            raise ValueError(
+                f"JWT_SECRET is missing or too weak (must be ≥32 chars, not a known placeholder). "
+                f"Add this to backend/.env:\n  JWT_SECRET={suggestion}"
+            )
+        return v
 
 settings = Settings()
 
