@@ -211,9 +211,31 @@ function createWindow() {
   _mainWindow = win
   win.once('ready-to-show', () => {
     win.show()
-    win.webContents.openDevTools()  // TODO: remove after debugging
+    if (process.env.NODE_ENV === 'development') {
+      win.webContents.openDevTools()
+    }
   })
   win.on('closed', () => { _mainWindow = null })
+
+  // Content Security Policy — restricts what the renderer can load/execute
+  win.webContents.session.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Content-Security-Policy': [
+          "default-src 'self';" +
+          " script-src 'self';" +
+          " style-src 'self' 'unsafe-inline';" +
+          " img-src 'self' data: blob: https:;" +
+          " media-src 'self' blob:;" +
+          " connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:* https:;" +
+          " font-src 'self' data:;" +
+          " frame-src 'none';" +
+          " object-src 'none';"
+        ],
+      },
+    })
+  })
 
   if (process.env.NODE_ENV === 'development') {
     win.loadURL('http://localhost:5173')
@@ -266,22 +288,32 @@ function _clearStoredToken(): void {
 
 // ── PIN helpers ───────────────────────────────────────────────────────────
 
-/** Deterministic hash for a PIN. Fixed salt is fine — lockout enforces rate-limiting. */
-function _hashPin(pin: string): string {
-  return crypto.pbkdf2Sync(pin, 'devcore-pin-salt-v1', 100_000, 32, 'sha256').toString('hex')
+/** Hash a PIN with PBKDF2 using a per-user random salt. */
+function _hashPin(pin: string, salt: string): string {
+  return crypto.pbkdf2Sync(pin, salt, 100_000, 32, 'sha256').toString('hex')
 }
 
-function _loadPinHash(): string | null {
+function _generateSalt(): string {
+  return crypto.randomBytes(16).toString('hex')
+}
+
+function _loadPinConfig(): { hash: string; salt: string } | null {
   try {
     if (!_pinConfigPath || !fs.existsSync(_pinConfigPath)) return null
     const data = JSON.parse(fs.readFileSync(_pinConfigPath, 'utf8'))
-    return typeof data.hash === 'string' ? data.hash : null
+    // Old format (no salt) — migrate: delete file and force PIN re-setup
+    if (typeof data.hash === 'string' && !data.salt) {
+      fs.unlinkSync(_pinConfigPath)
+      return null
+    }
+    if (typeof data.hash === 'string' && typeof data.salt === 'string') return data
+    return null
   } catch { return null }
 }
 
-function _savePinHash(hash: string): void {
+function _savePinConfig(hash: string, salt: string): void {
   if (!_pinConfigPath) return
-  fs.writeFileSync(_pinConfigPath, JSON.stringify({ hash }))
+  fs.writeFileSync(_pinConfigPath, JSON.stringify({ hash, salt }))
 }
 
 function _clearPin(): void {
@@ -374,26 +406,25 @@ ipcMain.handle('auth:set:refresh', (_e, refreshToken: string) => {
 
 // Called during splash to decide what screen to show.
 ipcMain.handle('auth:startup:status', () => {
-  const hasToken  = !!_lastRefreshToken
-  const pinHash   = _loadPinHash()
-  return { hasToken, pinRequired: hasToken && pinHash !== null }
+  const hasToken = !!_lastRefreshToken
+  const pinCfg   = _loadPinConfig()
+  return { hasToken, pinRequired: hasToken && pinCfg !== null }
 })
 
 // Verify a PIN attempt. Locks out after PIN_MAX_FAILURES wrong tries.
 ipcMain.handle('auth:pin:check', (_e, pin: string) => {
-  const pinHash = _loadPinHash()
-  if (!pinHash) return { ok: false, reason: 'no_pin' }
+  const cfg = _loadPinConfig()
+  if (!cfg) return { ok: false, reason: 'no_pin' }
   if (_pinFailures >= PIN_MAX_FAILURES) {
     return { ok: false, reason: 'locked', attemptsLeft: 0 }
   }
-  if (_hashPin(String(pin)) === pinHash) {
+  if (_hashPin(String(pin), cfg.salt) === cfg.hash) {
     _pinFailures = 0
     return { ok: true }
   }
   _pinFailures++
   const attemptsLeft = PIN_MAX_FAILURES - _pinFailures
   if (attemptsLeft <= 0) {
-    // Wipe stored token — force full login
     _clearStoredToken()
     _lastRefreshToken = ''
     _lastToken = ''
@@ -406,7 +437,9 @@ ipcMain.handle('auth:pin:set', (_e, pin: string) => {
   if (typeof pin !== 'string' || !/^\d{4,8}$/.test(pin)) {
     return { ok: false, reason: 'invalid' }
   }
-  _savePinHash(_hashPin(pin))
+  const salt = _generateSalt()
+  const hash = _hashPin(pin, salt)
+  _savePinConfig(hash, salt)
   return { ok: true }
 })
 
@@ -417,7 +450,7 @@ ipcMain.handle('auth:pin:remove', () => {
 })
 
 // Quick check used by settings UI to know if PIN is configured.
-ipcMain.handle('auth:pin:exists', () => ({ exists: _loadPinHash() !== null }))
+ipcMain.handle('auth:pin:exists', () => ({ exists: _loadPinConfig() !== null }))
 
 // Called on logout — wipes the stored refresh token from disk.
 ipcMain.handle('auth:clear:stored', () => {
@@ -623,19 +656,21 @@ ipcMain.handle('devcore:devices:list', async () => {
       .filter((d: any) => d.maxInputChannels > 0 && !isLoopback(d))
       .map((d: any) => ({ id: d.id, name: d.name }))
 
-    // Merge naudiodon loopbacks (Stereo Mix if enabled) with pyaudiowpatch loopbacks
-    const naudiodonLoops = wasapi
-      .filter((d: any) => isLoopback(d))
-      .map((d: any) => ({ id: d.id, name: d.name }))
-
-    const pythonLoops = await listLoopbackDevices()
-    // pythonLoops use a separate ID space — prefix with 'py:' to avoid collision
-    const systems = [
-      ...naudiodonLoops,
-      ...pythonLoops
-        .filter(p => !naudiodonLoops.some(n => n.name.includes(p.name.replace(' [Loopback]', ''))))
-        .map(p => ({ id: p.id, name: p.name, _python: true, _rate: p.rate, _channels: p.channels })),
-    ]
+    // On Windows, ONLY use pyaudiowpatch for loopback device listing.
+    // naudiodon and pyaudiowpatch use separate PortAudio builds with
+    // different device ID spaces.  Mixing them causes the capture script
+    // to open the wrong device.  pyaudiowpatch IDs are authoritative
+    // since that's what the capture subprocess uses.
+    let systems: { id: number; name: string }[]
+    if (process.platform === 'win32') {
+      const pythonLoops = await listLoopbackDevices()
+      systems = pythonLoops.map(p => ({ id: p.id, name: p.name }))
+    } else {
+      // macOS / Linux: naudiodon IDs are used directly for capture
+      systems = wasapi
+        .filter((d: any) => isLoopback(d))
+        .map((d: any) => ({ id: d.id, name: d.name }))
+    }
 
     return { mics, systems }
   } catch {
@@ -786,9 +821,10 @@ function _getDeviceList() {
       mics: wasapi
         .filter((d: any) => d.maxInputChannels > 0 && !isLoopback(d))
         .map((d: any) => ({ id: d.id, name: d.name })),
-      systems: wasapi
-        .filter((d: any) => isLoopback(d))
-        .map((d: any) => ({ id: d.id, name: d.name })),
+      // System devices use pyaudiowpatch IDs (loaded once via devcore:devices:list).
+      // Hot-plug polling only tracks mic changes — system loopback devices
+      // don't hot-plug.  Return empty here so the frontend keeps its initial list.
+      systems: [] as { id: number; name: string }[],
     }
   } catch {
     return { mics: [], systems: [] }
@@ -811,8 +847,22 @@ function _startDeviceWatcher() {
 }
 
 // ── Shell helpers — open files / folders in the OS ───────────────────────────
-ipcMain.handle('shell:openPath', (_e, filePath: string) => shell.openPath(filePath))
+ipcMain.handle('shell:openPath', (_e, filePath: string) => {
+  // Only allow paths within the user's expected directories
+  const allowed = [app.getPath('userData'), app.getPath('home'), app.getPath('downloads'), app.getPath('documents')]
+  const normalized = path.normalize(filePath)
+  if (!allowed.some(dir => normalized.startsWith(path.normalize(dir)))) {
+    console.warn('[security] shell:openPath blocked — path outside allowed dirs:', filePath)
+    return
+  }
+  shell.openPath(normalized)
+})
 ipcMain.handle('shell:openExternal', (_event, url: string) => {
+  // Only allow https:// and mailto: — block file://, smb://, custom protocol handlers
+  if (!url.startsWith('https://') && !url.startsWith('mailto:')) {
+    console.warn('[security] shell:openExternal blocked — disallowed scheme:', url.slice(0, 80))
+    return
+  }
   shell.openExternal(url)
 })
 ipcMain.handle('shell:showItemInFolder', (_e, filePath: string) => {
