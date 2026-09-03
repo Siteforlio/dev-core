@@ -31,6 +31,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--reload", action="store_true", default=False,
                     help="Enable WatchFiles auto-reload (handled via subprocess wrapper on Windows)")
 parser.add_argument("--port", type=int, default=8000)
+parser.add_argument("--host", type=str, default="127.0.0.1",
+                    help="Bind address (default 127.0.0.1 — use 0.0.0.0 only in Docker/CI)")
 args = parser.parse_args()
 
 
@@ -41,7 +43,7 @@ if args.reload and sys.platform == "win32":
 
     cmd = [
         sys.executable, "-m", "uvicorn", "app.main:app",
-        "--host", "0.0.0.0",
+        "--host", args.host,
         "--port", str(args.port),
         "--reload",
         "--loop", "asyncio",
@@ -85,7 +87,7 @@ signal.signal(signal.SIGINT, _force_exit)
 
 uvicorn.run(
     "app.main:app",
-    host="0.0.0.0",
+    host=args.host,
     port=args.port,
     reload=args.reload,
     timeout_graceful_shutdown=3,

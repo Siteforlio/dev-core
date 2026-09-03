@@ -8,12 +8,21 @@ from fastapi.responses import JSONResponse
 logger = structlog.get_logger()
 
 def setup_middleware(app: FastAPI):
+    # Restrict CORS to the origins the app actually uses.
+    # Production Electron renderer has no Origin header (file:// protocol) — those requests pass through.
+    # Chrome extension uses specific extension:// origins which bypass CORS via Electron's webRequest.
+    _ALLOWED_ORIGINS = [
+        "http://localhost:5173",   # Vite dev server
+        "http://localhost:8000",   # backend itself (health checks)
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:8000",
+    ]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=False,  # must be False when allow_origins="*"
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_origins=_ALLOWED_ORIGINS,
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "X-Correlation-ID"],
     )
 
     @app.middleware("http")

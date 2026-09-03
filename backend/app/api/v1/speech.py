@@ -10,6 +10,7 @@ from app.services.api_keys_service import ApiKeysService
 
 router = APIRouter(prefix="/speech", tags=["speech"])
 _bearer = HTTPBearer(auto_error=False)
+_bearer_strict = HTTPBearer(auto_error=True)
 
 
 def _get_user_id(credentials: HTTPAuthorizationCredentials | None = Depends(_bearer)) -> str | None:
@@ -21,8 +22,16 @@ def _get_user_id(credentials: HTTPAuthorizationCredentials | None = Depends(_bea
         return None
 
 
+def _require_user(credentials: HTTPAuthorizationCredentials = Depends(_bearer_strict)) -> str:
+    return decode_token(credentials.credentials)
+
+
 @router.post("/synthesize")
-async def synthesize(text: str = Form(...), language: str = Form(default="en")):
+async def synthesize(
+    text: str = Form(...),
+    language: str = Form(default="en"),
+    _user_id: str = Depends(_require_user),
+):
     service = SpeechService()
     audio_bytes = await service.synthesize(text=text, language=language)
     return Response(content=audio_bytes, media_type="audio/mpeg")
