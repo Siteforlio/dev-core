@@ -2,12 +2,12 @@ import asyncio, logging, json, time, hashlib
 from fastapi import WebSocket
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 from app.core.security import decode_token
-from app.core.exceptions import BertClassifierError, LLMRateLimitedError
+from app.core.exceptions import LLMRateLimitedError
 from app.services.cluely.audio_service import AudioService, parse_audio_frame
 from app.services.cluely.vision_service import VisionService
 from app.services.cluely.context_manager import ContextManager
-from app.services.cluely.bert_classifier import BertClassifier
-from app.services.cluely.speaker_diarizer import SpeakerDiarizer
+# from app.services.cluely.bert_classifier import BertClassifier
+# from app.services.cluely.speaker_diarizer import SpeakerDiarizer
 from app.services.cluely.assessment_agent import AssessmentAgent
 from app.services.cluely.rag_service import RagService
 from app.services.cluely.llm_service import LLMService
@@ -72,20 +72,13 @@ class OverlayService:
         self._recent_texts: dict[str, list[tuple[float, str]]] = {}
         self._DEDUP_WINDOW = 4.0
         self._DEDUP_RATIO  = 0.75
-        # BERT classifier and diarizer are lazy-initialized on first use to avoid
-        # loading weights (~80-500 MB) at session startup.
-        if hasattr(audio_service, '_bert_override'):
-            # test injection path
-            self._bert = audio_service._bert_override  # type: ignore
-            self._use_bert = self._bert is not None
-            self._bert_checked = True
-        else:
-            self._bert: 'BertClassifier | None' = None
-            self._use_bert: bool = False
-            self._bert_checked: bool = False  # False = not yet attempted
 
-        # Diarizer: None until first audio frame
-        self._diarizer: 'SpeakerDiarizer | None' = None
+        # BERT + Diarizer disabled — stream-based labeling is sufficient
+        # when using headphones (no echo bleed). Re-enable if needed.
+        self._bert = None
+        self._use_bert = False
+        self._bert_checked = True
+        self._diarizer = None
 
     # ------------------------------------------------------------------
     # WebSocket entry point
@@ -118,8 +111,7 @@ class OverlayService:
         try:
             user_id = decode_token(first["token"])
         except Exception as auth_err:
-            import traceback
-            logger.warning("WS auth failed: %s\n%s", auth_err, traceback.format_exc())
+            logger.warning("WS auth failed: %s", type(auth_err).__name__)
             await _safe_send(ws, {"type": "error", "code": "AUTH_FAILED", "message": "Invalid token"})
             await ws.close(code=4001)
             return
@@ -333,8 +325,7 @@ class OverlayService:
         outcome_svc = OutcomeService()
         ctx["_outcome_svc"] = outcome_svc
 
-        if self._diarizer is not None:
-            self._diarizer.reset()
+        # Diarizer disabled — no reset needed.
 
         ctx_mgr = ContextManager(session_id=sid)
         if not await ctx_mgr.session_exists():
@@ -503,6 +494,9 @@ class OverlayService:
         # user ask doesn't pay the TLS handshake + connection setup cost.
         asyncio.create_task(self._warmup_llm_client())
 
+        # BERT + Diarizer disabled — no heavy model warmup needed.
+        # asyncio.create_task(self._warmup_audio_models())
+
         return ctx_mgr, rag, ctx, repo
 
     # ------------------------------------------------------------------
@@ -562,6 +556,19 @@ class OverlayService:
         except Exception as e:
             logger.debug("[warmup] DeepSeek warmup failed (non-fatal): %s", e)
 
+    async def _warmup_audio_models(self) -> None:
+        """
+        Pre-load heavy ML models (diarizer ~14s, BERT ~22s, Deepgram client)
+        in background threads so the first audio frame doesn't block.
+        """
+        # BERT + Diarizer disabled — only warm up Deepgram client
+        try:
+            from app.services.cluely.audio_service import _get_client
+            _get_client()
+            logger.info("[warmup] Deepgram client ready")
+        except Exception as e:
+            logger.debug("[warmup] Deepgram init failed (non-fatal): %s", e)
+
     # ------------------------------------------------------------------
     # Audio frame handler
     # ------------------------------------------------------------------
@@ -576,18 +583,9 @@ class OverlayService:
         except ValueError:
             return
         try:
-            if stream == "mic":
-                speaker = "user"
-                # Feed mic frames into the diarizer to build the user's voice profile.
-                # Lazy-init: weights load on first audio frame, not at session startup.
-                if self._diarizer is None:
-                    self._diarizer = SpeakerDiarizer()
-                self._diarizer.enroll_user(pcm)
-            else:
-                # System audio: use voice embeddings to detect echo/bleed vs interviewer.
-                if self._diarizer is None:
-                    self._diarizer = SpeakerDiarizer()
-                speaker = self._diarizer.classify_system_audio(pcm)
+            # Stream-based labeling: mic = user, system = interviewer.
+            # Diarizer disabled — not needed with headphones (no echo bleed).
+            speaker = "user" if stream == "mic" else "interviewer"
 
             t_transcribe = time.monotonic()
             result = await self._audio.transcribe(pcm, speaker=speaker)
@@ -616,12 +614,13 @@ class OverlayService:
             logger.info("[pipeline] chunk | transcribe=%dms | speaker=%s | text=%r",
                         transcribe_ms, speaker, text[:60])
 
-            if speaker == "interviewer":
-                # Question detected → infer outcome, set up gap monitoring
-                await self._maybe_trigger_outcome(ws, ctx_mgr, rag, session_ctx, text)
-            else:
-                # User speaking → check gap against current inferred outcome
-                await self._maybe_trigger_gap(ws, ctx_mgr, rag, session_ctx, text)
+            # BERT disabled — no auto question detection or gap monitoring.
+            # Outcome inference and gap detection require BERT to classify
+            # interviewer utterances. Re-enable when needed.
+            # if speaker == "interviewer":
+            #     await self._maybe_trigger_outcome(ws, ctx_mgr, rag, session_ctx, text)
+            # else:
+            #     await self._maybe_trigger_gap(ws, ctx_mgr, rag, session_ctx, text)
 
             # Emit each word individually so the frontend console shows word-by-word
             words = result.get("words") or []
@@ -658,17 +657,10 @@ class OverlayService:
         self, ws, ctx_mgr, rag, session_ctx: dict, question_text: str
     ):
         now = time.monotonic()
-        # Lazy-init BERT on first call (loads weights once, then reused)
-        if not self._bert_checked:
-            try:
-                self._bert = BertClassifier()
-                self._use_bert = True
-            except BertClassifierError:
-                logger.warning("BERT unavailable — using silence detection fallback")
-                self._use_bert = False
-                self._bert = None
-            self._bert_checked = True
-        if not self._use_bert or self._bert is None:
+        # BERT is pre-loaded at session start via _warmup_audio_models().
+        # If still loading, skip this check — better to miss one question
+        # than block the event loop for 20+ seconds.
+        if not self._bert_checked or not self._use_bert or self._bert is None:
             return
         if now - self._last_trigger <= BERT_COOLDOWN:
             return
@@ -944,6 +936,9 @@ class OverlayService:
         # Tell the overlay how many screenshots are buffered
         await _safe_send(ws, {"type": "screenshot_buffered", "count": buf_size})
 
+        # Flush pending utterances so the vision service sees the latest transcript
+        self._force_flush_utterances(session_ctx, None)
+
         # Analyze immediately — stream tokens as they arrive
         mode = session_ctx.get("assessmentMode") or session_ctx.get("_assessment_mode")
 
@@ -1025,6 +1020,30 @@ class OverlayService:
         ]
         return any(kw in t for kw in tool_keywords)
 
+    @staticmethod
+    def _force_flush_utterances(session_ctx: dict, ctx_mgr) -> None:
+        """
+        Immediately drain any buffered utterance words into _transcript_buf
+        so the LLM sees the most recent speech.  Does NOT cancel the pending
+        flush task — that will no-op when it fires because we clear the list.
+        """
+        utterance = session_ctx.get("_utterance")
+        if not utterance:
+            return
+        buf = session_ctx.setdefault("_transcript_buf", [])
+        for speaker in ("interviewer", "user"):
+            parts = utterance.get(speaker, [])
+            if not parts:
+                continue
+            text = " ".join(parts)
+            utterance[speaker] = []
+            entry = TranscriptEntry(speaker=speaker, text=text, seq=0)
+            if ctx_mgr:
+                asyncio.ensure_future(ctx_mgr.push_transcript(entry))
+            buf.append(entry)
+        if len(buf) > 30:
+            session_ctx["_transcript_buf"] = buf[-30:]
+
     async def _handle_manual_ask(self, ws, data: dict, session_ctx: dict, rag, ctx_mgr=None, repo=None):
         text = data.get("text", "")
         if not text:
@@ -1039,6 +1058,10 @@ class OverlayService:
                 "message": f"Maximum {ASK_RATE_LIMIT} asks per minute reached.",
             })
             return
+
+        # Force-flush any buffered utterance words so the LLM sees the
+        # very latest speech, even if the speaker hasn't paused yet.
+        self._force_flush_utterances(session_ctx, ctx_mgr)
 
         t_ctx = time.monotonic()
         rag_chunks = await rag.retrieve(text, k=3) if rag else []

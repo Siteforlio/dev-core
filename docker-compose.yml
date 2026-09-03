@@ -10,9 +10,8 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-devcore}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devcore}
       POSTGRES_DB: ${POSTGRES_DB:-devcore}
-      POSTGRES_HOST_AUTH_METHOD: trust
     ports:
-      - "5434:5432"
+      - "127.0.0.1:5434:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
     healthcheck:
@@ -26,15 +25,15 @@ services:
     environment:
       NEO4J_AUTH: ${NEO4J_AUTH:-neo4j/devcore123}
     ports:
-      - "7474:7474"
-      - "7687:7687"
+      - "127.0.0.1:7474:7474"
+      - "127.0.0.1:7687:7687"
     volumes:
       - neo4j_data:/data
 
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
 
   nginx:
     image: nginx:alpine
