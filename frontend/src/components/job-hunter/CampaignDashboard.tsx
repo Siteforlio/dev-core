@@ -23,6 +23,8 @@ interface Props {
   onBack: () => void
   onStartInterviewPrep: (company: string, role: string) => void
   onGoToSettings?: () => void
+  initialOpenListingId?: string | null
+  onInitialOpenConsumed?: () => void
 }
 
 const DEFAULT_PREFS: ScrapePreferences = {
@@ -32,7 +34,7 @@ const DEFAULT_PREFS: ScrapePreferences = {
   dailyTarget: 100,
 }
 
-export default function CampaignDashboard({ campaignId, onBack, onStartInterviewPrep, onGoToSettings }: Props) {
+export default function CampaignDashboard({ campaignId, onBack, onStartInterviewPrep, onGoToSettings, initialOpenListingId, onInitialOpenConsumed }: Props) {
   const { getDashboard, getInterviewContext, triggerScrape, getScrapeStatus, stopScrape, ensureApplication } = useJobHunter()
   const token = useAuthStore((s) => s.accessToken)
   const [persistedFeed, setPersistedFeed] = useState<ActivityMessage[]>([])
@@ -67,7 +69,7 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
   const [pipelineTab, setPipelineTab] = useState<'all' | 'match' | 'partial' | 'applied' | 'interview'>('all')
   const [boardFilter, setBoardFilter] = useState<string>('all')
   const [page, setPage] = useState(1)
-  const PAGE_SIZE = 10
+  const PAGE_SIZE = 15
 
   // Scrape preferences + per-board status
   const [prefs, setPrefs] = useState<ScrapePreferences>(DEFAULT_PREFS)
@@ -170,8 +172,8 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
   const handleTriggerScrape = async () => {
     setScraping(true)
     setScrapeError('')
-    setBoardStatuses({})
-    setRunStatus(null)
+    // Don't clear boardStatuses/runStatus here — they'll update naturally on the
+    // first poll tick. Clearing them causes the board grid to flash away and back.
     try {
       await triggerScrape(campaignId, prefs)
       startStatusPolling()
@@ -199,10 +201,19 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
     setLoading(true)
     setLoadError('')
     loadDashboard()
-      .then(() => { if (!cancelled) setLoading(false) })
+      .then(() => {
+        if (!cancelled) setLoading(false)
+      })
       .catch(() => { if (!cancelled) { setLoadError('Failed to load dashboard. Is the backend running?'); setLoading(false) } })
     return () => { cancelled = true }
   }, [campaignId])
+
+  // Auto-open apply panel for a newly added job (from the campaign list screen)
+  useEffect(() => {
+    if (!initialOpenListingId || loading) return
+    onInitialOpenConsumed?.()
+    handleApply(initialOpenListingId)
+  }, [initialOpenListingId, loading])
 
   const handleStartInterviewPrep = async (applicationId: string) => {
     setBridgeLoading(applicationId)
@@ -217,10 +228,9 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
   // Open apply panel — if switching away from an in-progress panel, prompt "did you apply?"
   const handleApply = async (listingId: string) => {
     const listing = pipeline.find((a) => a.id === listingId)
-    if (!listing) return
 
-    // If no application record yet, create one on-demand
-    let appId = listing.applicationId
+    // If listing not yet in local pipeline (e.g. just added), still open the panel
+    let appId = listing?.applicationId ?? null
     if (!appId) {
       try {
         appId = await ensureApplication(campaignId, listingId)
@@ -335,7 +345,7 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
 
     <div className="flex gap-4 flex-1 min-h-0 overflow-hidden">
       {/* Main panel */}
-      <div className={`flex flex-col gap-4 overflow-hidden transition-all ${panelMode !== 'none' ? 'w-80 flex-shrink-0' : 'flex-1 min-w-0'}`}>
+      <div className={`flex flex-col gap-4 overflow-hidden transition-all min-h-0 ${panelMode !== 'none' ? 'w-80 flex-shrink-0' : 'flex-1 min-w-0'}`}>
         {summary && <SummaryStrip summary={summary} compact={panelMode !== 'none'} />}
 
         {interviews.length > 0 && (
@@ -388,7 +398,7 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
         )}
 
         {/* Pipeline tabs */}
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-2 flex-1 min-h-0 overflow-hidden">
           <div className="flex items-center border-b border-gray-800 flex-shrink-0">
             <div className="flex items-center gap-1 overflow-x-auto flex-1 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
               {([
@@ -465,7 +475,8 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
             ))}
           </div>
 
-          <div className="flex flex-col flex-shrink-0">
+          {/* Scrollable list */}
+          <div className="flex flex-col flex-1 min-h-0 overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
             {filteredPipeline.length === 0 ? (
               <p className="text-gray-600 text-sm py-8 text-center">
                 {pipeline.length === 0 ? (
@@ -493,8 +504,9 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
             )}
           </div>
 
+          {/* Pagination — pinned below the list */}
           {totalPages > 1 && (
-            <div className="flex items-center justify-between flex-shrink-0 pt-2 border-t border-gray-800">
+            <div className="flex items-center justify-between flex-shrink-0 pt-2 pb-1 border-t border-gray-800">
               <button
                 onClick={() => setPage((p) => Math.max(1, p - 1))}
                 disabled={page === 1}
@@ -502,10 +514,14 @@ export default function CampaignDashboard({ campaignId, onBack, onStartInterview
               >
                 ← Prev
               </button>
-              <span className="text-xs text-gray-500">
-                Page {page} of {totalPages}
-                <span className="ml-1 text-gray-600">({filteredPipeline.length} total)</span>
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-gray-500 font-mono">
+                  {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, filteredPipeline.length)} of {filteredPipeline.length}
+                </span>
+                <span className="text-[10px] text-gray-700 font-mono">
+                  pg {page}/{totalPages}
+                </span>
+              </div>
               <button
                 onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                 disabled={page === totalPages}

@@ -49,6 +49,7 @@ export default function Dashboard() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [loadingCampaigns, setLoadingCampaigns] = useState(false)
   const [newCampaign, setNewCampaign] = useState<Campaign | null>(null)
+  const [pendingOpenListingId, setPendingOpenListingId] = useState<string | null>(null)
 
   /* ── Sync session state started from overlay into Dashboard's overlayStore ── */
   useEffect(() => {
@@ -118,9 +119,8 @@ export default function Dashboard() {
   const handleSelectCampaign = async (campaignId: string) => {
     try {
       const profile = await getCampaignProfile(campaignId)
-      // Profile exists if raw_context has been submitted or is_complete flag is set
-      const hasProfile = !!(profile as any).raw_context?.trim() || !!(profile as any).is_complete
-      if (!hasProfile) {
+      const hasMandatory = !!(profile as any).has_mandatory
+      if (!hasMandatory) {
         const campaign = campaigns.find(c => c.id === campaignId) ?? { id: campaignId, name: '' }
         setNewCampaign(campaign as Campaign)
         setActiveView('build-profile')
@@ -284,7 +284,11 @@ export default function Dashboard() {
                 <CampaignProfileBuilder
                   campaignId={newCampaign.id}
                   campaignName={newCampaign.name}
+                  campaignCategories={[newCampaign.broadCategory, ...(newCampaign.subCategories ?? [])].filter(Boolean)}
                   onReady={handleProfileReady}
+                  onCategoriesAdded={(cats) => {
+                    setNewCampaign(prev => prev ? { ...prev, subCategories: [...(prev.subCategories ?? []), ...cats] } : prev)
+                  }}
                 />
               ) : activeView === 'dashboard' && selectedCampaignId ? (
                 <CampaignDashboard
@@ -292,6 +296,8 @@ export default function Dashboard() {
                   onBack={() => setActiveView('campaigns')}
                   onStartInterviewPrep={handleStartInterviewPrep}
                   onGoToSettings={() => setActiveModule('settings')}
+                  initialOpenListingId={pendingOpenListingId}
+                  onInitialOpenConsumed={() => setPendingOpenListingId(null)}
                 />
               ) : loadingCampaigns ? (
                 <div className="flex flex-1 items-center justify-center py-20">
@@ -303,6 +309,10 @@ export default function Dashboard() {
                   onSelect={handleSelectCampaign}
                   onCreateNew={() => setActiveView('create-campaign')}
                   onDeleted={handleCampaignDeleted}
+                  onJobAdded={(campaignId, listingId) => {
+                    setPendingOpenListingId(listingId)
+                    handleSelectCampaign(campaignId)
+                  }}
                 />
               )}
             </div>

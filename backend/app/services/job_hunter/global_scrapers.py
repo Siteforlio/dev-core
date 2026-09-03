@@ -269,22 +269,24 @@ async def scrape_getonboard(search_term: str, client: httpx.AsyncClient) -> list
 
 # ── Adzuna ────────────────────────────────────────────────────────────────────
 
-async def scrape_adzuna(search_term: str, client: httpx.AsyncClient) -> list[dict]:
+async def scrape_adzuna(search_term: str, client: httpx.AsyncClient, api_key: str = "") -> list[dict]:
     """
     Adzuna API — broadest continental coverage of any free API (20+ countries).
-    Requires ADZUNA_APP_ID + ADZUNA_API_KEY environment variables.
+    Requires ADZUNA_APP_ID + ADZUNA_API_KEY — set in Settings → API Keys.
     Sign up free at: https://developer.adzuna.com/
     Queries all configured countries in parallel.
     """
     try:
         from app.core.config import settings
-        app_id  = settings.adzuna_app_id  or os.environ.get("ADZUNA_APP_ID", "")
-        api_key = settings.adzuna_api_key or os.environ.get("ADZUNA_API_KEY", "")
+        app_id = settings.adzuna_app_id or os.environ.get("ADZUNA_APP_ID", "")
+        if not api_key:
+            api_key = settings.adzuna_api_key or os.environ.get("ADZUNA_API_KEY", "")
     except Exception:
-        app_id  = os.environ.get("ADZUNA_APP_ID", "")
-        api_key = os.environ.get("ADZUNA_API_KEY", "")
+        app_id = os.environ.get("ADZUNA_APP_ID", "")
+        if not api_key:
+            api_key = os.environ.get("ADZUNA_API_KEY", "")
     if not app_id or not api_key:
-        return []
+        raise RuntimeError("No Adzuna API key — add it in Settings → API Keys (key: adzuna_api_key)")
 
     async def _fetch(country: str) -> list[dict]:
         try:
@@ -332,19 +334,21 @@ async def scrape_adzuna(search_term: str, client: httpx.AsyncClient) -> list[dic
 
 # ── Reed ──────────────────────────────────────────────────────────────────────
 
-async def scrape_reed(search_term: str, client: httpx.AsyncClient) -> list[dict]:
+async def scrape_reed(search_term: str, client: httpx.AsyncClient, api_key: str = "") -> list[dict]:
     """
     Reed.co.uk API — strong UK and EU coverage.
-    Requires REED_API_KEY environment variable.
+    Requires REED_API_KEY — set in Settings → API Keys.
     Sign up free at: https://www.reed.co.uk/developers/jobseeker
     """
     try:
         from app.core.config import settings
-        api_key = settings.reed_api_key or os.environ.get("REED_API_KEY", "")
+        if not api_key:
+            api_key = settings.reed_api_key or os.environ.get("REED_API_KEY", "")
     except Exception:
-        api_key = os.environ.get("REED_API_KEY", "")
+        if not api_key:
+            api_key = os.environ.get("REED_API_KEY", "")
     if not api_key:
-        return []
+        raise RuntimeError("No Reed API key — add it in Settings → API Keys (key: reed_api_key)")
     try:
         # Reed uses HTTP Basic auth: api_key as username, empty password
         creds = base64.b64encode(f"{api_key}:".encode()).decode()

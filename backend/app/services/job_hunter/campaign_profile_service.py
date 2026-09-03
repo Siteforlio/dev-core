@@ -1,6 +1,7 @@
 # backend/app/services/job_hunter/campaign_profile_service.py
 import json
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,6 +9,28 @@ from sqlalchemy import select
 from app.models.pg.job_hunter import CampaignProfile, JobHunterCampaign
 from app.core.config import settings
 from app.services.job_hunter.llm import call_llm
+
+
+def _raw_context_has_experience(text: str) -> bool:
+    """
+    Heuristic check: does the raw CV text describe any work/project experience?
+    Catches date ranges (2019-2023), role-at patterns, and common experience keywords.
+    """
+    if not text or len(text) < 50:
+        return False
+    lower = text.lower()
+    # Date ranges like "2019 - 2023", "2020–present", "Jan 2019"
+    if re.search(r'\b(19|20)\d{2}\s*[-–]\s*((19|20)\d{2}|present|current|now)\b', lower):
+        return True
+    # Role/employment markers
+    markers = [
+        "experience", "worked at", "employed", "employment",
+        "position at", "role at", "engineer at", "developer at",
+        "manager at", "consultant at", "years of experience",
+        "year of experience", "internship", "freelance", "co-founder",
+        "founded", "built and", "led the", "responsible for",
+    ]
+    return any(m in lower for m in markers)
 
 logger = logging.getLogger(__name__)
 
@@ -223,9 +246,10 @@ class CampaignProfileService:
         raw_context = (profile.raw_context or "").strip()
         if not raw_context:
             return {
-                "score": 0, "is_ready": False,
+                "score": 0, "is_ready": False, "has_mandatory": False,
+                "has_contact": False, "has_experience": False,
                 "gaps": ["No profile context yet — paste your CV or describe your experience to get started."],
-                "questions": [], "summary": "No information submitted yet.",
+                "questions": [], "summary": "No information submitted yet.", "suggested_titles": [],
             }
 
         # Trim to ~8000 chars to stay within token budget while preserving key content
@@ -240,6 +264,14 @@ class CampaignProfileService:
             f"- Years of experience stated: {profile.years_of_experience if profile.years_of_experience is not None else 'not found'}\n"
             f"- Skills detected: {len(profile.skills or [])} ({', '.join((profile.skills or [])[:15])})"
         )
+
+        # Server-side mandatory check — no LLM needed for this
+        has_contact = bool(profile.email or profile.phone)
+        # Check structured field first; fall back to raw CV text heuristic
+        # (users who paste their CV never populate the structured work_experience JSON field)
+        has_experience = bool(profile.work_experience) or _raw_context_has_experience(raw_context)
+
+        valid_titles_str = ", ".join(f'"{c}"' for c in JOB_CATEGORIES)
 
         prompt = (
             f"You are reviewing a job candidate's profile for a {role_context} position.\n\n"
@@ -256,7 +288,8 @@ class CampaignProfileService:
             f'  "is_ready": <true if score >= 70>,\n'
             f'  "gaps": ["specific missing info relevant to {role_context} — e.g. no work history, no key skills listed, no contact info"],\n'
             f'  "questions": [{{"gap": "gap label", "question": "simple, friendly question to fill this gap"}}],\n'
-            f'  "summary": "one sentence: what they have + what would strengthen their profile"\n'
+            f'  "summary": "one sentence: what they have + what would strengthen their profile",\n'
+            f'  "suggested_titles": ["pick 2-5 titles from this exact list that best match the candidate\'s background — choose ONLY from: {valid_titles_str}]\n'
             f'}}\n\n'
             f"SCORING (start at 100, deduct for what's missing):\n"
             f"- -25 if no work/experience history described at all (no roles, no projects, no field context)\n"
@@ -278,25 +311,31 @@ class CampaignProfileService:
             raw = await call_llm(prompt, max_tokens=2000, json_mode=True, thinking=False)
         except Exception:
             logger.exception("analyze_gaps: LLM call failed")
-            return {"score": 0, "is_ready": False, "gaps": ["Could not analyze profile"], "questions": [], "summary": "Analysis failed"}
+            return {"score": 0, "is_ready": False, "has_mandatory": False, "has_contact": False, "has_experience": False, "gaps": ["Could not analyze profile"], "questions": [], "summary": "Analysis failed", "suggested_titles": []}
 
         if not raw:
             logger.error("analyze_gaps: LLM returned empty string for campaign=%s", campaign_id)
-            return {"score": 0, "is_ready": False, "gaps": ["Could not analyze profile"], "questions": [], "summary": "Analysis failed"}
+            return {"score": 0, "is_ready": False, "has_mandatory": False, "has_contact": False, "has_experience": False, "gaps": ["Could not analyze profile"], "questions": [], "summary": "Analysis failed", "suggested_titles": []}
 
         start, end = raw.find("{"), raw.rfind("}") + 1
         if start == -1 or end == 0:
             logger.error("analyze_gaps: no JSON braces in response: %r", raw[:200])
-            return {"score": 0, "is_ready": False, "gaps": ["Could not analyze profile"], "questions": [], "summary": "Analysis failed"}
+            return {"score": 0, "is_ready": False, "has_mandatory": False, "has_contact": False, "has_experience": False, "gaps": ["Could not analyze profile"], "questions": [], "summary": "Analysis failed", "suggested_titles": []}
         try:
             result = json.loads(raw[start:end])
             profile.completion_gaps = result.get("gaps", [])
             profile.is_complete = result.get("is_ready", False)
             await self.db.commit()
+            # Filter suggested_titles to only valid categories
+            raw_titles = result.get("suggested_titles", [])
+            result["suggested_titles"] = [t for t in raw_titles if t in JOB_CATEGORIES]
+            result["has_mandatory"] = has_contact and has_experience
+            result["has_contact"] = has_contact
+            result["has_experience"] = has_experience
             return result
         except json.JSONDecodeError:
             logger.error("analyze_gaps: JSON parse failed: %r", raw[:200])
-            return {"score": 0, "is_ready": False, "gaps": ["Could not parse AI response"], "questions": [], "summary": "Analysis failed"}
+            return {"score": 0, "is_ready": False, "has_mandatory": False, "has_contact": False, "has_experience": False, "gaps": ["Could not parse AI response"], "questions": [], "summary": "Analysis failed", "suggested_titles": []}
 
     async def process_raw_context(self, campaign_id: str, user_id: str, raw_context: str) -> dict:
         """

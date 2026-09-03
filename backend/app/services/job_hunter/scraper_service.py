@@ -292,8 +292,8 @@ class ScraperService:
         if any(kw in d for kw in keywords):
             return True
 
-        # No keyword match — default pass through so AI scorer can decide
-        return True
+        # No keyword match in title or description snippet — drop it
+        return False
 
     async def score_job_match(
         self,
@@ -356,19 +356,36 @@ class ScraperService:
             return listing
         except IntegrityError:
             await self.db.rollback()
-            # Duplicate url_hash — job already exists (possibly from a different campaign).
-            # For MATCH or PARTIAL: always reassign to the current campaign if the new score
-            # is equal or better, so the job shows up in the correct pipeline.
+            # Duplicate url_hash — job already exists.
+            # For MATCH or PARTIAL: upgrade score if warranted, but NEVER touch an applied listing.
+            # Use a fresh session so the post-rollback state doesn't corrupt the main session.
             if _SCORE_ORDER.get(score, 99) < 2:  # MATCH=0 or PARTIAL=1
-                existing = (await self.db.execute(
-                    select(JobListing).where(JobListing.url_hash == url_hash)
-                )).scalar_one_or_none()
-                if existing and _SCORE_ORDER.get(score, 99) <= _SCORE_ORDER.get(existing.match_score, 99):
-                    existing.match_score = score
-                    existing.status = "pending"
-                    existing.campaign_id = campaign_id
-                    await self.db.commit()
-                    return existing
+                try:
+                    from app.core.database import AsyncSessionLocal
+                    from app.models.pg.job_hunter import Application as _App
+                    async with AsyncSessionLocal() as fresh_db:
+                        existing = (await fresh_db.execute(
+                            select(JobListing).where(JobListing.url_hash == url_hash)
+                        )).scalar_one_or_none()
+                        if not existing:
+                            return None
+                        # Never overwrite a listing that has an applied/interview/offer application
+                        applied = (await fresh_db.execute(
+                            select(_App.id).where(
+                                _App.job_listing_id == existing.id,
+                                _App.status.in_(["applied", "interview", "offer", "responded"]),
+                            ).limit(1)
+                        )).scalar_one_or_none()
+                        if applied:
+                            return None  # leave applied listing untouched
+                        if _SCORE_ORDER.get(score, 99) <= _SCORE_ORDER.get(existing.match_score, 99):
+                            existing.match_score = score
+                            existing.status = "pending"
+                            existing.campaign_id = campaign_id
+                            await fresh_db.commit()
+                            return existing
+                except Exception:
+                    pass
             return None
 
     async def run_jobspy(self, campaign: JobHunterCampaign, results_wanted: int = 100, search_term: str | None = None) -> list[dict]:
@@ -474,15 +491,17 @@ class ScraperService:
             except Exception:
                 await self._publish("⚠️ LinkedIn: failed to decrypt credentials — skipping LinkedIn source")
 
-        # Load campaign profile for skills-based scoring
+        # Load campaign profile for skills-based scoring and BERT embedding
         from app.models.pg.job_hunter import CampaignProfile
         profile_result = await self.db.execute(
             select(CampaignProfile).where(CampaignProfile.campaign_id == campaign_id)
         )
         cp = profile_result.scalar_one_or_none()
-        profile_skills: list[str] = list(cp.skills or []) if cp else []
+        profile_skills: list[str]   = list(cp.skills or []) if cp else []
+        profile_work_exp: list      = list(cp.work_experience or []) if cp else []
+        profile_raw_context: str | None = cp.raw_context if cp else None
         if profile_skills:
-            await self._publish(f"🧠 Scoring with {len(profile_skills)} profile skills for better match accuracy")
+            await self._publish(f"🧠 Scoring with {len(profile_skills)} profile skills")
 
         deadline = datetime.now(timezone.utc).timestamp() + 86400  # 24h window
 
@@ -587,6 +606,9 @@ class ScraperService:
                     startup_jobs = results[1] if not isinstance(results[1], Exception) else []
                     li_jobs      = results[2] if len(results) > 2 and not isinstance(results[2], Exception) else []
                     raw_jobs = jobspy_jobs + startup_jobs + li_jobs
+            except asyncio.CancelledError:
+                await self._publish("🛑 Scrape cancelled during fetch")
+                raise
             except Exception as e:
                 await self._publish(f"❌ Pass {attempt} failed: {e} — retrying in 5m")
                 await asyncio.sleep(300)
@@ -604,7 +626,7 @@ class ScraperService:
                 else:
                     skipped_location += 1
 
-            # Step 2: category pre-filter (drops jobs clearly outside the campaign's field)
+            # Step 2: category pre-filter (keyword-based, CPU-only)
             tech_filtered = []
             for job in work_type_filtered:
                 if self._category_prefilter(job["title"], job["description"], broad_category, sub_categories):
@@ -612,11 +634,27 @@ class ScraperService:
                 else:
                     skipped_non_tech += 1
 
-            # Step 3: sort by SMB score descending so startup-native sources are scored first
+            # Step 3: sort by SMB score so startup-native sources score first
             tech_filtered.sort(key=_smb_score, reverse=True)
 
-            # Step 4: score and dispatch
-            for job in tech_filtered:
+            # Step 4a: BERT pre-filter — local, zero cost, drops clear mismatches
+            from app.services.job_hunter.bert_scorer import prefilter_jobs
+            bert_candidates, bert_skipped = await prefilter_jobs(
+                jobs=tech_filtered,
+                skills=profile_skills,
+                broad_category=broad_category,
+                sub_categories=sub_categories,
+                work_experience=profile_work_exp,
+                raw_context=profile_raw_context,
+            )
+            skipped_non_tech += len(bert_skipped)
+            await self._publish(
+                f"🔎 BERT pre-filter: {len(bert_candidates)} candidates / "
+                f"{len(bert_skipped)} dropped (free, local)"
+            )
+
+            # Step 4b: LLM final classification — only on BERT candidates
+            for job in bert_candidates:
                 if matches_found >= target:
                     break
 
@@ -647,7 +685,11 @@ class ScraperService:
                 consecutive_empty += 1
                 wait_minutes = min(15 * consecutive_empty, 60)  # backoff: 15m, 30m, 60m cap
                 await self._publish(f"⏸ No new matches — waiting {wait_minutes}m before retrying (sources need to refresh)")
-                await asyncio.sleep(wait_minutes * 60)
+                try:
+                    await asyncio.sleep(wait_minutes * 60)
+                except asyncio.CancelledError:
+                    await self._publish("🛑 Scrape cancelled during wait")
+                    raise
             else:
                 consecutive_empty = 0
                 results_wanted = max(results_wanted, (target - matches_found) * 2)
@@ -655,7 +697,7 @@ class ScraperService:
         await self._publish(
             f"✔ Done — {matches_found} matches found | "
             f"{match_counts['PARTIAL']} partial, {match_counts['SKIP']} skipped | "
-            f"{skipped_location} filtered by location | {skipped_non_tech} non-tech filtered | "
+            f"{skipped_location} filtered by location | {skipped_non_tech} filtered by BERT+category | "
             f"{skipped_duplicate} duplicates"
         )
         return matches_found

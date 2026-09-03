@@ -1,6 +1,45 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useJobHunter } from '../../hooks/useJobHunter'
 import type { Campaign } from '../../types/jobHunter'
+
+const JOB_CATEGORIES = [
+  "Software Engineering", "Frontend Development", "Backend Development",
+  "Full Stack Development", "Mobile Development", "AI / Machine Learning",
+  "Data Science", "Data Engineering", "DevOps / Infrastructure", "Cloud Engineering",
+  "Cybersecurity", "QA / Testing", "Product Management", "UI/UX Design",
+  "Technical Writing", "Engineering Management", "IT Support / Sysadmin",
+  "Blockchain / Web3", "Game Development", "Embedded Systems",
+  "Accounting", "Finance / Investment", "Banking", "Financial Analysis",
+  "Auditing", "Tax & Compliance", "Business Analysis", "Strategy & Consulting",
+  "Operations Management", "Project Management", "Supply Chain / Logistics", "Procurement",
+  "Digital Marketing", "Content Marketing", "SEO / SEM", "Social Media Management",
+  "Brand Management", "Growth Marketing", "Sales", "Business Development",
+  "Account Management", "Customer Success", "Public Relations", "Copywriting",
+  "Graphic Design", "Motion Design / Animation", "Video Production", "Photography",
+  "Architecture", "Interior Design", "Fashion Design", "Industrial Design", "Creative Direction",
+  "Medicine / Clinical", "Nursing", "Pharmacy", "Dentistry", "Mental Health / Counseling",
+  "Public Health", "Biomedical Engineering", "Medical Research", "Healthcare Administration",
+  "Physical Therapy", "Nutrition / Dietetics",
+  "Law / Legal Practice", "Paralegal", "Compliance & Regulatory", "IP & Patents", "Corporate Law",
+  "Teaching / Instruction", "Academic Research", "Curriculum Development", "Training & L&D",
+  "EdTech", "Library Science",
+  "Mechanical Engineering", "Civil Engineering", "Electrical Engineering",
+  "Chemical Engineering", "Aerospace Engineering", "Environmental Engineering",
+  "Structural Engineering", "Manufacturing Engineering",
+  "Biology / Life Sciences", "Chemistry", "Physics", "Environmental Science",
+  "Materials Science", "Data Analysis / Statistics",
+  "HR Management", "Talent Acquisition / Recruiting", "Compensation & Benefits",
+  "HR Business Partner", "Organizational Development",
+  "Customer Support", "Administrative Assistant", "Office Management",
+  "Executive Assistant", "Operations Analyst",
+  "Construction Management", "Electrical Trade", "Plumbing", "HVAC", "Carpentry", "Civil Works",
+  "Hotel Management", "Event Planning", "Travel & Tourism", "Food & Beverage", "Restaurant Management",
+  "Journalism", "Broadcasting", "Editing / Publishing", "Communications", "Translation / Localization",
+  "Agriculture / Agronomy", "Veterinary", "Forestry", "Environmental Management",
+  "Government / Public Sector", "Non-profit / NGO", "Social Work", "Policy & Advocacy",
+  "International Development",
+  "Real Estate", "Insurance", "Logistics / Freight", "Transportation", "Security Services", "Sports & Fitness",
+]
 
 const COUNTRIES = [
   { code: 'US', name: 'United States' },
@@ -56,6 +95,9 @@ export default function CampaignForm({ onCreated }: Props) {
   const [name, setName] = useState('')
   const [categories, setCategories] = useState<string[]>([])
   const [categoryInput, setCategoryInput] = useState('')
+  const [showSuggestions, setShowSuggestions] = useState(false)
+  const [highlightedIndex, setHighlightedIndex] = useState(0)
+  const categoryRef = useRef<HTMLDivElement>(null)
   const [workTypes, setWorkTypes] = useState<string[]>(['remote'])
   const [anywhere, setAnywhere] = useState(false)
   const [country, setCountry] = useState('')
@@ -63,17 +105,36 @@ export default function CampaignForm({ onCreated }: Props) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
-  const addCategory = () => {
-    const val = categoryInput.trim()
-    if (val && !categories.some(c => c.toLowerCase() === val.toLowerCase())) {
+  const suggestions = categoryInput.trim().length > 0
+    ? JOB_CATEGORIES.filter(c =>
+        c.toLowerCase().includes(categoryInput.toLowerCase()) &&
+        !categories.includes(c)
+      ).slice(0, 6)
+    : []
+
+  const addCategory = (val: string) => {
+    if (val && JOB_CATEGORIES.includes(val) && !categories.includes(val)) {
       setCategories(prev => [...prev, val])
     }
     setCategoryInput('')
+    setShowSuggestions(false)
+    setHighlightedIndex(0)
   }
 
   const removeCategory = (cat: string) => {
     setCategories(prev => prev.filter(c => c !== cat))
   }
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (categoryRef.current && !categoryRef.current.contains(e.target as Node)) {
+        setShowSuggestions(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
 
   const filteredCountries = COUNTRIES.filter(c =>
     c.name.toLowerCase().includes(countrySearch.toLowerCase()) ||
@@ -123,7 +184,7 @@ export default function CampaignForm({ onCreated }: Props) {
           />
         </div>
 
-        {/* Job Categories — free-form tag input */}
+        {/* Job Categories — autocomplete from predefined list */}
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center justify-between">
             <label className="text-xs text-gray-400 uppercase tracking-wide font-medium">Job Categories</label>
@@ -131,23 +192,52 @@ export default function CampaignForm({ onCreated }: Props) {
               <span className="text-xs text-blue-400 font-mono">{categories.length} added</span>
             )}
           </div>
-          <div className="flex gap-2">
+          <div className="relative" ref={categoryRef}>
             <input
               type="text"
               value={categoryInput}
-              onChange={e => setCategoryInput(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addCategory() } }}
-              placeholder="e.g. Software Engineer"
-              className="flex-1 bg-gray-900 border border-gray-800 text-gray-200 text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-blue-600"
+              onChange={e => {
+                setCategoryInput(e.target.value)
+                setShowSuggestions(true)
+                setHighlightedIndex(0)
+              }}
+              onFocus={() => { if (categoryInput.trim()) setShowSuggestions(true) }}
+              onKeyDown={e => {
+                if (!showSuggestions || suggestions.length === 0) return
+                if (e.key === 'ArrowDown') {
+                  e.preventDefault()
+                  setHighlightedIndex(i => Math.min(i + 1, suggestions.length - 1))
+                } else if (e.key === 'ArrowUp') {
+                  e.preventDefault()
+                  setHighlightedIndex(i => Math.max(i - 1, 0))
+                } else if (e.key === 'Enter') {
+                  e.preventDefault()
+                  if (suggestions[highlightedIndex]) addCategory(suggestions[highlightedIndex])
+                } else if (e.key === 'Escape') {
+                  setShowSuggestions(false)
+                }
+              }}
+              placeholder="Type to search categories…"
+              className="w-full bg-gray-900 border border-gray-800 text-gray-200 text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-blue-600"
             />
-            <button
-              type="button"
-              onClick={addCategory}
-              disabled={!categoryInput.trim()}
-              className="px-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-30 text-white text-xs rounded-lg font-medium transition-colors"
-            >
-              Add
-            </button>
+            {showSuggestions && suggestions.length > 0 && (
+              <ul className="absolute z-20 w-full mt-1 bg-gray-900 border border-gray-700 rounded-lg overflow-hidden shadow-xl">
+                {suggestions.map((cat, i) => (
+                  <li
+                    key={cat}
+                    onMouseDown={e => { e.preventDefault(); addCategory(cat) }}
+                    onMouseEnter={() => setHighlightedIndex(i)}
+                    className={`px-3 py-2 text-sm cursor-pointer transition-colors ${
+                      i === highlightedIndex
+                        ? 'bg-blue-600 text-white'
+                        : 'text-gray-300 hover:bg-gray-800'
+                    }`}
+                  >
+                    {cat}
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
           {categories.length > 0 && (
             <div className="flex flex-wrap gap-1.5 mt-1">
@@ -171,7 +261,7 @@ export default function CampaignForm({ onCreated }: Props) {
             </div>
           )}
           <p className="text-xs text-gray-600">
-            Type a role or keyword and press Enter to add it. Add as many as you like — the scraper searches all of them.
+            Type to search, use arrow keys to navigate, Enter or click to select.
           </p>
         </div>
 

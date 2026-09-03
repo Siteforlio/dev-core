@@ -12,7 +12,7 @@ from app.schemas.job_hunter import (
     EmailCredentialsRequest, CalDAVCredentialsRequest, LinkedInCredentialsRequest,
     CampaignProfileUpsertRequest, RawContextRequest, ManualJobRequest,
 )
-from app.services.job_hunter.campaign_profile_service import JOB_CATEGORIES, WORK_TYPES
+from app.services.job_hunter.campaign_profile_service import JOB_CATEGORIES, WORK_TYPES, _raw_context_has_experience
 
 router = APIRouter(prefix="/job-hunter/campaigns", tags=["job-hunter-campaigns"])
 bearer = HTTPBearer()
@@ -88,6 +88,7 @@ async def get_campaign_profile(
         "languages_spoken": profile.languages_spoken, "achievements": profile.achievements,
         "raw_context": profile.raw_context,
         "is_complete": profile.is_complete, "completion_gaps": profile.completion_gaps,
+        "has_mandatory": bool(profile.email or profile.phone) and (bool(profile.work_experience) or _raw_context_has_experience(profile.raw_context or "")),
     }, "error": None}
 
 
@@ -316,6 +317,12 @@ async def trigger_scrape(
             regions = ["africa", "kenya"]
         # else: global (empty = all regions)
 
+    # Load per-user API keys so scrapers can use keys configured in Settings
+    from app.core.config import get_api_key as _get_api_key
+    scrapfly_key = await _get_api_key(user_id, "scrapfly_key", db)
+    adzuna_api_key = await _get_api_key(user_id, "adzuna_api_key", db)
+    reed_api_key = await _get_api_key(user_id, "reed_api_key", db)
+
     preferences = {
         "search_term":    campaign.broad_category,
         "company_types":  body.get("company_types") or [],
@@ -329,6 +336,11 @@ async def trigger_scrape(
         "sub_categories": list(campaign.sub_categories or []),
         "profile_skills": list(profile.skills or []),
         "linkedin_creds": linkedin_creds,
+        "api_keys": {
+            "scrapfly_key":   scrapfly_key,
+            "adzuna_api_key": adzuna_api_key,
+            "reed_api_key":   reed_api_key,
+        },
     }
 
     # ── Dispatch ──────────────────────────────────────────────────────────
@@ -398,6 +410,103 @@ async def add_manual_job(
         pass  # tailoring is best-effort; listing is already saved
 
     return {"data": {"listing_id": listing.id, "status": "queued"}, "error": None}
+
+
+@router.post("/{campaign_id}/jobs/fetch-url", response_model=dict)
+async def fetch_job_from_url(
+    campaign_id: str,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_user_id),
+):
+    """
+    Fetch a job posting from a URL and extract title, company, description, date_posted.
+    Uses httpx to retrieve the page, strips HTML, then asks the LLM to extract fields.
+    Returns raw job data — does NOT save to DB yet (user confirms first).
+    """
+    import re as _re
+    import html as _html
+    import httpx
+    from app.services.job_hunter.llm import call_llm
+
+    url = (body.get("url") or "").strip()
+    if not url or not url.startswith("http"):
+        raise HTTPException(status_code=400, detail="Provide a valid URL starting with http/https")
+
+    HEADERS = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True, headers=HEADERS) as client:
+            resp = await client.get(url)
+        if resp.status_code >= 400:
+            raise HTTPException(status_code=422, detail=f"Could not fetch URL (HTTP {resp.status_code})")
+        raw_html = resp.text
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=422, detail="Request timed out — the site may be blocking automated access")
+    except httpx.RequestError as exc:
+        raise HTTPException(status_code=422, detail=f"Network error: {exc}")
+
+    # Strip HTML → plain text
+    text = _html.unescape(raw_html)
+    text = _re.sub(r'<script[^>]*>.*?</script>', ' ', text, flags=_re.DOTALL | _re.IGNORECASE)
+    text = _re.sub(r'<style[^>]*>.*?</style>', ' ', text, flags=_re.DOTALL | _re.IGNORECASE)
+    text = _re.sub(r'<[^>]+>', ' ', text)
+    text = _re.sub(r'[ \t]+', ' ', text)
+    text = _re.sub(r'\n{3,}', '\n\n', text)
+    text = text.strip()[:12000]  # cap at 12k chars for the LLM
+
+    if len(text) < 100:
+        raise HTTPException(status_code=422, detail="Page content too short — the site may require JavaScript or login")
+
+    prompt = (
+        f"You are extracting a job posting from scraped page text. "
+        f"Extract exactly these fields and return only valid JSON:\n\n"
+        f'{{\n'
+        f'  "title": "job title (string, required)",\n'
+        f'  "company": "company name (string or null)",\n'
+        f'  "description": "full job description text (string, required — include requirements, responsibilities, etc.)",\n'
+        f'  "date_posted": "ISO date string YYYY-MM-DD or null if not found",\n'
+        f'  "location": "location string or null",\n'
+        f'  "remote": true or false\n'
+        f'}}\n\n'
+        f"Page text:\n---\n{text}\n---\n\n"
+        f"Return only the JSON object, no other text. "
+        f"If title cannot be determined, set it to null."
+    )
+
+    import json as _json
+    try:
+        raw = await call_llm(prompt, max_tokens=2000, json_mode=True, thinking=False)
+        start, end = raw.find("{"), raw.rfind("}") + 1
+        if start == -1 or end == 0:
+            raise ValueError("no JSON")
+        result = _json.loads(raw[start:end])
+    except Exception:
+        raise HTTPException(status_code=422, detail="Could not parse job details from the page — try the manual tab")
+
+    if not result.get("title"):
+        raise HTTPException(status_code=422, detail="Could not find a job title on the page — try the manual tab")
+
+    return {
+        "data": {
+            "title":       result.get("title", ""),
+            "company":     result.get("company") or "",
+            "description": result.get("description", ""),
+            "date_posted": result.get("date_posted"),
+            "location":    result.get("location"),
+            "remote":      bool(result.get("remote", False)),
+            "apply_url":   url,
+        },
+        "error": None,
+    }
 
 
 @router.post("/{campaign_id}/listings/{listing_id}/ensure-application", response_model=dict)
@@ -698,6 +807,36 @@ async def test_linkedin_credentials(
         )
         raise HTTPException(status_code=400, detail=detail)
     return {"data": {"ok": True, "mode": mode}, "error": None}
+
+
+@router.patch("/{campaign_id}/categories", response_model=dict)
+async def add_campaign_categories(
+    campaign_id: str,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_user_id),
+):
+    """Merge additional categories into an existing campaign (from profile builder suggestions)."""
+    from sqlalchemy import select
+    from app.models.pg.job_hunter import JobHunterCampaign
+    titles = body.get("titles", [])
+    if not isinstance(titles, list):
+        raise HTTPException(status_code=400, detail="titles must be a list")
+    invalid = [t for t in titles if t not in JOB_CATEGORIES]
+    if invalid:
+        raise HTTPException(status_code=400, detail=f"Invalid categories: {', '.join(invalid)}")
+    result = await db.execute(
+        select(JobHunterCampaign).where(JobHunterCampaign.id == campaign_id, JobHunterCampaign.user_id == user_id)
+    )
+    campaign = result.scalar_one_or_none()
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    existing = set([campaign.broad_category] + list(campaign.sub_categories or []))
+    new_cats = [t for t in titles if t not in existing]
+    campaign.sub_categories = list(campaign.sub_categories or []) + new_cats
+    await db.commit()
+    all_cats = [campaign.broad_category] + list(campaign.sub_categories)
+    return {"data": {"categories": all_cats}, "error": None}
 
 
 @router.delete("/{campaign_id}", response_model=dict)

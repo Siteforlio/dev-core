@@ -103,18 +103,27 @@ async def lifespan(app: FastAPI):
     runner.schedule_periodic(scrape_all_active_campaigns, interval_seconds=21600)  # 6h
     runner.schedule_periodic(poll_all_campaigns, interval_seconds=60)               # 1min
     yield
+    # ── Shutdown (3s hard limit — never block Ctrl+C) ─────────────────────
+    import os
     flush_task.cancel()
     try:
-        await flush_task
-    except asyncio.CancelledError:
+        await asyncio.wait_for(flush_task, timeout=1.0)
+    except (asyncio.CancelledError, asyncio.TimeoutError):
         pass
-    await runner.shutdown()
-    # Gracefully drain active WebSocket connections before shutdown
-    from app.core import ws_registry
-    await ws_registry.close_all(timeout=10.0)
-    # Clean up cache on shutdown
-    from app.core.cache import close_redis
-    await close_redis()
+    try:
+        await runner.shutdown(timeout=2.0)
+    except Exception:
+        pass
+    try:
+        from app.core import ws_registry
+        await asyncio.wait_for(ws_registry.close_all(timeout=1.0), timeout=1.0)
+    except Exception:
+        pass
+    try:
+        from app.core.cache import close_redis
+        await asyncio.wait_for(close_redis(), timeout=1.0)
+    except Exception:
+        pass
 
 
 app = FastAPI(title="Developer Core API", version="1.0.0", lifespan=lifespan)

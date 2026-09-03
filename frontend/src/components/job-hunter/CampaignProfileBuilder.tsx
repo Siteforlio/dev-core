@@ -5,10 +5,23 @@ const ALLOWED_EXTS = ['.pdf', '.docx', '.doc', '.txt', '.md']
 const CONTEXT_BUDGET_BYTES = 400 * 1024
 
 interface QueuedFile { id: string; file: File }
-interface Props { campaignId: string; campaignName: string; onReady: () => void }
+interface Props {
+  campaignId: string
+  campaignName: string
+  campaignCategories: string[]
+  onReady: () => void
+  onCategoriesAdded: (cats: string[]) => void
+}
 interface GapAnalysis {
-  score: number; is_ready: boolean; gaps: string[]
-  questions: { gap: string; question: string }[]; summary: string
+  score: number
+  is_ready: boolean
+  has_mandatory: boolean
+  has_contact: boolean
+  has_experience: boolean
+  gaps: string[]
+  questions: { gap: string; question: string }[]
+  summary: string
+  suggested_titles: string[]
 }
 type Step = 'paste' | 'gaps' | 'ready'
 
@@ -37,8 +50,8 @@ function ScoreRing({ score }: { score: number }) {
   )
 }
 
-export default function CampaignProfileBuilder({ campaignId, campaignName, onReady }: Props) {
-  const { getCampaignProfile, analyzeProfileGaps, processRawContext, processContextFile } = useJobHunter()
+export default function CampaignProfileBuilder({ campaignId, campaignName, campaignCategories, onReady, onCategoriesAdded }: Props) {
+  const { getCampaignProfile, analyzeProfileGaps, addCampaignCategories, processRawContext, processContextFile } = useJobHunter()
 
   const [step, setStep] = useState<Step>('paste')
   const [rawText, setRawText] = useState('')
@@ -54,6 +67,7 @@ export default function CampaignProfileBuilder({ campaignId, campaignName, onRea
   const [error, setError] = useState('')
   const [previewFile, setPreviewFile] = useState<QueuedFile | null>(null)
   const [previewText, setPreviewText] = useState<string | null>(null)
+  const [addedTitles, setAddedTitles] = useState<Set<string>>(new Set(campaignCategories))
 
   const totalQueueBytes = queue.reduce((s, q) => s + q.file.size, 0)
   const contextPct = Math.min(100, Math.round((totalQueueBytes / CONTEXT_BUDGET_BYTES) * 100))
@@ -359,180 +373,241 @@ export default function CampaignProfileBuilder({ campaignId, campaignName, onRea
         </>
       )}
 
-      {/* ── Step 2: Gap analysis ── */}
-      {step === 'gaps' && analysis && !loading && (
-        <>
-          {/* Score card */}
-          <div style={{ ...card, display: 'flex', alignItems: 'center', gap: '20px' }}>
-            <div style={{ position: 'relative', flexShrink: 0 }}>
-              <ScoreRing score={analysis.score} />
-              <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <span style={{ fontFamily: 'monospace', fontSize: '15px', fontWeight: 700, color: scoreColor(analysis.score) }}>{analysis.score}</span>
-              </div>
-            </div>
-            <div style={{ flex: 1 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-                <p style={{ fontFamily: '"Orbitron", monospace', fontSize: '11px', fontWeight: 700, letterSpacing: '0.1em', color: 'rgba(226,232,240,0.9)' }}>Profile Readiness</p>
-                <span style={{ fontFamily: 'monospace', fontSize: '9px', letterSpacing: '0.14em', textTransform: 'uppercase', padding: '2px 7px', borderRadius: '4px', background: analysis.is_ready ? 'rgba(52,211,153,0.1)' : 'rgba(251,191,36,0.1)', border: `1px solid ${analysis.is_ready ? 'rgba(52,211,153,0.25)' : 'rgba(251,191,36,0.25)'}`, color: analysis.is_ready ? '#34d399' : '#fbbf24' }}>
-                  {analysis.is_ready ? 'Ready' : 'Needs info'}
-                </span>
-              </div>
-              <div style={{ height: '4px', borderRadius: '2px', background: 'rgba(255,255,255,0.05)', overflow: 'hidden', marginBottom: '10px' }}>
-                <div style={{ height: '100%', borderRadius: '2px', transition: 'width 0.6s ease', width: `${analysis.score}%`, background: scoreColor(analysis.score), boxShadow: `0 0 8px ${scoreColor(analysis.score)}` }} />
-              </div>
-              <p style={{ fontFamily: 'monospace', fontSize: '11px', color: 'rgba(100,116,139,0.65)', lineHeight: 1.5 }}>{analysis.summary}</p>
-            </div>
-          </div>
+      {/* ── Step 2 & 3: Analysis results ── */}
+      {(step === 'gaps' || step === 'ready') && analysis && !loading && (() => {
+        const isReady = step === 'ready'
 
-          {/* Gaps */}
-          {analysis.gaps.length > 0 && (
-            <div style={card}>
-              <p style={{ fontFamily: 'monospace', fontSize: '10px', fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'rgba(251,191,36,0.7)', marginBottom: '14px' }}>
-                What's missing
-              </p>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {analysis.gaps.map((gap, i) => (
-                  <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
-                    <div style={{ width: '5px', height: '5px', borderRadius: '50%', background: '#fbbf24', boxShadow: '0 0 4px #fbbf24', flexShrink: 0, marginTop: '5px' }} />
-                    <span style={{ fontFamily: 'monospace', fontSize: '12px', color: 'rgba(148,163,184,0.75)', lineHeight: 1.5 }}>{gap}</span>
+        const handleToggleTitle = async (title: string) => {
+          if (addedTitles.has(title)) return  // already in campaign
+          try {
+            await addCampaignCategories(campaignId, [title])
+            setAddedTitles(prev => new Set([...prev, title]))
+            onCategoriesAdded([title])
+          } catch { /* silently ignore */ }
+        }
+
+        const newSuggestions = (analysis.suggested_titles ?? []).filter(t => !addedTitles.has(t))
+        const alreadySuggested = (analysis.suggested_titles ?? []).filter(t => addedTitles.has(t))
+
+        return (
+          <>
+            {/* Mandatory check banner — shown when not yet met */}
+            {!analysis.has_mandatory && (
+              <div style={{ ...card, background: 'rgba(248,113,113,0.05)', border: '1px solid rgba(248,113,113,0.25)', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <p style={{ fontFamily: 'monospace', fontSize: '10px', fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: '#f87171' }}>
+                  Required before campaign can run
+                </p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  {[
+                    { ok: analysis.has_contact, label: 'Contact info (email or phone)' },
+                    { ok: analysis.has_experience, label: 'At least one work experience or project' },
+                  ].map(({ ok, label }) => (
+                    <div key={label} style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      {ok
+                        ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#34d399" strokeWidth="2.5" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>
+                        : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f87171" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                      }
+                      <span style={{ fontFamily: 'monospace', fontSize: '12px', color: ok ? 'rgba(52,211,153,0.8)' : 'rgba(248,113,113,0.85)' }}>{label}</span>
+                    </div>
+                  ))}
+                </div>
+                <p style={{ fontFamily: 'monospace', fontSize: '10px', color: 'rgba(100,116,139,0.5)', lineHeight: 1.5 }}>
+                  Add the missing info below and re-analyze to proceed.
+                </p>
+              </div>
+            )}
+
+            {/* Score card */}
+            <div style={{ ...card, display: 'flex', alignItems: 'center', gap: '20px' }}>
+              <div style={{ position: 'relative', flexShrink: 0 }}>
+                <ScoreRing score={analysis.score} />
+                <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <span style={{ fontFamily: 'monospace', fontSize: '15px', fontWeight: 700, color: scoreColor(analysis.score) }}>{analysis.score}</span>
+                </div>
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                  <p style={{ fontFamily: '"Orbitron", monospace', fontSize: '11px', fontWeight: 700, letterSpacing: '0.1em', color: 'rgba(226,232,240,0.9)' }}>Profile Readiness</p>
+                  <span style={{ fontFamily: 'monospace', fontSize: '9px', letterSpacing: '0.14em', textTransform: 'uppercase', padding: '2px 7px', borderRadius: '4px', background: isReady ? 'rgba(52,211,153,0.1)' : 'rgba(251,191,36,0.1)', border: `1px solid ${isReady ? 'rgba(52,211,153,0.25)' : 'rgba(251,191,36,0.25)'}`, color: isReady ? '#34d399' : '#fbbf24' }}>
+                    {isReady ? 'Ready' : 'Needs info'}
+                  </span>
+                </div>
+                <div style={{ height: '4px', borderRadius: '2px', background: 'rgba(255,255,255,0.05)', overflow: 'hidden', marginBottom: '10px' }}>
+                  <div style={{ height: '100%', borderRadius: '2px', transition: 'width 0.6s ease', width: `${analysis.score}%`, background: scoreColor(analysis.score), boxShadow: `0 0 8px ${scoreColor(analysis.score)}` }} />
+                </div>
+                <p style={{ fontFamily: 'monospace', fontSize: '11px', color: 'rgba(100,116,139,0.65)', lineHeight: 1.5 }}>{analysis.summary}</p>
+              </div>
+            </div>
+
+            {/* Suggested job titles */}
+            {(analysis.suggested_titles ?? []).length > 0 && (
+              <div style={card}>
+                <p style={{ fontFamily: 'monospace', fontSize: '10px', fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'rgba(34,211,238,0.7)', marginBottom: '6px' }}>
+                  Suggested job categories
+                </p>
+                <p style={{ fontFamily: 'monospace', fontSize: '10px', color: 'rgba(100,116,139,0.5)', marginBottom: '12px', lineHeight: 1.5 }}>
+                  Based on your CV — click to add to this campaign's search targets.
+                </p>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                  {newSuggestions.map(title => (
+                    <button
+                      key={title}
+                      onClick={() => handleToggleTitle(title)}
+                      style={{
+                        padding: '5px 12px', borderRadius: '20px', cursor: 'pointer', transition: 'all 0.15s',
+                        fontFamily: 'monospace', fontSize: '11px', fontWeight: 600,
+                        background: 'rgba(34,211,238,0.08)', border: '1px solid rgba(34,211,238,0.3)', color: '#22d3ee',
+                      }}
+                      onMouseEnter={e => { e.currentTarget.style.background = 'rgba(34,211,238,0.18)'; e.currentTarget.style.borderColor = 'rgba(34,211,238,0.6)' }}
+                      onMouseLeave={e => { e.currentTarget.style.background = 'rgba(34,211,238,0.08)'; e.currentTarget.style.borderColor = 'rgba(34,211,238,0.3)' }}
+                    >
+                      + {title}
+                    </button>
+                  ))}
+                  {alreadySuggested.map(title => (
+                    <span
+                      key={title}
+                      style={{
+                        padding: '5px 12px', borderRadius: '20px',
+                        fontFamily: 'monospace', fontSize: '11px', fontWeight: 600,
+                        background: 'rgba(52,211,153,0.07)', border: '1px solid rgba(52,211,153,0.25)', color: 'rgba(52,211,153,0.6)',
+                        display: 'inline-flex', alignItems: 'center', gap: '5px',
+                      }}
+                    >
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>
+                      {title}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Gaps */}
+            {analysis.gaps.length > 0 && (
+              <div style={card}>
+                <p style={{ fontFamily: 'monospace', fontSize: '10px', fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: isReady ? 'rgba(100,116,139,0.4)' : 'rgba(251,191,36,0.7)', marginBottom: '14px' }}>
+                  {isReady ? 'Optional improvements' : "What's missing"}
+                </p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {analysis.gaps.map((gap, i) => (
+                    <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+                      <div style={{ width: '5px', height: '5px', borderRadius: '50%', background: isReady ? 'rgba(100,116,139,0.4)' : '#fbbf24', boxShadow: isReady ? 'none' : '0 0 4px #fbbf24', flexShrink: 0, marginTop: '5px' }} />
+                      <span style={{ fontFamily: 'monospace', fontSize: '12px', color: isReady ? 'rgba(100,116,139,0.5)' : 'rgba(148,163,184,0.75)', lineHeight: 1.5 }}>{gap}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Questions */}
+            {analysis.questions.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <p style={{ fontFamily: 'monospace', fontSize: '10px', fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'rgba(34,211,238,0.6)' }}>
+                  Answer these to strengthen your profile
+                </p>
+                {analysis.questions.map((q, i) => (
+                  <div key={i} style={card}>
+                    <p style={{ fontFamily: 'monospace', fontSize: '9px', letterSpacing: '0.14em', textTransform: 'uppercase', color: 'rgba(34,211,238,0.5)', marginBottom: '6px' }}>{q.gap}</p>
+                    <p style={{ fontFamily: 'monospace', fontSize: '12px', color: 'rgba(226,232,240,0.85)', marginBottom: '12px', lineHeight: 1.5 }}>{q.question}</p>
+                    <textarea
+                      value={answers[i] ?? ''}
+                      onChange={e => setAnswers(prev => ({ ...prev, [i]: e.target.value }))}
+                      rows={3}
+                      placeholder="Your answer…"
+                      style={{
+                        width: '100%', boxSizing: 'border-box',
+                        background: 'rgba(0,0,0,0.3)',
+                        border: '1px solid rgba(34,211,238,0.1)',
+                        borderRadius: '8px',
+                        padding: '10px 12px',
+                        color: 'rgba(226,232,240,0.85)',
+                        fontFamily: 'monospace',
+                        fontSize: '12px',
+                        lineHeight: 1.6,
+                        resize: 'none',
+                        outline: 'none',
+                      }}
+                      onFocus={e => (e.currentTarget.style.borderColor = 'rgba(34,211,238,0.3)')}
+                      onBlur={e => (e.currentTarget.style.borderColor = 'rgba(34,211,238,0.1)')}
+                    />
                   </div>
                 ))}
               </div>
-            </div>
-          )}
-
-          {/* Questions */}
-          {analysis.questions.length > 0 && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <p style={{ fontFamily: 'monospace', fontSize: '10px', fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'rgba(34,211,238,0.6)' }}>
-                Answer these to strengthen your profile
-              </p>
-              {analysis.questions.map((q, i) => (
-                <div key={i} style={card}>
-                  <p style={{ fontFamily: 'monospace', fontSize: '9px', letterSpacing: '0.14em', textTransform: 'uppercase', color: 'rgba(34,211,238,0.5)', marginBottom: '6px' }}>{q.gap}</p>
-                  <p style={{ fontFamily: 'monospace', fontSize: '12px', color: 'rgba(226,232,240,0.85)', marginBottom: '12px', lineHeight: 1.5 }}>{q.question}</p>
-                  <textarea
-                    value={answers[i] ?? ''}
-                    onChange={e => setAnswers(prev => ({ ...prev, [i]: e.target.value }))}
-                    rows={3}
-                    placeholder="Your answer…"
-                    style={{
-                      width: '100%', boxSizing: 'border-box',
-                      background: 'rgba(0,0,0,0.3)',
-                      border: '1px solid rgba(34,211,238,0.1)',
-                      borderRadius: '8px',
-                      padding: '10px 12px',
-                      color: 'rgba(226,232,240,0.85)',
-                      fontFamily: 'monospace',
-                      fontSize: '12px',
-                      lineHeight: 1.6,
-                      resize: 'none',
-                      outline: 'none',
-                    }}
-                    onFocus={e => (e.currentTarget.style.borderColor = 'rgba(34,211,238,0.3)')}
-                    onBlur={e => (e.currentTarget.style.borderColor = 'rgba(34,211,238,0.1)')}
-                  />
-                </div>
-              ))}
-            </div>
-          )}
-
-          {error && <p style={{ fontFamily: 'monospace', fontSize: '11px', color: '#f87171' }}>{error}</p>}
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
-            {analysis.questions.length > 0 && (
-              <button
-                onClick={handleAnswersSubmit}
-                disabled={Object.values(answers).every(a => !a.trim())}
-                style={{
-                  padding: '12px 24px',
-                  background: 'rgba(34,211,238,0.1)',
-                  border: '1px solid rgba(34,211,238,0.4)',
-                  borderRadius: '10px',
-                  color: '#22d3ee',
-                  fontFamily: '"Orbitron", monospace',
-                  fontSize: '10px', fontWeight: 700,
-                  letterSpacing: '0.16em', textTransform: 'uppercase',
-                  cursor: 'pointer', transition: 'all 0.15s',
-                }}
-                onMouseEnter={e => (e.currentTarget.style.background = 'rgba(34,211,238,0.17)')}
-                onMouseLeave={e => (e.currentTarget.style.background = 'rgba(34,211,238,0.1)')}
-              >
-                Submit Answers
-              </button>
             )}
-            <button
-              onClick={() => setStep('paste')}
-              style={{ background: 'none', border: 'none', color: 'rgba(100,116,139,0.5)', fontFamily: 'monospace', fontSize: '11px', cursor: 'pointer', padding: 0, transition: 'color 0.15s' }}
-              onMouseEnter={e => (e.currentTarget.style.color = 'rgba(148,163,184,0.8)')}
-              onMouseLeave={e => (e.currentTarget.style.color = 'rgba(100,116,139,0.5)')}
-            >
-              ← Add more context
-            </button>
-          </div>
-        </>
-      )}
 
-      {/* ── Step 3: Ready ── */}
-      {step === 'ready' && analysis && !loading && (
-        <>
-          <div style={{ ...card, background: 'rgba(52,211,153,0.04)', border: '1px solid rgba(52,211,153,0.15)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '14px' }}>
-              <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: 'rgba(52,211,153,0.1)', border: '1px solid rgba(52,211,153,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#34d399" strokeWidth="2" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>
+            {error && <p style={{ fontFamily: 'monospace', fontSize: '11px', color: '#f87171' }}>{error}</p>}
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+              {/* Start Campaign — always visible, disabled until mandatory is met */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <button
+                  onClick={analysis.has_mandatory ? onReady : undefined}
+                  disabled={!analysis.has_mandatory}
+                  style={{
+                    padding: '13px 32px',
+                    background: !analysis.has_mandatory
+                      ? 'transparent'
+                      : isReady ? 'rgba(52,211,153,0.1)' : 'rgba(34,211,238,0.08)',
+                    border: `1px solid ${!analysis.has_mandatory
+                      ? 'rgba(255,255,255,0.08)'
+                      : isReady ? 'rgba(52,211,153,0.35)' : 'rgba(34,211,238,0.3)'}`,
+                    borderRadius: '10px',
+                    color: !analysis.has_mandatory
+                      ? 'rgba(255,255,255,0.2)'
+                      : isReady ? '#34d399' : '#22d3ee',
+                    fontFamily: '"Orbitron", monospace',
+                    fontSize: '11px', fontWeight: 700,
+                    letterSpacing: '0.16em', textTransform: 'uppercase',
+                    cursor: analysis.has_mandatory ? 'pointer' : 'not-allowed',
+                    transition: 'all 0.15s',
+                    display: 'flex', alignItems: 'center', gap: '10px',
+                  }}
+                  onMouseEnter={e => { if (analysis.has_mandatory) e.currentTarget.style.background = isReady ? 'rgba(52,211,153,0.17)' : 'rgba(34,211,238,0.16)' }}
+                  onMouseLeave={e => { if (analysis.has_mandatory) e.currentTarget.style.background = isReady ? 'rgba(52,211,153,0.1)' : 'rgba(34,211,238,0.08)' }}
+                >
+                  Start Campaign
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+                </button>
+                {!analysis.has_mandatory && (
+                  <p style={{ fontFamily: 'monospace', fontSize: '10px', color: 'rgba(248,113,113,0.6)', paddingLeft: '2px' }}>
+                    Add contact info and at least one work experience first
+                  </p>
+                )}
               </div>
-              <div>
-                <p style={{ fontFamily: '"Orbitron", monospace', fontSize: '12px', fontWeight: 700, letterSpacing: '0.1em', color: '#34d399', marginBottom: '2px' }}>Profile Ready</p>
-                <p style={{ fontFamily: 'monospace', fontSize: '10px', color: 'rgba(52,211,153,0.5)' }}>Score: {analysis.score}/100</p>
-              </div>
+              {analysis.questions.length > 0 && (
+                <button
+                  onClick={handleAnswersSubmit}
+                  disabled={Object.values(answers).every(a => !a.trim())}
+                  style={{
+                    padding: '12px 24px',
+                    background: 'rgba(34,211,238,0.1)',
+                    border: '1px solid rgba(34,211,238,0.4)',
+                    borderRadius: '10px',
+                    color: '#22d3ee',
+                    fontFamily: '"Orbitron", monospace',
+                    fontSize: '10px', fontWeight: 700,
+                    letterSpacing: '0.16em', textTransform: 'uppercase',
+                    cursor: 'pointer', transition: 'all 0.15s',
+                    opacity: Object.values(answers).every(a => !a.trim()) ? 0.4 : 1,
+                  }}
+                  onMouseEnter={e => (e.currentTarget.style.background = 'rgba(34,211,238,0.17)')}
+                  onMouseLeave={e => (e.currentTarget.style.background = 'rgba(34,211,238,0.1)')}
+                >
+                  Submit Answers
+                </button>
+              )}
+              <button
+                onClick={() => setStep('paste')}
+                style={{ background: 'none', border: 'none', color: 'rgba(100,116,139,0.5)', fontFamily: 'monospace', fontSize: '11px', cursor: 'pointer', padding: 0, transition: 'color 0.15s' }}
+                onMouseEnter={e => (e.currentTarget.style.color = 'rgba(148,163,184,0.8)')}
+                onMouseLeave={e => (e.currentTarget.style.color = 'rgba(100,116,139,0.5)')}
+              >
+                ← Add more context
+              </button>
             </div>
-            <div style={{ height: '4px', borderRadius: '2px', background: 'rgba(52,211,153,0.1)', overflow: 'hidden', marginBottom: '12px' }}>
-              <div style={{ height: '100%', borderRadius: '2px', width: `${analysis.score}%`, background: '#34d399', boxShadow: '0 0 8px rgba(52,211,153,0.4)', transition: 'width 0.6s ease' }} />
-            </div>
-            <p style={{ fontFamily: 'monospace', fontSize: '12px', color: 'rgba(100,116,139,0.65)', lineHeight: 1.5 }}>{analysis.summary}</p>
-          </div>
-
-          {analysis.gaps.length > 0 && (
-            <div style={card}>
-              <p style={{ fontFamily: 'monospace', fontSize: '9px', letterSpacing: '0.16em', textTransform: 'uppercase', color: 'rgba(100,116,139,0.4)', marginBottom: '10px' }}>Optional improvements</p>
-              {analysis.gaps.map((gap, i) => (
-                <p key={i} style={{ fontFamily: 'monospace', fontSize: '11px', color: 'rgba(100,116,139,0.5)', padding: '3px 0' }}>· {gap}</p>
-              ))}
-            </div>
-          )}
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-            <button
-              onClick={onReady}
-              style={{
-                padding: '13px 32px',
-                background: 'rgba(52,211,153,0.1)',
-                border: '1px solid rgba(52,211,153,0.35)',
-                borderRadius: '10px',
-                color: '#34d399',
-                fontFamily: '"Orbitron", monospace',
-                fontSize: '11px', fontWeight: 700,
-                letterSpacing: '0.16em', textTransform: 'uppercase',
-                cursor: 'pointer', transition: 'all 0.15s',
-                display: 'flex', alignItems: 'center', gap: '10px',
-              }}
-              onMouseEnter={e => (e.currentTarget.style.background = 'rgba(52,211,153,0.17)')}
-              onMouseLeave={e => (e.currentTarget.style.background = 'rgba(52,211,153,0.1)')}
-            >
-              Start Campaign
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
-            </button>
-            <button
-              onClick={() => setStep('gaps')}
-              style={{ background: 'none', border: 'none', color: 'rgba(100,116,139,0.5)', fontFamily: 'monospace', fontSize: '11px', cursor: 'pointer', padding: 0, transition: 'color 0.15s' }}
-              onMouseEnter={e => (e.currentTarget.style.color = 'rgba(148,163,184,0.8)')}
-              onMouseLeave={e => (e.currentTarget.style.color = 'rgba(100,116,139,0.5)')}
-            >
-              ← Improve further
-            </button>
-          </div>
-        </>
-      )}
+          </>
+        )
+      })()}
 
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>

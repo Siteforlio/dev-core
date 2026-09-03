@@ -1,12 +1,14 @@
 import { useState } from 'react'
 import type { Campaign } from '../../types/jobHunter'
 import { useJobHunter } from '../../hooks/useJobHunter'
+import ManualJobModal from './ManualJobModal'
 
 interface Props {
   campaigns: Campaign[]
   onSelect: (campaignId: string) => void
   onCreateNew: () => void
   onDeleted: (campaignId: string) => void
+  onJobAdded?: (campaignId: string, listingId: string) => void
 }
 
 const STATUS_STYLE: Record<string, { dot: string; label: string; bg: string; border: string }> = {
@@ -15,10 +17,11 @@ const STATUS_STYLE: Record<string, { dot: string; label: string; bg: string; bor
   archived: { dot: '#6b7280', label: '#6b7280', bg: 'rgba(107,114,128,0.08)', border: 'rgba(107,114,128,0.2)' },
 }
 
-export default function CampaignList({ campaigns, onSelect, onCreateNew, onDeleted }: Props) {
+export default function CampaignList({ campaigns, onSelect, onCreateNew, onDeleted, onJobAdded }: Props) {
   const { deleteCampaign } = useJobHunter()
   const [confirmId, setConfirmId] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<string | null>(null)
+  const [addJobCampaignId, setAddJobCampaignId] = useState<string | null>(null)
 
   const handleDelete = async (id: string) => {
     setDeleting(id)
@@ -34,6 +37,7 @@ export default function CampaignList({ campaigns, onSelect, onCreateNew, onDelet
   }
 
   return (
+    <>
     <div className="flex flex-col gap-6 h-full">
 
       {/* Header row */}
@@ -79,7 +83,7 @@ export default function CampaignList({ campaigns, onSelect, onCreateNew, onDelet
         <div
           className="grid items-center"
           style={{
-            gridTemplateColumns: '1fr 180px 120px 140px',
+            gridTemplateColumns: '1fr 180px 120px 200px',
             padding: '6px 20px',
             borderTop: '1px solid rgba(34,211,238,0.08)',
             borderBottom: '1px solid rgba(34,211,238,0.08)',
@@ -130,7 +134,7 @@ export default function CampaignList({ campaigns, onSelect, onCreateNew, onDelet
                 key={c.id}
                 className="grid items-center transition-all duration-150"
                 style={{
-                  gridTemplateColumns: '1fr 180px 120px 140px',
+                  gridTemplateColumns: '1fr 180px 120px 200px',
                   padding: '14px 20px',
                   borderBottom: '1px solid rgba(34,211,238,0.05)',
                   background: 'transparent',
@@ -186,6 +190,30 @@ export default function CampaignList({ campaigns, onSelect, onCreateNew, onDelet
                   ) : (
                     <>
                       <button
+                        onClick={() => setAddJobCampaignId(c.id)}
+                        className="text-[11px] font-semibold px-3 py-1.5 rounded transition-all duration-150 flex items-center gap-1.5"
+                        style={{
+                          background: 'transparent',
+                          border: '1px solid rgba(255,255,255,0.08)',
+                          color: 'rgba(148,163,184,0.6)',
+                          fontFamily: 'monospace',
+                        }}
+                        title="Add a job to this campaign"
+                        onMouseEnter={e => {
+                          e.currentTarget.style.background = 'rgba(34,211,238,0.07)'
+                          e.currentTarget.style.borderColor = 'rgba(34,211,238,0.25)'
+                          e.currentTarget.style.color = '#22d3ee'
+                        }}
+                        onMouseLeave={e => {
+                          e.currentTarget.style.background = 'transparent'
+                          e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)'
+                          e.currentTarget.style.color = 'rgba(148,163,184,0.6)'
+                        }}
+                      >
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                        Add Job
+                      </button>
+                      <button
                         onClick={() => onSelect(c.id)}
                         className="text-[11px] font-semibold px-3 py-1.5 rounded transition-all duration-150"
                         style={{
@@ -234,5 +262,18 @@ export default function CampaignList({ campaigns, onSelect, onCreateNew, onDelet
         </div>
       )}
     </div>
+
+    {addJobCampaignId && (
+      <ManualJobModal
+        campaignId={addJobCampaignId}
+        onClose={() => setAddJobCampaignId(null)}
+        onAdded={(listingId) => {
+          const cid = addJobCampaignId
+          setAddJobCampaignId(null)
+          if (cid) onJobAdded?.(cid, listingId)
+        }}
+      />
+    )}
+    </>
   )
 }

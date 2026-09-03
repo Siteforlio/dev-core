@@ -98,13 +98,33 @@ export function useJobHunter() {
   }
 
   async function analyzeProfileGaps(campaignId: string): Promise<{
-    score: number; is_ready: boolean; gaps: string[]; questions: { gap: string; question: string }[]; summary: string
+    score: number
+    is_ready: boolean
+    has_mandatory: boolean
+    has_contact: boolean
+    has_experience: boolean
+    gaps: string[]
+    questions: { gap: string; question: string }[]
+    summary: string
+    suggested_titles: string[]
   }> {
     const res = await apiFetch(`${BASE}/job-hunter/campaigns/${campaignId}/profile/analyze`, {
       method: 'POST', headers,
     })
     const { data } = await res.json()
     return data
+  }
+
+  async function addCampaignCategories(campaignId: string, titles: string[]): Promise<string[]> {
+    const res = await apiFetch(`${BASE}/job-hunter/campaigns/${campaignId}/categories`, {
+      method: 'PATCH', headers, body: JSON.stringify({ titles }),
+    })
+    if (!res.ok) {
+      const b = await res.json().catch(() => null)
+      throw new Error(b?.detail ?? `HTTP ${res.status}`)
+    }
+    const { data } = await res.json()
+    return data.categories as string[]
   }
 
   async function processRawContext(campaignId: string, rawContext: string): Promise<{
@@ -483,6 +503,23 @@ export function useJobHunter() {
     return { listingId: data.listing_id }
   }
 
+  async function fetchJobFromUrl(
+    campaignId: string,
+    url: string,
+  ): Promise<{ title: string; company: string; description: string; date_posted: string | null; location: string | null; remote: boolean; apply_url: string }> {
+    const res = await apiFetch(`${BASE}/job-hunter/campaigns/${campaignId}/jobs/fetch-url`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ url }),
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body?.detail ?? `HTTP ${res.status}`)
+    }
+    const { data } = await res.json()
+    return data
+  }
+
   async function getTrackingStatus(campaignId: string, applicationId: string): Promise<TrackingStatus> {
     const res = await apiFetch(
       `${BASE}/job-hunter/campaigns/${campaignId}/applications/${applicationId}/tracking`,
@@ -514,6 +551,7 @@ export function useJobHunter() {
     getCampaignProfile,
     upsertCampaignProfile,
     analyzeProfileGaps,
+    addCampaignCategories,
     processRawContext,
     processContextFile,
     triggerScrape,
@@ -541,5 +579,6 @@ export function useJobHunter() {
     scanEmails,
     getTrackingStatus,
     addManualJob,
+    fetchJobFromUrl,
   }
 }

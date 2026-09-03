@@ -74,11 +74,15 @@ async def _set_run_status(campaign_id: str, status: str, matches: int = 0, round
         key = f"scrape_run:{campaign_id}"
         existing = await cache_get(key)
         started_at = datetime.now(timezone.utc).isoformat()
+        # Never let a new-round "running" reset clobber a higher match count from a previous round.
+        # Always keep the highest matches value seen so far.
+        prev_matches = 0
         if existing:
             started_at = existing.get("started_at", started_at)
+            prev_matches = existing.get("matches", 0)
         await cache_set(key, {
             "status": status,
-            "matches": matches,
+            "matches": max(matches, prev_matches),  # cumulative — never go backwards
             "round": round_,
             "started_at": started_at,
             "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -103,7 +107,7 @@ async def _publish_activity(campaign_id: str, message: str):
 
 # ── Board router ──────────────────────────────────────────────────────────────
 
-async def _run_board(board_id: str, search_term: str, linkedin_creds: dict | None = None) -> list[dict]:
+async def _run_board(board_id: str, search_term: str, linkedin_creds: dict | None = None, api_keys: dict | None = None) -> list[dict]:
     """
     Route board_id to the correct async scraper function.
     Always returns a list of raw job dicts — never raises.
@@ -112,6 +116,7 @@ async def _run_board(board_id: str, search_term: str, linkedin_creds: dict | Non
     from app.services.job_hunter import (
         ats_scrapers, startup_scrapers, kenya_scrapers,
     )
+    _keys = api_keys or {}
 
     try:
         async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
@@ -143,7 +148,7 @@ async def _run_board(board_id: str, search_term: str, linkedin_creds: dict | Non
                 return jobs
 
             elif board_id == "wellfound":
-                return await startup_scrapers.scrape_wellfound(search_term, client)
+                return await startup_scrapers.scrape_wellfound(search_term, client, scrapfly_key=_keys.get("scrapfly_key", ""))
 
             elif board_id == "remotive":
                 return await startup_scrapers.scrape_remotive(search_term, client)
@@ -199,11 +204,11 @@ async def _run_board(board_id: str, search_term: str, linkedin_creds: dict | Non
             # ── Global boards (optional API key) ──────────────────────────
             elif board_id == "adzuna":
                 from app.services.job_hunter.global_scrapers import scrape_adzuna
-                return await scrape_adzuna(search_term, client)
+                return await scrape_adzuna(search_term, client, api_key=_keys.get("adzuna_api_key", ""))
 
             elif board_id == "reed":
                 from app.services.job_hunter.global_scrapers import scrape_reed
-                return await scrape_reed(search_term, client)
+                return await scrape_reed(search_term, client, api_key=_keys.get("reed_api_key", ""))
 
             elif board_id in ("indeed", "glassdoor", "zip_recruiter", "google"):
                 # JobSpy boards — each one is a site_name in jobspy
@@ -274,6 +279,7 @@ async def scrape_board(
     campaign_id: str,
     search_term: str,
     linkedin_creds: dict | None = None,
+    api_keys: dict | None = None,
 ) -> dict:
     """
     Scrape a single board and return raw jobs.
@@ -284,7 +290,7 @@ async def scrape_board(
     await _publish_activity(campaign_id, f"🔄 [{board_id}] starting...")
 
     try:
-        jobs = await _run_board(board_id, search_term, linkedin_creds)
+        jobs = await _run_board(board_id, search_term, linkedin_creds, api_keys=api_keys)
         await _set_board_status(campaign_id, board_id, "done", count=len(jobs))
         await _publish_activity(campaign_id, f"✅ [{board_id}] {len(jobs)} listings fetched")
         return {"board_id": board_id, "jobs": jobs, "error": None}
@@ -375,9 +381,36 @@ async def aggregate_board_results(
 
         # ── 5. Score (BERT gate → Gemini) and save ────────────────────
         from app.services.job_hunter.matcher_service import matcher
+        import hashlib as _hashlib
+
+        # Build set of url_hashes for jobs already applied to (across all campaigns for this user).
+        # Applied jobs must never be re-saved or re-queued — the user already actioned them.
+        from app.models.pg.job_hunter import Application as _Application, JobListing as _JLApplied
+        applied_hashes_result = await db.execute(
+            select(_JLApplied.url_hash)
+            .join(_Application, _Application.job_listing_id == _JLApplied.id)
+            .where(
+                _Application.user_id == user_id,
+                _Application.status.in_(["applied", "interview", "offer", "responded"]),
+            )
+        )
+        applied_hashes: set[str] = {row[0] for row in applied_hashes_result.all() if row[0]}
+
+        def _job_url_hash(job: dict) -> str:
+            company   = (job.get("company") or "").lower().strip()
+            title     = (job.get("title") or "").lower().strip()
+            apply_url = (job.get("apply_url") or job.get("url") or "").strip()
+            raw = f"{user_id}|{company}|{title}|{apply_url}"
+            return _hashlib.sha256(raw.encode()).hexdigest()
 
         matches_saved = 0
+        already_applied_skipped = 0
         for job in tech_filtered:
+            # Skip jobs the user has already applied to
+            if _job_url_hash(job) in applied_hashes:
+                already_applied_skipped += 1
+                continue
+
             # BERT pre-score — avoid Gemini on obvious mismatches
             if profile_skills:
                 profile_text = " | ".join(profile_skills[:30])
@@ -409,21 +442,33 @@ async def aggregate_board_results(
             if listing and score == "MATCH":
                 matches_saved += 1
 
+        if already_applied_skipped:
+            await _publish_activity(campaign_id, f"🔒 {already_applied_skipped} already-applied jobs skipped")
         await _publish_activity(
             campaign_id,
-            f"💾 Round {round_} saved: {matches_saved} MATCH listings (target: {daily_target})"
+            f"💾 Round {round_} saved: {matches_saved} new MATCH listings (target: {daily_target})"
         )
-        await _set_run_status(campaign_id, "running" if matches_saved < daily_target else "done",
-                        matches=matches_saved, round_=round_)
+        # Use cumulative DB count (all rounds) — not just this round's matches_saved
+        from sqlalchemy import func as sql_func
+        from app.models.pg.job_hunter import JobListing as _JobListing
+        cumulative_matches = (await db.execute(
+            select(sql_func.count()).select_from(_JobListing).where(
+                _JobListing.campaign_id == campaign_id,
+                _JobListing.match_score.in_(["MATCH", "PARTIAL"]),
+                _JobListing.deleted_at.is_(None),
+            )
+        )).scalar() or 0
+        await _set_run_status(campaign_id, "running" if cumulative_matches < daily_target else "done",
+                        matches=cumulative_matches, round_=round_)
 
     daily_target = preferences.get("daily_target", 100)
     max_rounds   = preferences.get("max_rounds", 5)
 
     # ── 6. Re-dispatch dynamic boards if target not met ───────────────────
-    if matches_saved < daily_target and round_ < max_rounds:
+    if cumulative_matches < daily_target and round_ < max_rounds:
         await _publish_activity(
             campaign_id,
-            f"🔁 Target {daily_target} not reached ({matches_saved} found) — launching round {round_ + 1}"
+            f"🔁 Target {daily_target} not reached ({cumulative_matches} found across all rounds) — launching round {round_ + 1}"
         )
         from app.core.task_runner import get_runner
         get_runner().submit(dispatch_scrape(
@@ -434,8 +479,8 @@ async def aggregate_board_results(
             round_=round_ + 1,
         ))
     else:
-        await _set_run_status(campaign_id, "done", matches=matches_saved, round_=round_)
-        await _publish_activity(campaign_id, f"🏁 Scrape complete — {matches_saved} matches saved")
+        await _set_run_status(campaign_id, "done", matches=cumulative_matches, round_=round_)
+        await _publish_activity(campaign_id, f"🏁 Scrape complete — {cumulative_matches} matches/partials saved total")
 
     return {"matches_saved": matches_saved, "round": round_}
 
@@ -472,6 +517,7 @@ async def dispatch_scrape(
     regions        = preferences.get("regions") or []
     search_term    = preferences.get("search_term", "")
     linkedin_creds = preferences.get("linkedin_creds")
+    api_keys       = preferences.get("api_keys") or {}
 
     selected = select_boards(
         company_types=company_types or None,
@@ -503,7 +549,7 @@ async def dispatch_scrape(
     # Run all boards concurrently, then aggregate
     board_results = await asyncio.gather(
         *[
-            scrape_board(b.id, campaign_id, search_term, linkedin_creds)
+            scrape_board(b.id, campaign_id, search_term, linkedin_creds, api_keys=api_keys)
             for b in selected
         ],
         return_exceptions=False,

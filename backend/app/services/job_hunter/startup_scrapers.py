@@ -313,31 +313,29 @@ async def scrape_startupdeals_africa(search_term: str, client: httpx.AsyncClient
         return []
 
 
-async def scrape_wellfound(search_term: str, client: httpx.AsyncClient) -> list[dict]:
+async def scrape_wellfound(search_term: str, client: httpx.AsyncClient, scrapfly_key: str = "") -> list[dict]:
     """
     Wellfound (formerly AngelList Talent) via ScrapFly.
     Uses ScrapFly's ASP bypass + residential proxies + JS rendering to extract
     the Apollo GraphQL state embedded in __NEXT_DATA__ on each search page.
 
-    Extraction logic mirrors the working reference scraper at:
-    scripts/job-serch/scrapfly-scrapers/wellfound-scraper/get_jobs.py
-
-    Requires SCRAPFLY_KEY env var (https://scrapfly.io/).
-    Returns [] silently if the key is not set.
+    Requires a Scrapfly API key — set it in Settings → API Keys (key name: scrapfly_key).
+    Raises RuntimeError when the key is not configured so the board card shows an error.
     """
     import json as _json
     import os
     from datetime import datetime
 
-    # Resolve key — prefer settings object, fall back to raw env
-    try:
-        from app.core.config import settings
-        scrapfly_key = settings.scrapfly_key or os.environ.get("SCRAPFLY_KEY", "")
-    except Exception:
-        scrapfly_key = os.environ.get("SCRAPFLY_KEY", "")
+    # Caller passes the key; fall back to env/settings for backwards compat
+    if not scrapfly_key:
+        try:
+            from app.core.config import settings
+            scrapfly_key = settings.scrapfly_key or os.environ.get("SCRAPFLY_KEY", "")
+        except Exception:
+            scrapfly_key = os.environ.get("SCRAPFLY_KEY", "")
 
     if not scrapfly_key:
-        return []
+        raise RuntimeError("No Scrapfly API key — add it in Settings → API Keys (key: scrapfly_key)")
 
     try:
         from scrapfly import ScrapeConfig, ScrapflyClient

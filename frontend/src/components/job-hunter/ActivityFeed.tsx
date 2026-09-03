@@ -394,7 +394,12 @@ export default function ActivityFeed({
                     <span style={{ fontFamily: 'monospace', fontSize: '10px', fontWeight: 700, color: '#34d399', flexShrink: 0 }}>{bs.count}</span>
                   )}
                   {bs.status === 'failed' && (
-                    <span style={{ fontFamily: 'monospace', fontSize: '10px', color: '#f87171', flexShrink: 0 }}>!</span>
+                    <span
+                      style={{ fontFamily: 'monospace', fontSize: '9px', color: '#f87171', flexShrink: 0, maxWidth: '60px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                      title={bs.error ?? 'Failed'}
+                    >
+                      {bs.error?.includes('API key') ? 'no key' : '!'}
+                    </span>
                   )}
                 </div>
               )
