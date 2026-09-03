@@ -1,0 +1,132 @@
+<svg width="1280" height="360" viewBox="0 0 1280 360" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <pattern id="grid" width="44" height="44" patternUnits="userSpaceOnUse">
+      <path d="M 44 0 L 0 0 0 44" fill="none" stroke="#111420" stroke-width="1"/>
+    </pattern>
+    <radialGradient id="gcyan" cx="18%" cy="55%" r="45%">
+      <stop offset="0%" stop-color="#3ECFEA" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="#3ECFEA" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="gviolet" cx="80%" cy="40%" r="40%">
+      <stop offset="0%" stop-color="#9B7FFF" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#9B7FFF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="topline" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#3ECFEA" stop-opacity="0"/>
+      <stop offset="25%" stop-color="#3ECFEA" stop-opacity="1"/>
+      <stop offset="70%" stop-color="#9B7FFF" stop-opacity="1"/>
+      <stop offset="100%" stop-color="#9B7FFF" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="cardgrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#111827"/>
+      <stop offset="100%" stop-color="#0A0C14"/>
+    </linearGradient>
+    <clipPath id="cardclip">
+      <rect x="758" y="52" width="460" height="272" rx="14"/>
+    </clipPath>
+  </defs>
+
+  <!-- Base -->
+  <rect width="1280" height="360" fill="#07080F"/>
+  <rect width="1280" height="360" fill="url(#grid)"/>
+  <rect width="1280" height="360" fill="url(#gcyan)"/>
+  <rect width="1280" height="360" fill="url(#gviolet)"/>
+
+  <!-- Top accent line -->
+  <rect y="0" width="1280" height="2" fill="url(#topline)"/>
+
+  <!-- Left cyan bar -->
+  <rect x="72" y="96" width="3" height="72" rx="1.5" fill="#3ECFEA"/>
+
+  <!-- DEVELOPER CORE heading -->
+  <text x="98" y="148" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="58" font-weight="700" fill="#E8EAF2" letter-spacing="-1.5">Developer Core</text>
+
+  <!-- Tagline -->
+  <text x="100" y="184" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="17" fill="#6B7280" font-weight="400">Self-hosted AI for your entire career. Runs 100% on your machine.</text>
+
+  <!-- Module pills -->
+  <!-- Interview Prep -->
+  <rect x="100" y="210" width="168" height="34" rx="7" fill="#0D1117" stroke="#1A2236" stroke-width="1"/>
+  <text x="120" y="232" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="13" font-weight="600" fill="#3ECFEA">🎤  Interview Prep</text>
+
+  <!-- Job Hunter -->
+  <rect x="280" y="210" width="136" height="34" rx="7" fill="#0D1117" stroke="#1A2236" stroke-width="1"/>
+  <text x="300" y="232" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="13" font-weight="600" fill="#F4A623">🔍  Job Hunter</text>
+
+  <!-- Screen Overlay -->
+  <rect x="428" y="210" width="158" height="34" rx="7" fill="#0D1117" stroke="#1A2236" stroke-width="1"/>
+  <text x="448" y="232" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="13" font-weight="600" fill="#9B7FFF">✦  Screen Overlay</text>
+
+  <!-- Self-hosted badge -->
+  <rect x="100" y="268" width="136" height="28" rx="14" fill="rgba(62,255,160,0.06)" stroke="rgba(62,255,160,0.18)" stroke-width="1"/>
+  <circle cx="118" cy="282" r="4" fill="#3EFFA0"/>
+  <text x="127" y="287" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="12" fill="#3EFFA0" font-weight="500">100% self-hosted</text>
+
+  <!-- No data pill -->
+  <rect x="248" y="268" width="148" height="28" rx="14" fill="rgba(155,127,255,0.06)" stroke="rgba(155,127,255,0.18)" stroke-width="1"/>
+  <text x="268" y="287" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="12" fill="#9B7FFF" font-weight="500">no data leaves your PC</text>
+
+  <!-- ── Right card: mock overlay window ── -->
+  <rect x="758" y="52" width="460" height="272" rx="14" fill="url(#cardgrad)" stroke="#1A2236" stroke-width="1"/>
+
+  <!-- Card title bar -->
+  <rect x="758" y="52" width="460" height="40" rx="14" fill="#0D1117"/>
+  <rect x="758" y="78" width="460" height="14" fill="#0D1117"/>
+
+  <!-- Window controls -->
+  <circle cx="782" cy="72" r="5.5" fill="#FF5F57"/>
+  <circle cx="800" cy="72" r="5.5" fill="#FFBD2E"/>
+  <circle cx="818" cy="72" r="5.5" fill="#28CA41"/>
+
+  <!-- Title bar label -->
+  <text x="975" y="76" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="12" fill="#4A5568" text-anchor="middle">Developer Core — Overlay</text>
+
+  <!-- Status row -->
+  <rect x="774" y="104" width="428" height="1" fill="#1A2236"/>
+  <circle cx="788" cy="120" r="4" fill="#3EFFA0"/>
+  <text x="798" y="124" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="12" fill="#3EFFA0" font-weight="500">Live  ·  MIC  ·  SYSTEM</text>
+  <text x="1120" y="124" font-family="'Cascadia Code','Consolas',monospace" font-size="11" fill="#4A5568">Ctrl+G</text>
+
+  <!-- Divider -->
+  <rect x="774" y="136" width="428" height="1" fill="#1A2236"/>
+
+  <!-- AI suggestion card -->
+  <rect x="774" y="148" width="428" height="100" rx="8" fill="#0A0C14" stroke="#1E2A40" stroke-width="1"/>
+
+  <!-- Thinking indicator label -->
+  <text x="790" y="168" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="10" fill="#3ECFEA" font-weight="600" letter-spacing="1">AI SUGGESTION</text>
+
+  <!-- Suggestion text lines -->
+  <rect x="790" y="178" width="340" height="9" rx="4.5" fill="#1E2A40"/>
+  <rect x="790" y="194" width="280" height="9" rx="4.5" fill="#1E2A40"/>
+  <rect x="790" y="210" width="310" height="9" rx="4.5" fill="#1E2A40"/>
+  <rect x="790" y="226" width="200" height="9" rx="4.5" fill="#1E2A40"/>
+
+  <!-- Animated-look shimmer on first line -->
+  <rect x="790" y="178" width="180" height="9" rx="4.5" fill="#243040" opacity="0.7"/>
+
+  <!-- Latency badge -->
+  <rect x="1120" y="234" width="72" height="20" rx="10" fill="rgba(62,207,234,0.08)" stroke="rgba(62,207,234,0.2)" stroke-width="1"/>
+  <text x="1156" y="248" font-family="'Cascadia Code','Consolas',monospace" font-size="10" fill="#3ECFEA" text-anchor="middle">↯ 0.8s</text>
+
+  <!-- Keyboard shortcut row -->
+  <rect x="774" y="260" width="428" height="1" fill="#1A2236"/>
+
+  <rect x="774" y="272" width="52" height="22" rx="5" fill="#111827" stroke="#1E2A40" stroke-width="1"/>
+  <text x="800" y="287" font-family="'Cascadia Code','Consolas',monospace" font-size="11" fill="#9B7FFF" text-anchor="middle">Ctrl</text>
+
+  <text x="832" y="287" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="11" fill="#4A5568">+</text>
+
+  <rect x="844" y="272" width="24" height="22" rx="5" fill="#111827" stroke="#1E2A40" stroke-width="1"/>
+  <text x="856" y="287" font-family="'Cascadia Code','Consolas',monospace" font-size="11" fill="#9B7FFF" text-anchor="middle">G</text>
+
+  <text x="876" y="287" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="12" fill="#4A5568">  trigger suggestion</text>
+
+  <rect x="1060" y="272" width="56" height="22" rx="5" fill="#111827" stroke="#1E2A40" stroke-width="1"/>
+  <text x="1088" y="287" font-family="'Cascadia Code','Consolas',monospace" font-size="11" fill="#6B7280" text-anchor="middle">Ctrl+I</text>
+
+  <text x="1122" y="287" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="12" fill="#4A5568"> interact</text>
+
+  <!-- Bottom border -->
+  <rect y="358" width="1280" height="2" fill="#111420"/>
+</svg>
