@@ -87,22 +87,87 @@ _jti_store: dict[str, float] = {}  # jti → expires_at (monotonic)
 _jti_lock = asyncio.Lock()
 
 
+def _blacklist_db_path() -> str:
+    """Extract the SQLite file path from the database URL."""
+    from app.core.config import settings as _settings
+    url = _settings.database_url
+    # sqlite+aiosqlite:///./devcore.db  → ./devcore.db
+    # sqlite+aiosqlite:////abs/path/devcore.db → /abs/path/devcore.db
+    if "///" in url:
+        return url.split("///", 1)[1]
+    return "devcore.db"
+
+
+async def _ensure_blacklist_table() -> None:
+    """Create the jwt_blacklist table if it doesn't exist. Called at startup."""
+    import aiosqlite
+    path = _blacklist_db_path()
+    async with aiosqlite.connect(path) as db:
+        await db.execute(
+            """CREATE TABLE IF NOT EXISTS jwt_blacklist (
+                jti TEXT PRIMARY KEY,
+                expires_at INTEGER NOT NULL
+            )"""
+        )
+        await db.commit()
+
+
 async def blacklist_jti(jti: str, ttl_seconds: int) -> None:
     if ttl_seconds <= 0:
         return
+    expires_at = int(time.time()) + ttl_seconds
+    # In-memory for fast lookups in current session
     async with _jti_lock:
         _jti_store[jti] = time.monotonic() + ttl_seconds
+    # Persist to SQLite so the blacklist survives restarts
+    try:
+        import aiosqlite
+        path = _blacklist_db_path()
+        async with aiosqlite.connect(path) as db:
+            await db.execute(
+                "INSERT OR REPLACE INTO jwt_blacklist (jti, expires_at) VALUES (?, ?)",
+                (jti, expires_at),
+            )
+            await db.commit()
+    except Exception as exc:
+        logger.warning("Failed to persist JTI blacklist entry to SQLite: %s", exc)
 
 
 async def is_jti_blacklisted(jti: str) -> bool:
+    # Fast in-memory check first (avoids DB hit for recently-revoked tokens)
     async with _jti_lock:
-        expires_at = _jti_store.get(jti)
-        if expires_at is None:
-            return False
-        if time.monotonic() > expires_at:
+        mono_expires = _jti_store.get(jti)
+        if mono_expires is not None:
+            if time.monotonic() <= mono_expires:
+                return True
+            # Expired in memory — remove it
             del _jti_store[jti]
+
+    # Fall through to SQLite — covers tokens revoked before this process started
+    try:
+        import aiosqlite
+        path = _blacklist_db_path()
+        async with aiosqlite.connect(path) as db:
+            async with db.execute(
+                "SELECT expires_at FROM jwt_blacklist WHERE jti = ?", (jti,)
+            ) as cursor:
+                row = await cursor.fetchone()
+        if row is None:
             return False
+        if int(time.time()) > row[0]:
+            # Expired — clean it up lazily
+            async with aiosqlite.connect(path) as db:
+                await db.execute("DELETE FROM jwt_blacklist WHERE jti = ?", (jti,))
+                await db.commit()
+            return False
+        # Warm up the memory cache for subsequent lookups
+        remaining = row[0] - int(time.time())
+        async with _jti_lock:
+            _jti_store[jti] = time.monotonic() + remaining
         return True
+    except Exception as exc:
+        logger.warning("Failed to query JTI blacklist from SQLite: %s", exc)
+        return False
 
 
 # ── Cleanup (called on shutdown — kept for API compat with main.py) ───────────

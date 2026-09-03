@@ -95,6 +95,9 @@ async def lifespan(app: FastAPI):
         await run_seed()
         async with AsyncSessionLocal() as db:
             await seed_knowledge_profiles(db)
+    # Initialize JWT blacklist persistence table
+    from app.core.cache import _ensure_blacklist_table
+    await _ensure_blacklist_table()
     flush_task = asyncio.create_task(flush_loop())
     from app.core.task_runner import get_runner
     from app.workers.scraper_worker import scrape_all_active_campaigns
