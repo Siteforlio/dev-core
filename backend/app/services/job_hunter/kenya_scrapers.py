@@ -248,31 +248,22 @@ async def scrape_all_kenya_boards(
     Each individual scraper is fault-tolerant (returns [] on failure).
     """
     if publish_fn:
-        await publish_fn(
-            "🇰🇪 Querying Kenya boards "
-            "(Fuzu + BrighterMonday + MyJobMag + Kuhustle + Andela + Arc.dev)..."
-        )
+        await publish_fn("🇰🇪 Querying Kenya boards (MyJobMag + Kuhustle)...")
 
+    # Browser-automation boards (Fuzu, BrighterMonday, Andela, Arc) are stashed —
+    # they require nodriver/browser-use which opens Chrome and is unreliable in
+    # production. Only HTTP-based boards run here.
     async with httpx.AsyncClient(follow_redirects=True) as client:
-        (
-            fuzu_jobs, bm_jobs, mjm_jobs,
-            kh_jobs, andela_jobs, arc_jobs,
-        ) = await asyncio.gather(
-            scrape_fuzu(search_term, client),
-            scrape_brightermonday(search_term, client),
+        mjm_jobs, kh_jobs = await asyncio.gather(
             scrape_myjobmag(search_term, client),
             scrape_kuhustle(search_term, client),
-            scrape_andela(search_term, client),
-            scrape_arc(search_term, client),
         )
 
-    all_jobs = fuzu_jobs + bm_jobs + mjm_jobs + kh_jobs + andela_jobs + arc_jobs
+    all_jobs = mjm_jobs + kh_jobs
 
     if publish_fn:
         await publish_fn(
-            f"  ↳ Fuzu: {len(fuzu_jobs)} | BrighterMonday: {len(bm_jobs)} | "
-            f"MyJobMag: {len(mjm_jobs)} | Kuhustle: {len(kh_jobs)} | "
-            f"Andela: {len(andela_jobs)} | Arc: {len(arc_jobs)} "
+            f"  ↳ MyJobMag: {len(mjm_jobs)} | Kuhustle: {len(kh_jobs)} "
             f"= {len(all_jobs)} Kenya listings"
         )
 
