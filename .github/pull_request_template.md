@@ -20,3 +20,5 @@ Closes #
 - [ ] Follows layering rules from ARCHITECTURE.md
 - [ ] No secrets or personal values in code
 - [ ] CHANGELOG.md updated if this is a user-facing change
+- [ ] `docs/index.html` updated if you added, changed, or removed a feature or shortcut
+- [ ] New keyboard shortcuts added to the Shortcuts section in `docs/index.html`
