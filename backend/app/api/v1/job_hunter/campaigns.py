@@ -1,7 +1,11 @@
 # backend/app/api/v1/job_hunter/campaigns.py
+import asyncio
 import io
+import ipaddress
 import os
+import socket
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from pydantic import BaseModel, HttpUrl
 from fastapi.security import HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
@@ -13,6 +17,30 @@ from app.schemas.job_hunter import (
     CampaignProfileUpsertRequest, RawContextRequest, ManualJobRequest,
 )
 from app.services.job_hunter.campaign_profile_service import JOB_CATEGORIES, WORK_TYPES, _raw_context_has_experience
+
+class FetchUrlRequest(BaseModel):
+    url: HttpUrl
+
+
+async def _assert_not_private(url: HttpUrl) -> None:
+    """
+    Async SSRF guard: resolve the URL's hostname and reject private/loopback IPs.
+    Uses asyncio.to_thread so the blocking DNS lookup doesn't stall the event loop.
+    """
+    host = url.host or ""
+    if not host:
+        raise HTTPException(status_code=400, detail="Cannot determine host from URL")
+    try:
+        ip_str = await asyncio.to_thread(socket.gethostbyname, host)
+    except socket.gaierror:
+        raise HTTPException(status_code=400, detail=f"Cannot resolve host: {host!r}")
+    try:
+        ip = ipaddress.ip_address(ip_str)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid IP for host {host!r}")
+    if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+        raise HTTPException(status_code=400, detail="Requests to private/internal addresses are not allowed")
+
 
 router = APIRouter(prefix="/job-hunter/campaigns", tags=["job-hunter-campaigns"])
 bearer = HTTPBearer()
@@ -415,7 +443,7 @@ async def add_manual_job(
 @router.post("/{campaign_id}/jobs/fetch-url", response_model=dict)
 async def fetch_job_from_url(
     campaign_id: str,
-    body: dict,
+    body: FetchUrlRequest,
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(get_user_id),
 ):
@@ -429,9 +457,8 @@ async def fetch_job_from_url(
     import httpx
     from app.services.job_hunter.llm import call_llm
 
-    url = (body.get("url") or "").strip()
-    if not url or not url.startswith("http"):
-        raise HTTPException(status_code=400, detail="Provide a valid URL starting with http/https")
+    await _assert_not_private(body.url)
+    url = str(body.url)
 
     HEADERS = {
         "User-Agent": (
