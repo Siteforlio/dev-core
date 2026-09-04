@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_api_key
 from app.core.database import get_db
 from app.core.security import decode_token
 from app.schemas.meeting_debrief import (
@@ -138,7 +139,8 @@ async def compose_email(
     user_id: str = Depends(get_user_id),
 ):
     """Use DeepSeek to compose a contextual follow-up email for this meeting."""
-    svc = MeetingDebriefService(db)
+    api_key = await get_api_key(user_id, "deepseek_api_key", db)
+    svc = MeetingDebriefService(db, api_key=api_key)
     result = await svc.compose_followup_email(debrief_id, user_id)
     if result is None:
         raise HTTPException(status_code=404, detail="Debrief not found")
@@ -152,7 +154,8 @@ async def summarize(
     user_id: str = Depends(get_user_id),
 ):
     """Trigger Claude AI summary generation. Returns immediately with status=pending."""
-    svc = MeetingDebriefService(db)
+    api_key = await get_api_key(user_id, "deepseek_api_key", db)
+    svc = MeetingDebriefService(db, api_key=api_key)
     row = await svc.generate_ai_summary(debrief_id, user_id)
     if not row:
         raise HTTPException(status_code=404, detail="Debrief not found")

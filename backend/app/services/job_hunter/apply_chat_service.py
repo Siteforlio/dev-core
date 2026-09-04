@@ -114,7 +114,8 @@ When answering questions about yourself, your experience, skills, or motivations
 # ── service ───────────────────────────────────────────────────────────────────
 
 class ApplyChatService:
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession, api_key: str = ""):
+        self._api_key = api_key
         self.db = db
 
     async def _get_profile(self, user_id: str) -> JobHunterProfile | None:
@@ -147,7 +148,7 @@ Requirements:
 
 Write only the cover letter body. No commentary."""
 
-        result = await call_llm(prompt, max_tokens=600)
+        result = await call_llm(prompt, self._api_key, max_tokens=600)
         return result.strip()
 
     async def generate_form_answers(
@@ -193,7 +194,7 @@ Rules:
 
 Return only the JSON object, no commentary."""
 
-        result = await call_llm(prompt, max_tokens=1000, json_mode=True)
+        result = await call_llm(prompt, self._api_key, max_tokens=1000, json_mode=True)
 
         try:
             answers = json.loads(result) if result else {}
@@ -252,5 +253,5 @@ CONVERSATION SO FAR:{history_text}
 User: {user_message}
 Assistant:"""
 
-        result = await call_llm(prompt, max_tokens=500)
+        result = await call_llm(prompt, self._api_key, max_tokens=500)
         return result.strip()

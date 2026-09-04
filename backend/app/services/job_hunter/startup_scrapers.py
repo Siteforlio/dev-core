@@ -326,14 +326,6 @@ async def scrape_wellfound(search_term: str, client: httpx.AsyncClient, scrapfly
     import os
     from datetime import datetime
 
-    # Caller passes the key; fall back to env/settings for backwards compat
-    if not scrapfly_key:
-        try:
-            from app.core.config import settings
-            scrapfly_key = settings.scrapfly_key or os.environ.get("SCRAPFLY_KEY", "")
-        except Exception:
-            scrapfly_key = os.environ.get("SCRAPFLY_KEY", "")
-
     if not scrapfly_key:
         raise RuntimeError("No Scrapfly API key — add it in Settings → API Keys (key: scrapfly_key)")
 

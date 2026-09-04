@@ -2,13 +2,12 @@
 import json
 import re
 import openai
-from app.core.config import settings
 
 
 class LLMOrchestrator:
-    def __init__(self):
+    def __init__(self, api_key: str):
         self._client = openai.AsyncOpenAI(
-            api_key=settings.deepseek_api_key,
+            api_key=api_key,
             base_url="https://api.deepseek.com",
         )
         self._model_fast = "deepseek-chat"       # DeepSeek-V3

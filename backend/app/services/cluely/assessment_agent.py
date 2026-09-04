@@ -112,14 +112,17 @@ class AssessmentAgent:
         send: Callable[[dict], asyncio.Future],
         project_root: str | None = None,
         file_paths: list[str] | None = None,
+        api_key: str = "",
+        anthropic_api_key: str = "",
     ) -> None:
         self._mode        = mode
         self._ctx         = session_ctx
         self._send        = send
+        self._api_key     = api_key
         self._terminal    = TerminalService()
         self._browser     = BrowserService()
-        self._screen      = ScreenService()
-        self._search      = SearchService()
+        self._screen      = ScreenService(api_key=anthropic_api_key)
+        self._search      = SearchService(api_key=api_key)
         self._file: FileService | None = None
         self._file_paths  = file_paths or []
 
@@ -324,6 +327,7 @@ class AssessmentAgent:
                 "For each step include: what to say to the interviewer, what file to open, "
                 "what code to write. Be concrete and specific."
             ),
+            api_key=self._api_key,
             system=(
                 "You are a senior engineer coaching a candidate through a live coding interview. "
                 "Your guidance must make the candidate look confident and expert. "
@@ -373,6 +377,7 @@ class AssessmentAgent:
                 "3. Explain in one sentence WHY this prompt will work for this model type.\n"
                 "Keep it under 120 words. Be specific and direct."
             ),
+            api_key=self._api_key,
             system=(
                 "You are a world-class AI prompt engineer. The candidate needs exact, copy-paste "
                 "instructions. No vague advice — give the literal text to type."
@@ -415,6 +420,7 @@ class AssessmentAgent:
                     "OR if the response is good, write 'GOOD: <brief comment on why it worked>'.\n"
                     "Be specific. Under 100 words."
                 ),
+                api_key=self._api_key,
                 system=(
                     "You are an expert AI prompt engineer evaluating a live interview session. "
                     "Identify weaknesses precisely and prescribe exact corrective prompts."
@@ -445,6 +451,7 @@ class AssessmentAgent:
                     "explain the limitation to the interviewer, show prompting skill explicitly, etc.\n"
                     "Give a 2-sentence script the candidate should say out loud and one final prompt to try."
                 ),
+                api_key=self._api_key,
                 system="You are coaching a candidate through a live AI-model interview that has gone wrong.",
                 max_tokens=200,
             )
@@ -469,6 +476,7 @@ class AssessmentAgent:
                 "  RUN_TESTS\n"
                 "  WRITE_FILE <path>|<content>"
             ),
+            api_key=self._api_key,
             system="You are an assessment agent deciding what tool to use next.",
             temperature=0.2,
             max_tokens=100,
@@ -508,6 +516,7 @@ class AssessmentAgent:
             # Default: stream a direct answer
             answer = await deepseek_generate(
                 prompt=text,
+                api_key=self._api_key,
                 system="You are an expert engineer helping a candidate in a live coding interview.",
                 max_tokens=400,
             )
@@ -551,6 +560,7 @@ class AssessmentAgent:
 
         code = await deepseek_generate(
             prompt=prompt,
+            api_key=self._api_key,
             system="You are a competitive programmer writing optimal solutions.",
             temperature=0.2,
             max_tokens=800,
@@ -576,6 +586,7 @@ class AssessmentAgent:
 
         fixed = await deepseek_generate(
             prompt=prompt,
+            api_key=self._api_key,
             system="You are a competitive programmer debugging and fixing solutions.",
             temperature=0.1,
             max_tokens=800,
@@ -590,6 +601,7 @@ class AssessmentAgent:
                 "Write a 2-3 sentence verbal explanation the candidate can say out loud to the interviewer. "
                 "Include the time and space complexity. Sound like a confident senior engineer."
             ),
+            api_key=self._api_key,
             system="You are coaching a candidate for a live coding interview.",
             temperature=0.4,
             max_tokens=150,

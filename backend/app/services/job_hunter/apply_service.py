@@ -224,7 +224,8 @@ def _make_fill_js(selector: str, value: str, ftype: str) -> str:
 
 
 class ApplyService:
-    def __init__(self, db: AsyncSession, headless: bool = True):
+    def __init__(self, db: AsyncSession, api_key: str = "", headless: bool = True):
+        self._api_key = api_key
         self.db = db
         self._headless = headless
 
@@ -1258,7 +1259,7 @@ class ApplyService:
         )
 
         try:
-            raw = (await call_llm(prompt, max_tokens=800)).strip()
+            raw = (await call_llm(prompt, self._api_key, max_tokens=800)).strip()
             # Extract JSON even if wrapped in markdown
             match = re.search(r'\{.*\}', raw, re.DOTALL)
             if match:

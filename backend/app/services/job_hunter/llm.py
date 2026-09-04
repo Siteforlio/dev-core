@@ -17,6 +17,7 @@ _MODEL       = _MODEL_FLASH  # default
 
 async def call_llm(
     prompt: str,
+    api_key: str,
     max_tokens: int = 1000,
     *,
     json_mode: bool = False,
@@ -30,12 +31,11 @@ async def call_llm(
     thinking=False          → disables internal reasoning, output starts immediately
     """
     import httpx
-    from app.core.config import settings
 
     model = _MODEL_PRO if quality else _MODEL_FLASH
 
     headers = {
-        "Authorization": f"Bearer {settings.deepseek_api_key}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
     body: dict = {

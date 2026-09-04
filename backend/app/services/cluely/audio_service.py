@@ -8,8 +8,6 @@ from typing import Literal, Callable, Awaitable
 
 from deepgram import AsyncDeepgramClient
 
-from app.core.config import settings
-
 logger = logging.getLogger(__name__)
 
 _np = None
@@ -49,12 +47,14 @@ _HALLUCINATION_FRAGMENTS = [
 ]
 
 _client: AsyncDeepgramClient | None = None
+_client_key: str = ""
 
 
-def _get_client() -> AsyncDeepgramClient:
-    global _client
-    if _client is None:
-        _client = AsyncDeepgramClient(api_key=settings.deepgram_api_key)
+def _get_client(api_key: str) -> AsyncDeepgramClient:
+    global _client, _client_key
+    if _client is None or _client_key != api_key:
+        _client = AsyncDeepgramClient(api_key=api_key)
+        _client_key = api_key
     return _client
 
 
@@ -113,6 +113,9 @@ class AudioService:
     $200 free credits (~700 hours) on signup.
     """
 
+    def __init__(self, api_key: str):
+        self._api_key = api_key
+
     async def transcribe(self, pcm: bytes, speaker: Literal["interviewer", "user"]) -> dict:
         t_total = time.perf_counter()
 
@@ -133,7 +136,7 @@ class AudioService:
 
         try:
             t_infer = time.perf_counter()
-            response = await _get_client().listen.v1.media.transcribe_file(
+            response = await _get_client(self._api_key).listen.v1.media.transcribe_file(
                 request=wav_bytes,
                 model="nova-2",
                 language="en",
@@ -176,15 +179,17 @@ class StreamingAudioSession:
         self,
         on_word: Callable[[str, str], Awaitable[None]],       # (word, speaker)
         on_utterance: Callable[[str, str], Awaitable[None]],  # (full_text, speaker)
+        api_key: str = "",
     ):
         self._on_word      = on_word
         self._on_utterance = on_utterance
+        self._api_key      = api_key
         self._conn         = None
         self._speaker      = "interviewer"
         self._running      = False
 
     async def start(self):
-        client = _get_client()
+        client = _get_client(self._api_key)
         self._conn = await client.listen.v1.connect(
             model="nova-2",
             language="en",

@@ -26,7 +26,6 @@ import base64
 import io
 import logging
 
-from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +57,9 @@ class ScreenService:
     capture_and_extract(question) → takes a screenshot, sends it to the
     vision model with an optional question, returns a descriptive string.
     """
+
+    def __init__(self, api_key: str = ""):
+        self._api_key = api_key
 
     @property
     def available(self) -> bool:
@@ -102,7 +104,7 @@ class ScreenService:
     # Vision understanding
     # ------------------------------------------------------------------
 
-    async def understand(self, base64_png: str, question: str = "") -> str:
+    async def understand(self, base64_png: str, anthropic_api_key: str, question: str = "") -> str:
         """
         Send a screenshot to Claude Haiku vision and return its description.
 
@@ -112,7 +114,7 @@ class ScreenService:
         if not base64_png:
             return ""
 
-        if not settings.anthropic_api_key:
+        if not anthropic_api_key:
             logger.warning("[screen] No Anthropic API key — vision disabled")
             return ""
 
@@ -124,7 +126,7 @@ class ScreenService:
 
         try:
             import anthropic
-            client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+            client = anthropic.AsyncAnthropic(api_key=anthropic_api_key)
             response = await client.messages.create(
                 model="claude-haiku-4-5-20251001",
                 system="You are a screen analysis assistant. Describe what you see accurately and concisely.",
@@ -159,7 +161,7 @@ class ScreenService:
         b64 = await self.capture_base64(monitor)
         if not b64:
             return ""
-        return await self.understand(b64, question=question)
+        return await self.understand(b64, self._api_key, question=question)
 
     # ------------------------------------------------------------------
     # Multi-screen stitching (kept for assessment agent compatibility)

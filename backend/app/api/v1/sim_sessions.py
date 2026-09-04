@@ -231,8 +231,8 @@ async def sim_session_ws(
 
     engine = SimulationEngine(db)
     speech = SpeechService()
-    # Fetch Deepgram key from user's in-app settings (falls back to .env if not set)
-    deepgram_key = await ApiKeysService(db).get_decrypted(user_id, "deepgram_api_key")
+    deepgram_key = await ApiKeysService(db).get_decrypted(user_id, "deepgram_api_key") or ""
+    deepseek_key = await ApiKeysService(db).get_decrypted(user_id, "deepseek_api_key") or ""
     budget = session.time_budget_seconds
     started_at = session.started_at
 
@@ -302,7 +302,7 @@ async def sim_session_ws(
 
     # Generate and send AI opening message, persist to DB so it survives reconnect
     try:
-        _llm = SimLLMOrchestrator()
+        _llm = SimLLMOrchestrator(api_key=deepseek_key)
         await _ws_send({"type": "status", "message": "Generating opening message..."})
         await _ws_send({"type": "thinking", "active": True})
         opening = await _llm.opening_message(

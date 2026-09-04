@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.core.database import get_db
 from app.core.security import decode_token
+from app.core.config import get_api_key
 from app.models.pg.job_hunter import Application, JobListing, JobHunterCampaign
 from app.services.job_hunter.dashboard_service import DashboardService
 from app.services.job_hunter.bridge_service import BridgeService
@@ -307,7 +308,8 @@ async def generate_cover_letter(
         raise HTTPException(status_code=404, detail="Application not found")
 
     app, listing = row
-    svc = ApplyChatService(db)
+    api_key = await get_api_key(user_id, "deepseek_api_key", db)
+    svc = ApplyChatService(db, api_key=api_key)
     cover_letter = await svc.generate_cover_letter(app, listing)
 
     app.cover_letter = cover_letter
@@ -352,7 +354,8 @@ async def apply_chat(
         raise HTTPException(status_code=404, detail="Application not found")
 
     app, listing = row
-    svc = ApplyChatService(db)
+    api_key = await get_api_key(user_id, "deepseek_api_key", db)
+    svc = ApplyChatService(db, api_key=api_key)
     reply = await svc.chat(
         application=app,
         listing=listing,
@@ -508,6 +511,7 @@ async def scan_campaign_emails(
     if not campaign.email_account_encrypted:
         return {"data": {"ok": False, "no_credentials": True}, "error": None}
 
-    service = EmailService(db)
+    api_key = await get_api_key(user_id, "deepseek_api_key", db)
+    service = EmailService(db, api_key=api_key)
     await service.process_campaign_emails(campaign_id)
     return {"data": {"ok": True, "no_credentials": False}, "error": None}

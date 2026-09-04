@@ -87,19 +87,20 @@ def _build_immutable_facts(profile, experience: list[dict]) -> str:
 
 
 class TailorService:
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession, api_key: str = ""):
+        self._api_key = api_key
         self.db = db
 
     async def _call_haiku(self, prompt: str, max_tokens: int = 1000, quality: bool = False) -> str:
         import logging as _log
         async with _get_haiku_sem():
-            result = await call_llm(prompt, max_tokens, quality=quality)
+            result = await call_llm(prompt, self._api_key, max_tokens, quality=quality)
             if not result and quality:
                 # Pro model returned empty — fall back to Flash
                 _log.getLogger(__name__).warning(
                     "_call_haiku: Pro model returned empty, retrying with Flash"
                 )
-                result = await call_llm(prompt, max_tokens, quality=False)
+                result = await call_llm(prompt, self._api_key, max_tokens, quality=False)
             return result
 
     async def extract_keywords(self, jd: str) -> list[str]:

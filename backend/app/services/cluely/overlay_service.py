@@ -118,12 +118,23 @@ class OverlayService:
 
         logger.info("WS auth OK — waiting for session_start | user_id=%s", user_id)
 
-        # Guard: Deepgram is required for audio transcription.
-        # Check DB (user Settings) first, fall back to .env.
+        # Resolve all user API keys from the DB (Settings screen).
+        # Deepgram is required; DeepSeek and Anthropic are needed for LLM features.
         from app.core.database import AsyncSessionLocal
         from app.core.config import get_api_key
         async with AsyncSessionLocal() as _check_db:
             _deepgram_key = await get_api_key(user_id, "deepgram_api_key", _check_db)
+            _deepseek_key = await get_api_key(user_id, "deepseek_api_key", _check_db)
+            _anthropic_key = await get_api_key(user_id, "anthropic_api_key", _check_db)
+
+        # Reinitialize per-user services now that we have the keys
+        from app.services.cluely.audio_service import AudioService
+        from app.services.cluely.vision_service import VisionService
+        from app.services.cluely.llm_service import LLMService
+        self._audio = AudioService(api_key=_deepgram_key)
+        self._llm = LLMService(api_key=_deepseek_key, anthropic_api_key=_anthropic_key)
+        self._vision = VisionService(api_key=_anthropic_key)
+
         if not _deepgram_key:
             await _safe_send(ws, {
                 "type": "error",
@@ -148,7 +159,7 @@ class OverlayService:
                     if mtype == "session_start":
                         logger.info("session_start | sid=%s", data.get("session_id"))
                         ctx_mgr, rag, session_ctx, repo = await self._start_session(
-                            ws, data, user_id
+                            ws, data, user_id, _deepseek_key, _anthropic_key
                         )
                         # Send initial title to frontend immediately
                         title = session_ctx.get("_initial_title", "")
@@ -243,6 +254,7 @@ class OverlayService:
                                     ai_title = await asyncio.wait_for(
                                         deepseek_generate(
                                             f"Give this session a short title (5-7 words max). Reply with ONLY the title, no quotes.\n\n{full_text[:1200]}",
+                                            _deepseek_key,
                                             system="You are a concise title generator.",
                                             temperature=0.3, max_tokens=20,
                                         ),
@@ -252,6 +264,7 @@ class OverlayService:
                                     post_summary = await asyncio.wait_for(
                                         deepseek_generate(
                                             f"Summarize this session in 2-3 sentences.\n\n{full_text[:3000]}",
+                                            _deepseek_key,
                                             system="You are a concise session summarizer.",
                                             temperature=0.3, max_tokens=150,
                                         ),
@@ -301,7 +314,7 @@ class OverlayService:
     # Session start
     # ------------------------------------------------------------------
 
-    async def _start_session(self, ws: WebSocket, data: dict, user_id: str):
+    async def _start_session(self, ws: WebSocket, data: dict, user_id: str, deepseek_key: str = "", anthropic_key: str = ""):
         from app.core.database import AsyncSessionLocal
         from app.schemas.cluely import SessionStartRequest
         from pydantic import ValidationError
@@ -322,8 +335,10 @@ class OverlayService:
         ctx["_session_id"] = sid
 
         # Outcome service — in-memory cache for outcome inference
-        outcome_svc = OutcomeService()
+        outcome_svc = OutcomeService(api_key=deepseek_key)
         ctx["_outcome_svc"] = outcome_svc
+        ctx["_deepseek_key"] = deepseek_key
+        ctx["_anthropic_key"] = anthropic_key
 
         # Diarizer disabled — no reset needed.
 
@@ -454,7 +469,7 @@ class OverlayService:
         # Background summariser
         stop_summarizer = asyncio.Event()
         ctx["_stop_summarizer"] = stop_summarizer
-        asyncio.create_task(run_summarizer(ctx_mgr, stop_summarizer))
+        asyncio.create_task(run_summarizer(ctx_mgr, stop_summarizer, api_key=deepseek_key))
 
         # Assessment agent — created for non-present assessment modes
         # "present" mode gets tool access but no autonomous agent loop
@@ -479,6 +494,8 @@ class OverlayService:
                 send=_ws_send,
                 project_root=ctx.get("projectRoot") or ctx.get("project_root"),
                 file_paths=ctx.get("file_paths", []),
+                api_key=deepseek_key,
+                anthropic_api_key=anthropic_key,
             )
             ctx["_assessment_agent"] = agent
             logger.info("[assessment] Agent created | mode=%s", assessment_mode)
@@ -546,10 +563,12 @@ class OverlayService:
     async def _warmup_llm_client(self) -> None:
         """Fire a tiny request to establish TCP+TLS with DeepSeek so
         the first real ask doesn't pay the cold-start cost (~1-2s)."""
+        if not self._llm._api_key:
+            return
         try:
             from app.services.cluely.deepseek_client import deepseek_generate
             await asyncio.wait_for(
-                deepseek_generate("hi", system="Reply with one word.", max_tokens=1),
+                deepseek_generate("hi", self._llm._api_key, system="Reply with one word.", max_tokens=1),
                 timeout=5,
             )
             logger.info("[warmup] DeepSeek client warmed up")
@@ -1161,7 +1180,13 @@ class OverlayService:
             except ValueError:
                 pass
 
-        agent = ChatAgent(session_ctx=session_ctx, send=_chat_send, file_service=file_svc)
+        agent = ChatAgent(
+            session_ctx=session_ctx,
+            send=_chat_send,
+            file_service=file_svc,
+            api_key=session_ctx.get("_deepseek_key", ""),
+            anthropic_api_key=session_ctx.get("_anthropic_key", ""),
+        )
 
         try:
             first = True

@@ -22,7 +22,8 @@ def _utcnow():
 
 
 class EmailService:
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession, api_key: str = ""):
+        self._api_key = api_key
         self.db = db
 
     def _fernet(self) -> Fernet:
@@ -37,7 +38,7 @@ class EmailService:
         return json.loads(self._fernet().decrypt(encrypted.encode()).decode())
 
     async def _call_haiku(self, prompt: str, max_tokens: int = 100) -> str:
-        return (await call_llm(prompt, max_tokens)).strip()
+        return (await call_llm(prompt, self._api_key, max_tokens)).strip()
 
     async def classify_email(self, subject: str, snippet: str) -> str:
         result = await self._call_haiku(

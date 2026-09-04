@@ -81,15 +81,11 @@ settings = Settings()
 
 
 async def get_api_key(user_id: str, key_name: str, db) -> str:
-    """Get an API key: DB (per-user) first, then .env fallback.
+    """Get a user API key from the database (Settings screen).
 
-    This is the single entry point all services should use to obtain
-    provider API keys so that user-configured keys take precedence.
+    All user-configurable keys must be set in Settings → API Keys.
+    There is no .env fallback for these keys by design.
     """
     from app.services.api_keys_service import ApiKeysService
     service = ApiKeysService(db)
-    value = await service.get_decrypted(user_id, key_name)
-    if value:
-        return value
-    # Fallback to .env / environment variable
-    return getattr(settings, key_name, "") or ""
+    return await service.get_decrypted(user_id, key_name) or ""

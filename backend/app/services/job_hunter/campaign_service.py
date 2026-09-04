@@ -11,11 +11,12 @@ def utcnow():
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 class CampaignService:
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession, api_key: str = ""):
+        self._api_key = api_key
         self.db = db
 
     async def _call_haiku(self, prompt: str) -> str:
-        return await call_llm(prompt, max_tokens=500)
+        return await call_llm(prompt, self._api_key, max_tokens=500)
 
     async def infer_sub_categories(self, skills: list[str], broad_category: str) -> list[str]:
         prompt = (

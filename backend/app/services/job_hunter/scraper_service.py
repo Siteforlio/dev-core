@@ -143,7 +143,8 @@ async def _run_linkedin_subprocess(li_scraper, broad_category, user_country, wor
 
 
 class ScraperService:
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession, api_key: str = ""):
+        self._api_key = api_key
         self.db = db
         self._campaign_id: str | None = None
 
@@ -242,7 +243,7 @@ class ScraperService:
             return bool(loc_country) and loc_country == user_c
 
     async def _call_haiku(self, prompt: str, max_tokens: int = 20) -> str:
-        return (await call_llm(prompt, max_tokens, thinking=False)).strip()
+        return (await call_llm(prompt, self._api_key, max_tokens, thinking=False)).strip()
 
     def _keyword_prefilter(self, title: str, description: str, skills: list[str]) -> bool:
         """Fast O(n) check before burning an AI call.

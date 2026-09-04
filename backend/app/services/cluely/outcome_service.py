@@ -62,8 +62,8 @@ def _cosine(a, b) -> float:
 
 
 class OutcomeService:
-    def __init__(self):
-        pass
+    def __init__(self, api_key: str = ""):
+        self._api_key = api_key
 
     def _outcome_key(self, session_id: str, q_hash: str) -> str:
         return f"cluely:outcome:{session_id}:{q_hash}"
@@ -101,6 +101,7 @@ class OutcomeService:
         try:
             outcome = await deepseek_generate(
                 prompt,
+                self._api_key,
                 system=INFER_SYSTEM,
                 temperature=0.3,
                 max_tokens=40,

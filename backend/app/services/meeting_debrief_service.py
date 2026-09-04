@@ -31,7 +31,8 @@ def _parse_date(date_str: str | None) -> date_type | None:
 
 
 class MeetingDebriefService:
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession, api_key: str = ""):
+        self._api_key = api_key
         self.db = db
 
     async def get_or_create(
@@ -269,7 +270,7 @@ Return ONLY valid JSON, no markdown:
   "body": "full email body, properly formatted with line breaks"
 }}"""
 
-        raw = await call_llm(prompt, max_tokens=700, json_mode=True)
+        raw = await call_llm(prompt, self._api_key, max_tokens=700, json_mode=True)
         try:
             return _json.loads(raw)
         except Exception:
@@ -320,7 +321,7 @@ Extract the following and return ONLY valid JSON — no markdown, no code fences
 
 If there are no actions or decisions, return empty arrays. Be specific — no generic filler."""
 
-        raw = await call_llm(prompt, max_tokens=800, json_mode=True)
+        raw = await call_llm(prompt, self._api_key, max_tokens=800, json_mode=True)
         try:
             return _json.loads(raw)
         except Exception:

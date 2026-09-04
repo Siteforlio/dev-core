@@ -4,6 +4,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
+from app.core.config import get_api_key
 from app.core.security import decode_token
 from app.schemas.session import CreateSessionRequest, AnswerRequest, AdvanceRoundRequest, BehavioralSignalRequest, CheatSignalRequest, CoachRequest, InterpretRequest
 from app.services.llm_orchestrator import LLMOrchestrator
@@ -23,12 +24,14 @@ def get_user_id(credentials: HTTPAuthorizationCredentials = Depends(bearer)) -> 
 async def interpret_context(
     body: InterpretRequest,
     user_id: str = Depends(get_user_id),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Extract structured interview parameters from any free-form text.
     Route handler is thin (§4.2) — delegates entirely to LLMOrchestrator.
     """
-    orchestrator = LLMOrchestrator()
+    deepseek_key = await get_api_key(user_id, "deepseek_api_key", db)
+    orchestrator = LLMOrchestrator(api_key=deepseek_key)
     result = await orchestrator.interpret_interview_context(context=body.context)
     return {"data": result, "error": None}
 
@@ -39,7 +42,8 @@ async def create_session(
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    orchestrator = LLMOrchestrator()
+    deepseek_key = await get_api_key(user_id, "deepseek_api_key", db)
+    orchestrator = LLMOrchestrator(api_key=deepseek_key)
     engine = InterviewEngine(db=db, orchestrator=orchestrator)
     session = await engine.create_session(
         user_id=user_id,
@@ -63,7 +67,8 @@ async def submit_answer(
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    orchestrator = LLMOrchestrator()
+    deepseek_key = await get_api_key(user_id, "deepseek_api_key", db)
+    orchestrator = LLMOrchestrator(api_key=deepseek_key)
     engine = InterviewEngine(db=db, orchestrator=orchestrator)
     result = await engine.submit_answer(
         session_id=session_id,
@@ -86,7 +91,8 @@ async def advance_round(
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    orchestrator = LLMOrchestrator()
+    deepseek_key = await get_api_key(user_id, "deepseek_api_key", db)
+    orchestrator = LLMOrchestrator(api_key=deepseek_key)
     engine = InterviewEngine(db=db, orchestrator=orchestrator)
     result = await engine.advance_to_next_round(
         session_id=session_id,
@@ -111,7 +117,8 @@ async def behavioral_signal(
     session = result.scalar_one_or_none()
     if not session:
         return {"data": {"reaction": ""}, "error": None}
-    orchestrator = LLMOrchestrator()
+    deepseek_key = await get_api_key(user_id, "deepseek_api_key", db)
+    orchestrator = LLMOrchestrator(api_key=deepseek_key)
     reaction = await orchestrator.react_to_rewrite(
         company=session.company,
         role=session.role,
@@ -140,7 +147,8 @@ async def record_cheat_signal(
     if not result.scalar_one_or_none():
         return {"data": None, "error": "round not found"}
 
-    orchestrator = LLMOrchestrator()
+    deepseek_key = await get_api_key(user_id, "deepseek_api_key", db)
+    orchestrator = LLMOrchestrator(api_key=deepseek_key)
     engine = InterviewEngine(db=db, orchestrator=orchestrator)
     await engine.record_cheat_signal(
         round_id=body.round_id,
@@ -186,7 +194,8 @@ async def coach(
     if body.message:
         history.append({"role": "user", "content": body.message})
 
-    orchestrator = LLMOrchestrator()
+    deepseek_key = await get_api_key(user_id, "deepseek_api_key", db)
+    orchestrator = LLMOrchestrator(api_key=deepseek_key)
 
     async def _sse_stream():
         try:
@@ -222,7 +231,8 @@ async def get_debrief(
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    service = DebriefService(db=db)
+    deepseek_key = await get_api_key(user_id, "deepseek_api_key", db)
+    service = DebriefService(db=db, api_key=deepseek_key)
     result = await service.generate(session_id=session_id)
     return {"data": result, "error": None}
 
@@ -233,7 +243,8 @@ async def get_report(
     user_id: str = Depends(get_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    service = DebriefService(db=db)
+    deepseek_key = await get_api_key(user_id, "deepseek_api_key", db)
+    service = DebriefService(db=db, api_key=deepseek_key)
     pdf_bytes = await service.generate_pdf(session_id=session_id)
     return Response(
         content=pdf_bytes,

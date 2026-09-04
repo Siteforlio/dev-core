@@ -146,7 +146,9 @@ async def analyze_profile_gaps(
 ):
     """AI reviews the profile and returns gaps, questions, and a readiness score."""
     from app.services.job_hunter.campaign_profile_service import CampaignProfileService
-    svc = CampaignProfileService(db)
+    from app.core.config import get_api_key as _get_api_key
+    api_key = await _get_api_key(user_id, "deepseek_api_key", db)
+    svc = CampaignProfileService(db, api_key=api_key)
     result = await svc.analyze_gaps(campaign_id, user_id)
     return {"data": result, "error": None}
 
@@ -160,7 +162,9 @@ async def process_raw_context(
 ):
     """Paste any raw text (old CV, LinkedIn bio, etc) — AI extracts and merges structured data."""
     from app.services.job_hunter.campaign_profile_service import CampaignProfileService
-    svc = CampaignProfileService(db)
+    from app.core.config import get_api_key as _get_api_key
+    api_key = await _get_api_key(user_id, "deepseek_api_key", db)
+    svc = CampaignProfileService(db, api_key=api_key)
     result = await svc.process_raw_context(campaign_id, user_id, body.raw_context)
     return {"data": result, "error": None}
 
@@ -245,7 +249,9 @@ async def process_context_file(
     if not text:
         raise HTTPException(status_code=422, detail="Could not extract text from the file.")
 
-    svc = CampaignProfileService(db)
+    from app.core.config import get_api_key as _get_api_key
+    api_key = await _get_api_key(user_id, "deepseek_api_key", db)
+    svc = CampaignProfileService(db, api_key=api_key)
     result = await svc.process_raw_context(campaign_id, user_id, text)
     return {"data": result, "error": None}
 
@@ -348,6 +354,7 @@ async def trigger_scrape(
     # Load per-user API keys so scrapers can use keys configured in Settings
     from app.core.config import get_api_key as _get_api_key
     scrapfly_key = await _get_api_key(user_id, "scrapfly_key", db)
+    adzuna_app_id = await _get_api_key(user_id, "adzuna_app_id", db)
     adzuna_api_key = await _get_api_key(user_id, "adzuna_api_key", db)
     reed_api_key = await _get_api_key(user_id, "reed_api_key", db)
 
@@ -366,6 +373,7 @@ async def trigger_scrape(
         "linkedin_creds": linkedin_creds,
         "api_keys": {
             "scrapfly_key":   scrapfly_key,
+            "adzuna_app_id":  adzuna_app_id,
             "adzuna_api_key": adzuna_api_key,
             "reed_api_key":   reed_api_key,
         },
@@ -510,8 +518,10 @@ async def fetch_job_from_url(
     )
 
     import json as _json
+    from app.core.config import get_api_key as _get_api_key
+    _deepseek_key = await _get_api_key(user_id, "deepseek_api_key", db)
     try:
-        raw = await call_llm(prompt, max_tokens=2000, json_mode=True, thinking=False)
+        raw = await call_llm(prompt, _deepseek_key, max_tokens=2000, json_mode=True, thinking=False)
         start, end = raw.find("{"), raw.rfind("}") + 1
         if start == -1 or end == 0:
             raise ValueError("no JSON")

@@ -20,7 +20,6 @@ import time
 from typing import AsyncGenerator
 
 import anthropic
-from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -161,10 +160,9 @@ def _build_context_note(session_ctx: dict | None) -> str:
 
 
 class VisionService:
-    def __init__(self):
-        api_key = settings.anthropic_api_key
+    def __init__(self, api_key: str = ""):
         if not api_key:
-            logger.warning("[vision] ANTHROPIC_API_KEY not set — vision disabled")
+            logger.warning("[vision] Anthropic API key not set — vision disabled")
             self._client = None
         else:
             self._client = anthropic.AsyncAnthropic(api_key=api_key)

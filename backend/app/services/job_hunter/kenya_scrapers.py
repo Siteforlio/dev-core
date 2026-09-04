@@ -29,15 +29,15 @@ def _normalize(job: dict) -> dict:
     }
 
 
-async def scrape_fuzu(search_term: str, client: httpx.AsyncClient) -> list[dict]:
-    """Fuzu.com — uses the browser-use autonomous agent (Vertex Gemini).
+async def scrape_fuzu(search_term: str, client: httpx.AsyncClient, api_key: str = "") -> list[dict]:
+    """Fuzu.com — uses the browser-use autonomous agent + DeepSeek.
 
     The agent navigates the category page, dismisses popups, and extracts
     job listings autonomously — no brittle CSS selectors needed.
     """
     try:
         from app.services.job_hunter.fuzu_agent import scrape_fuzu_agent
-        return await scrape_fuzu_agent(search_term)
+        return await scrape_fuzu_agent(search_term, api_key=api_key)
     except Exception:
         return []
 

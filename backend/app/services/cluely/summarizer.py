@@ -21,13 +21,13 @@ SUMMARY_INTERVAL_S = 120   # run every 2 minutes
 MIN_NEW_BUBBLES    = 3     # don't summarise unless at least this many new bubbles
 
 
-async def _call_deepseek(prompt: str) -> str:
+async def _call_deepseek(prompt: str, api_key: str = "") -> str:
     """One-shot DeepSeek call — not streamed, just returns text."""
     from app.services.cluely.deepseek_client import deepseek_generate
-    return await deepseek_generate(prompt, temperature=0.3, max_tokens=600)
+    return await deepseek_generate(prompt, api_key, temperature=0.3, max_tokens=600)
 
 
-async def _update_summary(ctx_mgr: ContextManager) -> None:
+async def _update_summary(ctx_mgr: ContextManager, api_key: str = "") -> None:
     """Incremental update: summarise only new bubbles, merge into existing summary."""
     summarized_up_to = await ctx_mgr.get_summarized_index()
     total            = await ctx_mgr.get_total_count()
@@ -78,8 +78,8 @@ async def _update_summary(ctx_mgr: ContextManager) -> None:
 
     try:
         summary, facts = await asyncio.gather(
-            _call_deepseek(summary_prompt),
-            _call_deepseek(facts_prompt),
+            _call_deepseek(summary_prompt, api_key),
+            _call_deepseek(facts_prompt, api_key),
         )
         await ctx_mgr.set_summary(summary)
         await ctx_mgr.set_facts(facts)
@@ -89,7 +89,7 @@ async def _update_summary(ctx_mgr: ContextManager) -> None:
         logger.error("[summariser] failed: %s", e)
 
 
-async def run_summarizer(ctx_mgr: ContextManager, stop_event: asyncio.Event) -> None:
+async def run_summarizer(ctx_mgr: ContextManager, stop_event: asyncio.Event, api_key: str = "") -> None:
     """
     Background task: run every SUMMARY_INTERVAL_S until stop_event is set.
     Designed to be launched with asyncio.create_task() from _start_session.
@@ -100,13 +100,13 @@ async def run_summarizer(ctx_mgr: ContextManager, stop_event: asyncio.Event) -> 
             await asyncio.sleep(SUMMARY_INTERVAL_S)
             if stop_event.is_set():
                 break
-            await _update_summary(ctx_mgr)
+            await _update_summary(ctx_mgr, api_key)
     except asyncio.CancelledError:
         pass
     finally:
         # Final summary pass on session end so nothing is lost
         try:
-            await _update_summary(ctx_mgr)
+            await _update_summary(ctx_mgr, api_key)
         except Exception:
             pass
         logger.info("[summariser] stopped for session %s", ctx_mgr._sid)

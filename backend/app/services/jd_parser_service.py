@@ -2,16 +2,15 @@ import hashlib
 import json
 import re
 import openai
-from app.core.config import settings
 from app.core.cache import cache_set, cache_get
 
 _CACHE_TTL = 60 * 60 * 24 * 7  # 7 days
 
 
 class JDParserService:
-    def __init__(self):
+    def __init__(self, api_key: str):
         self._client = openai.AsyncOpenAI(
-            api_key=settings.deepseek_api_key,
+            api_key=api_key,
             base_url="https://api.deepseek.com",
         )
 

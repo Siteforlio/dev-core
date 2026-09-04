@@ -23,7 +23,8 @@ REQUIRED_FIELDS = {
 
 
 class ProfileService:
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession, api_key: str = ""):
+        self._api_key = api_key
         self.db = db
 
     def check_completeness(self, data: dict) -> dict:
@@ -50,6 +51,7 @@ class ProfileService:
             "city, country, linkedin_url, github_url, work_experience (list), education (list), "
             "skills (list of strings), projects (list), languages_spoken (list). Resume text:\n\n"
             + text,
+            self._api_key,
             max_tokens=2000,
         )
         try:

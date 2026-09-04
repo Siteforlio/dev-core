@@ -20,8 +20,6 @@ from typing import AsyncGenerator
 
 import httpx
 
-from app.core.config import settings
-
 logger = logging.getLogger(__name__)
 
 _BASE = "https://api.deepseek.com"
@@ -55,9 +53,9 @@ def _get_client() -> httpx.AsyncClient:
     return _client
 
 
-def _headers() -> dict:
+def _headers(api_key: str) -> dict:
     return {
-        "Authorization": f"Bearer {settings.deepseek_api_key}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
 
@@ -92,6 +90,7 @@ def _to_messages(prompt: str, system: str = "") -> list[dict]:
 
 async def deepseek_stream(
     prompt: str,
+    api_key: str,
     system: str = "",
     temperature: float = 0.7,
     max_tokens: int = 512,
@@ -103,7 +102,7 @@ async def deepseek_stream(
     body = _build_body(_to_messages(prompt, system), temperature=temperature, max_tokens=max_tokens)
     client = _get_client()
     logger.info("[deepseek] stream request starting — prompt=%d chars", len(prompt))
-    async with client.stream("POST", url, json=body, headers=_headers()) as resp:
+    async with client.stream("POST", url, json=body, headers=_headers(api_key)) as resp:
         logger.info("[deepseek] stream connected in %dms — status=%d",
                     round((_time.monotonic() - t_start) * 1000), resp.status_code)
         resp.raise_for_status()
@@ -133,6 +132,7 @@ async def deepseek_stream(
 
 async def deepseek_generate(
     prompt: str,
+    api_key: str,
     system: str = "",
     temperature: float = 0.7,
     max_tokens: int = 512,
@@ -146,7 +146,7 @@ async def deepseek_generate(
         stream=False,
     )
     client = _get_client()
-    resp = await client.post(url, json=body, headers=_headers())
+    resp = await client.post(url, json=body, headers=_headers(api_key))
     resp.raise_for_status()
     data = resp.json()
     msg = data["choices"][0]["message"]
@@ -156,6 +156,7 @@ async def deepseek_generate(
 async def deepseek_with_tools(
     messages: list[dict],
     tools: list[dict],
+    api_key: str,
     temperature: float = 0.5,
     max_tokens: int = 1024,
 ) -> dict:
@@ -175,7 +176,7 @@ async def deepseek_with_tools(
         "reasoning_effort": "none",
     }
     client = _get_client()
-    resp = await client.post(url, json=body, headers=_headers())
+    resp = await client.post(url, json=body, headers=_headers(api_key))
     if not resp.is_success:
         logger.error("[deepseek] 400 body: %s", resp.text[:1000])
         resp.raise_for_status()
@@ -228,6 +229,7 @@ def _sanitize_messages(messages: list[dict]) -> list[dict]:
 
 async def deepseek_stream_messages(
     messages: list[dict],
+    api_key: str,
     temperature: float = 0.7,
     max_tokens: int = 512,
 ) -> AsyncGenerator[str, None]:
@@ -244,7 +246,7 @@ async def deepseek_stream_messages(
     # Buffer to catch DSML tags that span chunk boundaries
     buf = ""
     client = _get_client()
-    async with client.stream("POST", url, json=body, headers=_headers()) as resp:
+    async with client.stream("POST", url, json=body, headers=_headers(api_key)) as resp:
             resp.raise_for_status()
             async for line in resp.aiter_lines():
                 if not line.startswith("data: "):

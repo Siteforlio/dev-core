@@ -269,22 +269,13 @@ async def scrape_getonboard(search_term: str, client: httpx.AsyncClient) -> list
 
 # ── Adzuna ────────────────────────────────────────────────────────────────────
 
-async def scrape_adzuna(search_term: str, client: httpx.AsyncClient, api_key: str = "") -> list[dict]:
+async def scrape_adzuna(search_term: str, client: httpx.AsyncClient, api_key: str = "", app_id: str = "") -> list[dict]:
     """
     Adzuna API — broadest continental coverage of any free API (20+ countries).
     Requires ADZUNA_APP_ID + ADZUNA_API_KEY — set in Settings → API Keys.
     Sign up free at: https://developer.adzuna.com/
     Queries all configured countries in parallel.
     """
-    try:
-        from app.core.config import settings
-        app_id = settings.adzuna_app_id or os.environ.get("ADZUNA_APP_ID", "")
-        if not api_key:
-            api_key = settings.adzuna_api_key or os.environ.get("ADZUNA_API_KEY", "")
-    except Exception:
-        app_id = os.environ.get("ADZUNA_APP_ID", "")
-        if not api_key:
-            api_key = os.environ.get("ADZUNA_API_KEY", "")
     if not app_id or not api_key:
         raise RuntimeError("No Adzuna API key — add it in Settings → API Keys (key: adzuna_api_key)")
 
@@ -340,13 +331,6 @@ async def scrape_reed(search_term: str, client: httpx.AsyncClient, api_key: str 
     Requires REED_API_KEY — set in Settings → API Keys.
     Sign up free at: https://www.reed.co.uk/developers/jobseeker
     """
-    try:
-        from app.core.config import settings
-        if not api_key:
-            api_key = settings.reed_api_key or os.environ.get("REED_API_KEY", "")
-    except Exception:
-        if not api_key:
-            api_key = os.environ.get("REED_API_KEY", "")
     if not api_key:
         raise RuntimeError("No Reed API key — add it in Settings → API Keys (key: reed_api_key)")
     try:
@@ -388,11 +372,14 @@ async def scrape_reed(search_term: str, client: httpx.AsyncClient, api_key: str 
 async def scrape_all_global_boards(
     search_term: str,
     publish_fn=None,
+    api_keys: dict | None = None,
 ) -> list[dict]:
     """
     Query all global boards in parallel.
     Adzuna and Reed return [] silently if API keys are not configured.
+    api_keys: dict with optional keys: adzuna_app_id, adzuna_api_key, reed_api_key
     """
+    _keys = api_keys or {}
     if publish_fn:
         await publish_fn(
             "🌍 Querying global boards "
@@ -408,8 +395,8 @@ async def scrape_all_global_boards(
             scrape_jobicy(search_term, client),
             scrape_himalayas(search_term, client),
             scrape_getonboard(search_term, client),
-            scrape_adzuna(search_term, client),
-            scrape_reed(search_term, client),
+            scrape_adzuna(search_term, client, api_key=_keys.get("adzuna_api_key", ""), app_id=_keys.get("adzuna_app_id", "")),
+            scrape_reed(search_term, client, api_key=_keys.get("reed_api_key", "")),
         )
 
     all_jobs = muse_jobs + jobicy_jobs + himal_jobs + gob_jobs + adzuna_jobs + reed_jobs

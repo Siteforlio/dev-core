@@ -11,7 +11,6 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
 from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
-from app.core.config import settings
 from app.models.pg.session import InterviewSession, Round, RoundMoment
 from app.core.exceptions import SessionNotFoundError
 from app.services.community_pipeline import CommunityPipeline
@@ -43,10 +42,10 @@ def _extract_dimension_scores(analysis: dict) -> dict[str, float]:
 
 
 class DebriefService:
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession, api_key: str):
         self.db = db
         self._client = openai.AsyncOpenAI(
-            api_key=settings.deepseek_api_key,
+            api_key=api_key,
             base_url="https://api.deepseek.com",
         )
 

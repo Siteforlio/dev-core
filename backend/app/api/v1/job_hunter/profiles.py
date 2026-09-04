@@ -6,6 +6,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.security import decode_token
+from app.core.config import get_api_key
 from app.services.job_hunter.profile_service import ProfileService
 from app.schemas.job_hunter import ProfileUpsertRequest, ResumeTextRequest
 
@@ -77,7 +78,8 @@ async def parse_resume(
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(get_user_id),
 ):
-    service = ProfileService(db)
+    api_key = await get_api_key(user_id, "deepseek_api_key", db)
+    service = ProfileService(db, api_key=api_key)
     extracted = await service.parse_resume_text(body.text)
     return {"data": extracted, "error": None}
 
@@ -111,6 +113,7 @@ async def parse_resume_file(
     if not text.strip():
         raise HTTPException(status_code=422, detail="Could not extract text from the file.")
 
-    service = ProfileService(db)
+    api_key = await get_api_key(user_id, "deepseek_api_key", db)
+    service = ProfileService(db, api_key=api_key)
     extracted = await service.parse_resume_text(text)
     return {"data": extracted, "error": None}

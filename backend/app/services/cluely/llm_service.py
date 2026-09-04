@@ -10,8 +10,10 @@ logger = logging.getLogger(__name__)
 
 
 class LLMService:
-    def __init__(self):
-        self._search = SearchService()
+    def __init__(self, api_key: str = "", anthropic_api_key: str = ""):
+        self._api_key = api_key
+        self._anthropic_api_key = anthropic_api_key
+        self._search = SearchService(api_key=api_key)
         self._claude = None  # lazy — only for ultra mode
 
     def _build_system_prompt(self, context: dict) -> str:
@@ -112,7 +114,7 @@ class LLMService:
         prompt = f"{outcome_line}{ctx_block}"
 
         try:
-            async for delta in deepseek_stream(prompt, system=system, temperature=0.7, max_tokens=200):
+            async for delta in deepseek_stream(prompt, self._api_key, system=system, temperature=0.7, max_tokens=200):
                 yield delta
         except Exception as e:
             if "429" in str(e) or "rate" in str(e).lower():
@@ -138,6 +140,7 @@ class LLMService:
         try:
             result = await deepseek_generate(
                 classification_prompt,
+                self._api_key,
                 system="You are a message intent classifier. Reply with exactly one word.",
                 temperature=0.0,
                 max_tokens=5,
@@ -190,7 +193,7 @@ class LLMService:
         logger.info("[llm] manual_ask mode=%s text=%r", mode, text[:60])
 
         try:
-            async for delta in deepseek_stream(prompt, system=system, temperature=0.7, max_tokens=300):
+            async for delta in deepseek_stream(prompt, self._api_key, system=system, temperature=0.7, max_tokens=300):
                 yield delta
         except Exception as e:
             if "429" in str(e) or "rate" in str(e).lower():
@@ -218,7 +221,7 @@ class LLMService:
         else:
             prompt = f"{ctx_block}\n\nWrite a complete, clean solution for: {text}"
 
-        return await deepseek_generate(prompt, system=system, temperature=0.5, max_tokens=800)
+        return await deepseek_generate(prompt, self._api_key, system=system, temperature=0.5, max_tokens=800)
 
     async def stream_outcome_answer(
         self,
@@ -241,7 +244,7 @@ class LLMService:
             "Speak your complete answer now, in first person, naturally."
         )
         try:
-            async for delta in deepseek_stream(prompt, system=system, temperature=0.7, max_tokens=300):
+            async for delta in deepseek_stream(prompt, self._api_key, system=system, temperature=0.7, max_tokens=300):
                 yield delta
         except Exception as e:
             if "429" in str(e) or "rate" in str(e).lower():
@@ -250,9 +253,8 @@ class LLMService:
 
     async def _ask_claude(self, system: str, user: str, ctx_block: str = "") -> str:
         import anthropic
-        from app.core.config import settings
-        if self._claude is None:
-            self._claude = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+        if self._claude is None or getattr(self._claude, "_api_key", None) != self._anthropic_api_key:
+            self._claude = anthropic.AsyncAnthropic(api_key=self._anthropic_api_key)
 
         search_results = []
         if any(kw in user.lower() for kw in ["latest", "current", "docs", "documentation", "api"]):

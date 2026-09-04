@@ -192,7 +192,8 @@ def utcnow():
 
 
 class CampaignProfileService:
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession, api_key: str = ""):
+        self._api_key = api_key
         self.db = db
 
     async def get_or_create(self, campaign_id: str, user_id: str) -> CampaignProfile:
@@ -308,7 +309,7 @@ class CampaignProfileService:
         )
 
         try:
-            raw = await call_llm(prompt, max_tokens=2000, json_mode=True, thinking=False)
+            raw = await call_llm(prompt, self._api_key, max_tokens=2000, json_mode=True, thinking=False)
         except Exception:
             logger.exception("analyze_gaps: LLM call failed")
             return {"score": 0, "is_ready": False, "has_mandatory": False, "has_contact": False, "has_experience": False, "gaps": ["Could not analyze profile"], "questions": [], "summary": "Analysis failed", "suggested_titles": []}

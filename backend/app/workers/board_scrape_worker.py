@@ -204,7 +204,7 @@ async def _run_board(board_id: str, search_term: str, linkedin_creds: dict | Non
             # ── Global boards (optional API key) ──────────────────────────
             elif board_id == "adzuna":
                 from app.services.job_hunter.global_scrapers import scrape_adzuna
-                return await scrape_adzuna(search_term, client, api_key=_keys.get("adzuna_api_key", ""))
+                return await scrape_adzuna(search_term, client, api_key=_keys.get("adzuna_api_key", ""), app_id=_keys.get("adzuna_app_id", ""))
 
             elif board_id == "reed":
                 from app.services.job_hunter.global_scrapers import scrape_reed
@@ -324,9 +324,11 @@ async def aggregate_board_results(
     from app.services.job_hunter.deduplicator import deduplicate
     from app.services.job_hunter.board_registry import select_boards, get_board
     from app.services.job_hunter.scraper_service import ScraperService
+    from app.core.config import get_api_key
 
     async with AsyncSessionLocal() as db:
-        svc = ScraperService(db)
+        api_key = await get_api_key(user_id, "deepseek_api_key", db)
+        svc = ScraperService(db, api_key=api_key)
         svc._campaign_id = campaign_id
 
         daily_target   = preferences.get("daily_target", 100)

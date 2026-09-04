@@ -19,15 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TypeVar, overload
 
-# ── Environment ───────────────────────────────────────────────────────────────
-_ENV_PATH = Path(__file__).parent.parent.parent.parent / ".env"
-if _ENV_PATH.exists():
-    for _line in _ENV_PATH.read_text().splitlines():
-        if "=" in _line and not _line.startswith("#"):
-            _k, _, _v = _line.partition("=")
-            os.environ.setdefault(_k.strip(), _v.strip())
-
-DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
+DEEPSEEK_API_KEY = ""  # Set at call time via scrape_fuzu_agent(api_key=...)
 _DEEPSEEK_ENDPOINT = "https://api.deepseek.com/chat/completions"
 _DEEPSEEK_MODEL = "deepseek-chat"
 
@@ -179,13 +171,13 @@ def _category_url(search_term: str) -> str:
 
 
 # ── Main scrape function ──────────────────────────────────────────────────────
-async def scrape_fuzu_agent(search_term: str) -> list[dict]:
+async def scrape_fuzu_agent(search_term: str, api_key: str = "") -> list[dict]:
     """
-    Use browser-use + Vertex Gemini to autonomously scrape Fuzu Kenya.
+    Use browser-use + DeepSeek to autonomously scrape Fuzu Kenya.
     Falls back to [] on any error so callers are never broken.
     """
-    if not DEEPSEEK_API_KEY:
-        print("[fuzu_agent] DEEPSEEK_API_KEY not set", flush=True)
+    if not api_key:
+        print("[fuzu_agent] DeepSeek API key not set — add it in Settings → API Keys", flush=True)
         return []
 
     try:
@@ -194,7 +186,7 @@ async def scrape_fuzu_agent(search_term: str) -> list[dict]:
         from browser_use.browser.profile import BrowserProfile
 
         target_url = _category_url(search_term)
-        llm = DeepSeekChat(api_key=DEEPSEEK_API_KEY, temperature=0.0)
+        llm = DeepSeekChat(api_key=api_key, temperature=0.0)
 
         task = (
             f"Go to {target_url} and find at least 10 tech job listings "

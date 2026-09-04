@@ -15,11 +15,12 @@ def _utcnow():
 
 
 class CalendarService:
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession, api_key: str = ""):
+        self._api_key = api_key
         self.db = db
 
     async def _call_haiku(self, prompt: str) -> str:
-        return await call_llm(prompt, max_tokens=100)
+        return await call_llm(prompt, self._api_key, max_tokens=100)
 
     async def extract_interview_datetime(self, email_body: str) -> dict:
         raw = await self._call_haiku(

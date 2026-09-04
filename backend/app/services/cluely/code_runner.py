@@ -1,5 +1,4 @@
 import httpx, logging
-from app.core.config import settings
 from app.core.exceptions import CodeRunnerError
 
 logger = logging.getLogger(__name__)
@@ -11,17 +10,20 @@ LANGUAGE_IDS = {
 }
 
 class CodeRunner:
+    def __init__(self, api_key: str = ""):
+        self._api_key = api_key
+
     async def execute(self, code: str, language: str) -> dict:
-        if not settings.judge0_api_key:
+        if not self._api_key:
             raise CodeRunnerError(
                 code="CODE_RUNNER_UNAVAILABLE",
-                message="Code execution unavailable — no JUDGE0_API_KEY configured."
+                message="Code execution unavailable — add a Judge0 API key in Settings → API Keys."
             )
         lang_id = LANGUAGE_IDS.get(language.lower())
         if lang_id is None:
             raise CodeRunnerError(message=f"Unsupported language: {language}")
         headers = {
-            "X-RapidAPI-Key": settings.judge0_api_key,
+            "X-RapidAPI-Key": self._api_key,
             "X-RapidAPI-Host": "judge0-ce.p.rapidapi.com",
         }
         payload = {"source_code": code, "language_id": lang_id, "stdin": ""}

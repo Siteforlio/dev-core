@@ -4,6 +4,8 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 from app.core.security import decode_token
 from app.core.exceptions import InvalidCredentialsError
 from app.core import ws_registry
+from app.core.database import AsyncSessionLocal
+from app.core.config import get_api_key
 from app.services.avatar_service import AvatarService
 from app.services.llm_orchestrator import LLMOrchestrator
 from app.services.tts_service import TTSService, SAMPLE_RATE
@@ -39,6 +41,9 @@ async def avatar_ws(
     user_id = await _authenticate_ws(websocket, token)
     if user_id is None:
         return
+
+    async with AsyncSessionLocal() as _db:
+        simli_key = await get_api_key(user_id, "simli_api_key", _db)
 
     ws_registry.register(asyncio.current_task())
     await websocket.accept()
@@ -131,9 +136,12 @@ async def code_ws(
     if user_id is None:
         return
 
+    async with AsyncSessionLocal() as _db:
+        deepseek_key = await get_api_key(user_id, "deepseek_api_key", _db)
+
     ws_registry.register(asyncio.current_task())
     await websocket.accept()
-    orchestrator = LLMOrchestrator()
+    orchestrator = LLMOrchestrator(api_key=deepseek_key)
     try:
         while True:
             data = await websocket.receive_json()

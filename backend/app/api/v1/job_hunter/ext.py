@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.core.cache import cache_set, cache_get
+from app.core.config import get_api_key
 from app.core.database import get_db
 from app.core.security import decode_token, create_extension_token
 from app.models.pg.job_hunter import Application, JobListing, JobHunterCampaign
@@ -182,7 +183,8 @@ async def generate_pending_fill_answers(
 
     app, listing = await _get_app_for_user(payload["appId"], user_id, db)
 
-    svc = ApplyChatService(db)
+    api_key = await get_api_key(user_id, "deepseek_api_key", db)
+    svc = ApplyChatService(db, api_key=api_key)
     answers = await svc.generate_form_answers(app, listing, body.fields)
 
     return {"data": {"answers": answers}, "error": None}
@@ -389,7 +391,8 @@ async def generate_form_answers(
 ):
     app, listing = await _get_app_for_user(app_id, user_id, db)
     fields = [f.model_dump() for f in body.fields]
-    svc = ApplyChatService(db)
+    api_key = await get_api_key(user_id, "deepseek_api_key", db)
+    svc = ApplyChatService(db, api_key=api_key)
     answers = await svc.generate_form_answers(app, listing, fields)
     return {"data": {"answers": answers}, "error": None}
 

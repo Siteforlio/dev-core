@@ -4,7 +4,6 @@ import re
 import asyncio
 import openai
 from dataclasses import dataclass, field
-from app.core.config import settings
 
 
 @dataclass
@@ -36,9 +35,9 @@ class DebriefResult:
 
 
 class SimLLMOrchestrator:
-    def __init__(self):
+    def __init__(self, api_key: str):
         self._client = openai.AsyncOpenAI(
-            api_key=settings.deepseek_api_key,
+            api_key=api_key,
             base_url="https://api.deepseek.com",
         )
         self._fast = "deepseek-chat"

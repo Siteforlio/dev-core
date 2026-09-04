@@ -201,13 +201,16 @@ class ChatAgent:
         session_ctx: dict,
         send: Callable[[dict], asyncio.Future],
         file_service: FileService | None = None,
+        api_key: str = "",
+        anthropic_api_key: str = "",
     ) -> None:
         self._ctx = session_ctx
         self._send = send
+        self._api_key = api_key
         self._terminal = TerminalService()
         self._browser = BrowserService()
-        self._screen = ScreenService()
-        self._search = SearchService()
+        self._screen = ScreenService(api_key=anthropic_api_key)
+        self._search = SearchService(api_key=api_key)
         self._file = file_service
 
     def _system_prompt(self) -> str:
@@ -303,7 +306,7 @@ class ChatAgent:
         # ReAct loop
         for step in range(MAX_TOOL_STEPS):
             try:
-                choice = await deepseek_with_tools(messages, _TOOL_SCHEMAS, temperature=0.4, max_tokens=1024)
+                choice = await deepseek_with_tools(messages, _TOOL_SCHEMAS, self._api_key, temperature=0.4, max_tokens=1024)
             except Exception as e:
                 logger.error("[chat_agent] LLM call failed: %s", e)
                 yield "Sorry, I couldn't reach the AI. Please try again."
@@ -352,7 +355,7 @@ class ChatAgent:
 
         # Otherwise stream from the full conversation
         try:
-            async for delta in deepseek_stream_messages(messages, temperature=0.7, max_tokens=512):
+            async for delta in deepseek_stream_messages(messages, self._api_key, temperature=0.7, max_tokens=512):
                 yield delta
         except Exception as e:
             logger.error("[chat_agent] streaming failed: %s", e)

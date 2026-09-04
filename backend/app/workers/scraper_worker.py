@@ -6,8 +6,10 @@ logger = logging.getLogger(__name__)
 
 async def scrape_campaign(campaign_id: str, user_id: str) -> dict:
     from app.services.job_hunter.scraper_service import ScraperService
+    from app.core.config import get_api_key
     async with AsyncSessionLocal() as db:
-        service = ScraperService(db)
+        api_key = await get_api_key(user_id, "deepseek_api_key", db)
+        service = ScraperService(db, api_key=api_key)
         count = await service.scrape_campaign(campaign_id, user_id)
         return {"scraped": count}
 
