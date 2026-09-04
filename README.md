@@ -13,9 +13,7 @@
 
 </div>
 
----
-
-## Three modules. One machine.
+<br/>
 
 | | Module | What it does |
 |---|---|---|
@@ -23,12 +21,14 @@
 | 🔍 | **Job Hunter** | Scrapes jobs daily from 6 boards, tailors your resume per listing with AI, manages applications end-to-end, syncs with your inbox and calendar. |
 | ✦ | **Screen Overlay** | Real-time AI layer invisible to screen capture and proctoring software. Listens to live audio, surfaces suggestions in under a second. Never leaves your machine. |
 
+<br/>
+
 ---
 
-## 🎤 Interview Prep
+<img src=".github/section-interview.svg" width="100%" alt="Interview Prep"/>
 
 <details>
-<summary><b>Expand — tracks, stages, scoring</b></summary>
+<summary><b>&nbsp;&nbsp;Expand — tracks, stages, scoring</b></summary>
 
 <br/>
 
@@ -61,14 +61,18 @@ Practice against a realistic AI interviewer calibrated to your exact role and co
 
 **Universal simulation engine** — pitch practice, system design sessions, code review simulations, teaching exercises. Upload your resume, JD, or prep notes and the AI grounds its questions in your actual materials.
 
+<br/>
+
 </details>
+
+<br/>
 
 ---
 
-## 🔍 Job Hunter
+<img src=".github/section-jobhunter.svg" width="100%" alt="Job Hunter"/>
 
 <details>
-<summary><b>Expand — scraping, tailoring, applications</b></summary>
+<summary><b>&nbsp;&nbsp;Expand — scraping, tailoring, applications</b></summary>
 
 <br/>
 
@@ -84,14 +88,18 @@ Describe the job you want in plain English. The AI configures the campaign, sets
 
 **Chrome extension auto-fill** — reads your campaign profile and fills application forms on Greenhouse, Lever, Workday, and most ATS platforms. One click per listing from the dashboard.
 
+<br/>
+
 </details>
+
+<br/>
 
 ---
 
-## ✦ Screen Overlay
+<img src=".github/section-overlay.svg" width="100%" alt="Screen Overlay"/>
 
 <details>
-<summary><b>Expand — stealth, audio, AI response pipeline</b></summary>
+<summary><b>&nbsp;&nbsp;Expand — stealth, audio, AI response pipeline</b></summary>
 
 <br/>
 
@@ -109,13 +117,17 @@ An AI layer invisible to screen capture, screen share, and proctoring software. 
 
 > **On use during interviews:** The overlay is a confidence aid — not a substitute for preparation. It surfaces things you already know when pressure makes you blank. Interviewers notice scripted-sounding answers.
 
+<br/>
+
 </details>
+
+<br/>
 
 ---
 
-## Keyboard Shortcuts
+<img src=".github/section-shortcuts.svg" width="100%" alt="Keyboard Shortcuts"/>
 
-All hotkeys use a polled key state approach (`GetAsyncKeyState` / `CGEventSourceKeyState`) — no registered hotkeys, no `SetWindowsHookEx`. Invisible to keyboard monitors and proctoring software.
+<br/>
 
 | Shortcut | Action |
 |---|---|
@@ -134,21 +146,23 @@ All hotkeys use a polled key state approach (`GetAsyncKeyState` / `CGEventSource
 | <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>↓</kbd> | Scroll suggestion card down |
 | <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>↑</kbd> | Scroll suggestion card up |
 
+<br/>
+
 ---
 
 ## Setup
 
-### Option 1 — Installer (recommended)
+### Option 1 — Installer *(recommended)*
 
-> No Python or Node installation needed. The installer bundles everything.
+> No Python or Node installation required. The installer bundles the Python backend, local AI models, and Electron shell.
 
 <div align="center">
 
-**[↓ Download for Windows](https://github.com/Siteforlio/dev-core/releases/latest)**
+[![Download](https://img.shields.io/badge/↓%20Download%20for%20Windows-3ECFEA?style=for-the-badge&labelColor=07080F&logo=windows&logoColor=3ECFEA)](https://github.com/Siteforlio/dev-core/releases/latest)
 
 </div>
 
----
+<br/>
 
 ### Option 2 — Run from source
 
@@ -158,85 +172,74 @@ All hotkeys use a polled key state approach (`GetAsyncKeyState` / `CGEventSource
 git clone https://github.com/Siteforlio/dev-core.git
 cd dev-core
 
-# Install frontend + Electron deps
+# Frontend + Electron
 npm install
 
-# Set up Python backend
+# Backend
 cd backend
 python -m venv venv
-source venv/Scripts/activate    # Windows: venv\Scripts\activate
+source venv/Scripts/activate    # Windows
 pip install -r requirements.txt
 cd ..
 
-# Configure environment
+# Environment
 cp backend/.env.example backend/.env
 ```
 
-Generate a strong JWT secret (required — the app refuses to start without one):
+Generate a strong JWT secret (the app refuses to start without one):
 
 ```bash
 python -c "import secrets; print('JWT_SECRET=' + secrets.token_hex(32))"
 ```
 
-Add the output to `backend/.env`, then fill in the API keys below:
+**API keys needed:**
 
-| Key | Get it here | Free tier |
+| Key | Where | Free tier |
 |---|---|---|
-| `JWT_SECRET` | Generate locally (command above) | — |
+| `JWT_SECRET` | Generate locally (above) | — |
 | `DEEPSEEK_API_KEY` | [platform.deepseek.com](https://platform.deepseek.com/api_keys) | ✓ |
-| `DEEPGRAM_API_KEY` | [console.deepgram.com](https://console.deepgram.com) | 200 hrs/month |
+| `DEEPGRAM_API_KEY` | [console.deepgram.com](https://console.deepgram.com) | 200 hrs/mo |
 | `GROQ_API_KEY` | [console.groq.com](https://console.groq.com/keys) | ✓ |
 | `GEMINI_API_KEY` | [aistudio.google.com](https://aistudio.google.com/app/apikey) | ✓ |
 | Google OAuth | [console.cloud.google.com](https://console.cloud.google.com) | ✓ |
 | Microsoft OAuth | [portal.azure.com](https://portal.azure.com) | ✓ |
 | `ADZUNA_APP_ID` + key | [developer.adzuna.com](https://developer.adzuna.com) | ✓ |
 
-Start the app:
-
 ```bash
 npm run dev
 ```
+
+<br/>
 
 ---
 
 ## Tech Stack
 
-| Layer | Technology |
-|---|---|
-| Desktop shell | Electron 28+ |
-| Frontend | React 18 + TypeScript + Tailwind CSS + Vite |
-| Backend | FastAPI (Python 3.11+) |
-| LLM | DeepSeek (primary) · Gemini Flash |
-| Transcription | Deepgram · Whisper via Groq |
-| Job scoring | BERT (runs locally — no API) |
-| Audio capture | WASAPI loopback · PyAudioWPatch |
-| Database | SQLite · aiosqlite |
-| Auth | JWT · refresh token rotation · JTI blacklist |
-| Stealth overlay | Win32 `WDA_EXCLUDEFROMCAPTURE` via koffi |
+<img src=".github/tech-stack.svg" width="100%" alt="Tech Stack"/>
+
+<br/>
 
 ---
 
-## Contributing
+<img src=".github/section-contrib.svg" width="100%" alt="Contributing"/>
 
-Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a PR — covers branch naming, commit format, code style, and test commands.
+<br/>
 
-Every PR auto-loads a checklist: tests, type check, ARCHITECTURE.md layering rules, CHANGELOG and docs updates.
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a PR — covers branch naming, commit format, code style, and test commands.
 
-Not sure where to start? → [`good first issue`](https://github.com/Siteforlio/dev-core/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
+Every PR auto-loads a checklist: tests pass · type check passes · ARCHITECTURE.md layering respected · CHANGELOG and docs updated.
 
-For large features → open a [Discussion](https://github.com/Siteforlio/dev-core/discussions) first.
+[![Good First Issues](https://img.shields.io/github/issues/Siteforlio/dev-core/good%20first%20issue?style=flat-square&color=3EFFA0&labelColor=07080F&label=good%20first%20issue)](https://github.com/Siteforlio/dev-core/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
+[![GitHub Discussions](https://img.shields.io/github/discussions/Siteforlio/dev-core?style=flat-square&color=9B7FFF&labelColor=07080F&logo=github&logoColor=9B7FFF)](https://github.com/Siteforlio/dev-core/discussions)
 
----
+For large features — open a [Discussion](https://github.com/Siteforlio/dev-core/discussions) before opening a PR.
 
-## Community
-
-[GitHub Discussions](https://github.com/Siteforlio/dev-core/discussions) — Q&A, ideas, show & tell  
-[Issues](https://github.com/Siteforlio/dev-core/issues) — bugs and feature requests
+<br/>
 
 ---
 
 <div align="center">
 
-MIT License · [Siteforlio/dev-core](https://github.com/Siteforlio/dev-core)
+MIT License &nbsp;·&nbsp; [Siteforlio/dev-core](https://github.com/Siteforlio/dev-core)
 
 </div>

@@ -1,0 +1,50 @@
+<svg width="1280" height="160" viewBox="0 0 1280 160" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <pattern id="g" width="36" height="36" patternUnits="userSpaceOnUse">
+      <path d="M 36 0 L 0 0 0 36" fill="none" stroke="#0E1120" stroke-width="1"/>
+    </pattern>
+    <radialGradient id="gl" cx="100%" cy="50%" r="60%">
+      <stop offset="0%" stop-color="#3ECFEA" stop-opacity="0.05"/>
+      <stop offset="100%" stop-color="#3ECFEA" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1280" height="160" fill="#07080F"/>
+  <rect width="1280" height="160" fill="url(#g)"/>
+  <rect width="1280" height="160" fill="url(#gl)"/>
+
+  <!-- Left content -->
+  <text x="60" y="52" font-family="'Segoe UI Mono','Cascadia Code',monospace" font-size="11" fill="#4A5568" letter-spacing="4">OPEN  SOURCE</text>
+  <text x="60" y="90" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="36" font-weight="700" fill="#E8EAF2" letter-spacing="-0.5">Contributing</text>
+  <text x="60" y="120" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="15" fill="#4A5568">Fork the repo · open a PR against master · one concern per PR · checklist enforced</text>
+
+  <!-- Right: contribution flow diagram -->
+  <!-- Fork box -->
+  <rect x="820" y="48" width="84" height="32" rx="7" fill="#0D1117" stroke="#1A2236" stroke-width="1"/>
+  <text x="862" y="69" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="12" fill="#9B7FFF" text-anchor="middle">Fork</text>
+  <!-- Arrow -->
+  <line x1="904" y1="64" x2="928" y2="64" stroke="#1E2A40" stroke-width="1.5" stroke-dasharray="4,3"/>
+  <polygon points="928,60 936,64 928,68" fill="#1E2A40"/>
+  <!-- Branch box -->
+  <rect x="936" y="48" width="84" height="32" rx="7" fill="#0D1117" stroke="#1A2236" stroke-width="1"/>
+  <text x="978" y="69" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="12" fill="#3ECFEA" text-anchor="middle">Branch</text>
+  <!-- Arrow -->
+  <line x1="1020" y1="64" x2="1044" y2="64" stroke="#1E2A40" stroke-width="1.5" stroke-dasharray="4,3"/>
+  <polygon points="1044,60 1052,64 1044,68" fill="#1E2A40"/>
+  <!-- PR box -->
+  <rect x="1052" y="48" width="84" height="32" rx="7" fill="#0D1117" stroke="#1A2236" stroke-width="1"/>
+  <text x="1094" y="69" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="12" fill="#3EFFA0" text-anchor="middle">PR</text>
+  <!-- Arrow -->
+  <line x1="1136" y1="64" x2="1160" y2="64" stroke="#1E2A40" stroke-width="1.5" stroke-dasharray="4,3"/>
+  <polygon points="1160,60 1168,64 1160,68" fill="#1E2A40"/>
+  <!-- Merged box -->
+  <rect x="1168" y="48" width="84" height="32" rx="7" fill="#0A1A10" stroke="rgba(62,255,160,0.2)" stroke-width="1"/>
+  <text x="1210" y="69" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="12" fill="#3EFFA0" text-anchor="middle">Merged ✓</text>
+
+  <!-- Labels -->
+  <text x="862" y="96" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="10" fill="#2D3748" text-anchor="middle">your copy</text>
+  <text x="978" y="96" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="10" fill="#2D3748" text-anchor="middle">feat/fix/docs</text>
+  <text x="1094" y="96" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="10" fill="#2D3748" text-anchor="middle">→ master</text>
+  <text x="1210" y="96" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="10" fill="#2D3748" text-anchor="middle">reviewed</text>
+
+  <rect y="159" width="1280" height="1" fill="#111827"/>
+</svg>

@@ -1,0 +1,30 @@
+<svg width="1280" height="88" viewBox="0 0 1280 88" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <pattern id="g" width="36" height="36" patternUnits="userSpaceOnUse">
+      <path d="M 36 0 L 0 0 0 36" fill="none" stroke="#0E1120" stroke-width="1"/>
+    </pattern>
+    <radialGradient id="gl" cx="0%" cy="50%" r="60%">
+      <stop offset="0%" stop-color="#3ECFEA" stop-opacity="0.07"/>
+      <stop offset="100%" stop-color="#3ECFEA" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="fade" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#3ECFEA"/>
+      <stop offset="100%" stop-color="#3ECFEA" stop-opacity="0.3"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="88" fill="#07080F"/>
+  <rect width="1280" height="88" fill="url(#g)"/>
+  <rect width="1280" height="88" fill="url(#gl)"/>
+  <!-- left accent bar -->
+  <rect x="0" y="0" width="4" height="88" fill="url(#fade)"/>
+  <!-- module number -->
+  <text x="28" y="34" font-family="'Segoe UI Mono','Cascadia Code','Consolas',monospace" font-size="11" fill="#3ECFEA" opacity="0.5" letter-spacing="3">MODULE  01</text>
+  <!-- module name -->
+  <text x="28" y="66" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="32" font-weight="700" fill="#E8EAF2" letter-spacing="-0.5">Interview Prep</text>
+  <!-- subtitle -->
+  <text x="272" y="66" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="16" fill="#4A5568" font-weight="400">— AI mock interviewer · 10 tracks · 5 seniority levels · 8 stages</text>
+  <!-- decorative right -->
+  <text x="1220" y="54" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="28" fill="#3ECFEA" opacity="0.12" text-anchor="end">🎤</text>
+  <!-- bottom line -->
+  <rect x="4" y="87" width="1276" height="1" fill="#111827"/>
+</svg>
